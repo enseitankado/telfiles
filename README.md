@@ -4,6 +4,10 @@ TelFiles, **Telegram'daki grup ve kanallarda paylaşılan dosyaları ve bağlant
 
 Telegram hesabınızla giriş yaptığınızda, üyesi olduğunuz tüm grup ve kanalları arka planda tek tek gezer. Karşılaştığı her dosyayı (adı, boyutu, türü) ve her bağlantıyı kendi listenize ekler. Sonra tarayıcınızdan bu listeyi açıp arama yapabilir, sıralayabilir ve istediğiniz dosyayı tek tıkla bilgisayarınıza indirebilirsiniz.
 
+İlgilendiğiniz kelimeleri önceden tanımlarsanız (örneğin "fatura 2025"), o kelimeler bir dosya adında geçtiğinde program size haber verir; siz kanalları tek tek takip etmek zorunda kalmazsınız.
+
+Ayrıca **Kanal Avcısı** adlı bir özellik, sizin için yeni ve dosya bakımından zengin kanallar arar: hâlihazırda üye olduğunuz kanallardaki ipuçlarından ve internetteki açık Telegram dizinlerinden hareketle aday kanal listesi çıkarır, her birini puanlar ve "katılayım mı?" diye size sunar.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 ```
