@@ -91,10 +91,37 @@ fi
 if [ "$need_docker_install" -eq 1 ]; then
   log "Docker Engine + Compose plugin kuruluyor (docker.com resmi repo)…"
 
-  # Dağıtım algılama — Kali → Debian eşlemesi, çünkü Docker Kali repo'su yok.
+  # /etc/debian_version değerinden upstream Debian kod adına eşle — Pardus, Kali,
+  # Deepin gibi türevlerde VERSION_CODENAME Debian'a uymaz, ama Debian sürüm
+  # numarası uyar.
+  _debian_base_codename() {
+    local v
+    [ -f /etc/debian_version ] || { echo ""; return; }
+    v="$(cat /etc/debian_version 2>/dev/null)"
+    case "$v" in
+      13*|trixie*|*sid*)        echo "trixie";;
+      12*|bookworm*)            echo "bookworm";;
+      11*|bullseye*)            echo "bullseye";;
+      10*|buster*)              echo "buster";;
+      *)                        echo "";;
+    esac
+  }
+
+  # Verilen (repo_dist, codename) çiftiyle Docker repo'sunda Release dosyası
+  # var mı? 0 = var, 1 = yok.
+  _docker_repo_ok() {
+    local d="$1" cn="$2" code
+    code="$(curl -sIL -o /dev/null -w '%{http_code}' \
+              "https://download.docker.com/linux/${d}/dists/${cn}/Release" \
+              --max-time 8 2>/dev/null || echo 000)"
+    [ "$code" = "200" ]
+  }
+
   source /etc/os-release
-  DIST_ID="$ID"
+  DIST_ID="${ID:-unknown}"
+  DIST_LIKE="${ID_LIKE:-}"
   DIST_CODENAME="${VERSION_CODENAME:-}"
+
   case "$DIST_ID" in
     ubuntu)
       DOCKER_REPO_DIST=ubuntu
@@ -104,19 +131,55 @@ if [ "$need_docker_install" -eq 1 ]; then
       ;;
     kali)
       DOCKER_REPO_DIST=debian
-      # Kali her zaman Debian testing/sid takip eder; en yakın stable: bookworm.
-      DIST_CODENAME=bookworm
+      DIST_CODENAME="$(_debian_base_codename)"
+      [ -n "$DIST_CODENAME" ] || DIST_CODENAME=bookworm
       ;;
-    linuxmint)
+    linuxmint|elementary|pop|zorin|neon)
       DOCKER_REPO_DIST=ubuntu
       DIST_CODENAME="${UBUNTU_CODENAME:-jammy}"
       ;;
-    *)
-      warn "Bilinmeyen dağıtım: $DIST_ID — Debian repo'su deneniyor."
+    pardus|deepin|mx|parrot|devuan|antix)
+      # Debian türevi. Upstream Debian sürümünden codename'i çıkar.
       DOCKER_REPO_DIST=debian
-      DIST_CODENAME="${DIST_CODENAME:-bookworm}"
+      DIST_CODENAME="$(_debian_base_codename)"
+      [ -n "$DIST_CODENAME" ] || DIST_CODENAME=bookworm
+      ;;
+    *)
+      # ID_LIKE alanına bak — "debian" veya "ubuntu" geçiyorsa ona göre.
+      if echo " $DIST_LIKE " | grep -q "ubuntu"; then
+        DOCKER_REPO_DIST=ubuntu
+        DIST_CODENAME="${UBUNTU_CODENAME:-${DIST_CODENAME:-jammy}}"
+      else
+        warn "Bilinmeyen dağıtım: $DIST_ID — Debian repo'su deneniyor."
+        DOCKER_REPO_DIST=debian
+        DIST_CODENAME="$(_debian_base_codename)"
+        [ -n "$DIST_CODENAME" ] || DIST_CODENAME=bookworm
+      fi
       ;;
   esac
+
+  log "Algılanan dağıtım: ${DIST_ID} → ${DOCKER_REPO_DIST}/${DIST_CODENAME}"
+
+  # Docker'da bu codename gerçekten var mı? Yoksa stable fallback'lerini sırayla
+  # dene (bookworm, bullseye, jammy, focal).
+  if ! _docker_repo_ok "$DOCKER_REPO_DIST" "$DIST_CODENAME"; then
+    warn "Docker repo'sunda ${DOCKER_REPO_DIST}/${DIST_CODENAME} yok — yedek codename'ler deneniyor."
+    _fallback_ok=0
+    if [ "$DOCKER_REPO_DIST" = "ubuntu" ]; then
+      _fallbacks="jammy focal noble"
+    else
+      _fallbacks="bookworm bullseye trixie"
+    fi
+    for _cn in $_fallbacks; do
+      if _docker_repo_ok "$DOCKER_REPO_DIST" "$_cn"; then
+        DIST_CODENAME="$_cn"
+        ok "Yedek codename kullanılıyor: ${DOCKER_REPO_DIST}/${DIST_CODENAME}"
+        _fallback_ok=1
+        break
+      fi
+    done
+    [ "$_fallback_ok" -eq 1 ] || die "Docker resmi repo'sunda uyumlu codename bulunamadı (${DOCKER_REPO_DIST}). Manuel kurulum için: https://docs.docker.com/engine/install/"
+  fi
 
   $SUDO install -m 0755 -d /etc/apt/keyrings
   curl -fsSL "https://download.docker.com/linux/${DOCKER_REPO_DIST}/gpg" \
@@ -127,9 +190,16 @@ if [ "$need_docker_install" -eq 1 ]; then
   echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_REPO_DIST} ${DIST_CODENAME} stable" \
     | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
 
-  $SUDO apt-get update -qq
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+  if ! $SUDO apt-get update -qq; then
+    warn "apt-get update başarısız — Docker repo satırı kaldırılıp manuel docker.io paketi deneniyor."
+    $SUDO rm -f /etc/apt/sources.list.d/docker.list
+    $SUDO apt-get update -qq
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io docker-compose-v2 >/dev/null \
+      || die "Docker kurulumu başarısız. Manuel kurulum: https://docs.docker.com/engine/install/"
+  else
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+      docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+  fi
 
   $SUDO systemctl enable --now docker >/dev/null 2>&1 || true
 
