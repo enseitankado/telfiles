@@ -1,8 +1,8 @@
 # TelFiles
 
-Telegram kanallarında paylaşılan **dosya ve bağlantıları** kendi hesabınız üzerinden indeksleyen, arar ve indirir hâle getiren, kendi kendine barındırılan bir araç.
+TelFiles, **Telegram'daki grup ve kanallarda paylaşılan dosyaları ve bağlantıları sizin için tek bir yerde toplayan** bir programdır. Kendi bilgisayarınızda çalışır; topladığı bilgileri başka kimseyle paylaşmaz.
 
-Üye olduğunuz tüm grup ve kanalları arka planda tarar; dosya adları, boyutları, MIME tipleri ile bağlantıları yerel bir PostgreSQL veritabanında saklar ve hepsini tek bir web arayüzünden gezilebilir kılar.
+Telegram hesabınızla giriş yaptığınızda, üyesi olduğunuz tüm grup ve kanalları arka planda tek tek gezer. Karşılaştığı her dosyayı (adı, boyutu, türü) ve her bağlantıyı kendi listenize ekler. Sonra tarayıcınızdan bu listeyi açıp arama yapabilir, sıralayabilir ve istediğiniz dosyayı tek tıkla bilgisayarınıza indirebilirsiniz.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
