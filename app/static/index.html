@@ -355,7 +355,12 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .g-link:hover{text-decoration:underline}
 .ctx-cell{font-size:.71rem;color:var(--text-3)}
 .link-files-cell{font-size:.74rem}
-.link-dup-badge{display:inline-block;padding:1px 6px;margin-left:5px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.66rem;font-weight:700;letter-spacing:.02em;cursor:help;vertical-align:middle}
+.link-dup-badge{display:inline-block;padding:1px 6px;margin-left:5px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.66rem;font-weight:700;letter-spacing:.02em;cursor:help;vertical-align:middle;flex-shrink:0}
+/* Filename cell: filename truncates with ellipsis but tg-link + dup-badge
+   stay anchored on the right (instead of getting clipped past cell edge). */
+.fname-cell{display:flex;align-items:center;min-width:0;overflow:hidden;gap:0}
+.fname-cell .fname-trunc{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fname-cell > a{flex-shrink:0}
 .link-files-ok{color:var(--text-1);font-weight:500;cursor:default}
 .link-files-pending{color:var(--text-4);cursor:default}
 .link-files-dead{color:#dc2626;font-style:italic;cursor:default}

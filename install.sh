@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# TelFiles tek-adım kurulum betiği — Debian/Ubuntu/Kali tabanlı sistemler.
+#
+# Kullanım:
+#   curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
+#   # ya da klon edilmiş proje kökünde:
+#   ./install.sh
+#
+# Ortam değişkenleri (opsiyonel):
+#   TELEGRAM_API_ID, TELEGRAM_API_HASH   — interaktif sorulara cevap vermeden kurmak için
+#   TELFILES_DIR                         — kurulum dizini (varsayılan: ./telfiles)
+#   TELFILES_PORT                        — host portu (varsayılan: 8765)
+#   TELFILES_BRANCH                      — git branch (varsayılan: main)
+#   NONINTERACTIVE=1                     — soru sormaz; boş .env ile devam eder
+
+set -euo pipefail
+
+# ── Renkli log ────────────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+  C_R=$'\033[31m'; C_G=$'\033[32m'; C_Y=$'\033[33m'; C_B=$'\033[34m'
+  C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'; C_RST=$'\033[0m'
+else
+  C_R= C_G= C_Y= C_B= C_DIM= C_BOLD= C_RST=
+fi
+log()  { printf "%s==>%s %s\n" "$C_B" "$C_RST" "$*"; }
+ok()   { printf "%s ✓%s %s\n"  "$C_G" "$C_RST" "$*"; }
+warn() { printf "%s ! %s %s\n" "$C_Y" "$C_RST" "$*" >&2; }
+err()  { printf "%s ✗%s %s\n"  "$C_R" "$C_RST" "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# ── Sabitler ──────────────────────────────────────────────────────────────────
+REPO_URL="https://github.com/enseitankado/telfiles.git"
+TELFILES_DIR="${TELFILES_DIR:-telfiles}"
+TELFILES_PORT="${TELFILES_PORT:-8765}"
+TELFILES_BRANCH="${TELFILES_BRANCH:-main}"
+NONINTERACTIVE="${NONINTERACTIVE:-0}"
+
+# ── Ön kontroller ─────────────────────────────────────────────────────────────
+[ "$(uname -s)" = "Linux" ] || die "Bu betik Linux üzerinde çalışmak için tasarlandı."
+
+if ! command -v apt-get >/dev/null 2>&1; then
+  die "apt-get bulunamadı — yalnızca Debian tabanlı dağıtımlar (Debian/Ubuntu/Kali/Mint) desteklenir."
+fi
+
+# Sudo'yu root değilse zorla. Root isek sudo'suz çalış.
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  SUDO=""
+else
+  if command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+    log "sudo gerektiren adımlar için parola istenebilir."
+  else
+    die "Root değilsiniz ve sudo da yüklü değil. Root olarak çalıştırın veya sudo kurun."
+  fi
+fi
+
+# Interaktif soru sormak için TTY bul (curl | bash durumunda stdin pipe).
+if [ -e /dev/tty ] && [ "$NONINTERACTIVE" != "1" ]; then
+  TTY=/dev/tty
+else
+  TTY=""
+fi
+
+ask() {
+  # ask <var_name> <prompt>
+  local _var="$1" _prompt="$2" _val=""
+  if [ -z "$TTY" ]; then return 0; fi
+  printf "%s" "$_prompt" >/dev/tty
+  IFS= read -r _val <"$TTY" || true
+  if [ -n "$_val" ]; then printf -v "$_var" '%s' "$_val"; fi
+}
+
+# ── 1) Sistem bağımlılıkları ──────────────────────────────────────────────────
+log "Sistem paket dizini güncelleniyor…"
+$SUDO apt-get update -qq
+
+log "Temel araçlar kuruluyor (curl, git, ca-certificates, gnupg)…"
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  ca-certificates curl git gnupg lsb-release iproute2 >/dev/null
+ok "Temel araçlar hazır."
+
+# ── 2) Docker + Compose plugin ───────────────────────────────────────────────
+need_docker_install=0
+if ! command -v docker >/dev/null 2>&1; then
+  need_docker_install=1
+elif ! docker compose version >/dev/null 2>&1; then
+  warn "Docker var ama 'docker compose' plugin'i yok — kurulum yapılacak."
+  need_docker_install=1
+fi
+
+if [ "$need_docker_install" -eq 1 ]; then
+  log "Docker Engine + Compose plugin kuruluyor (docker.com resmi repo)…"
+
+  # Dağıtım algılama — Kali → Debian eşlemesi, çünkü Docker Kali repo'su yok.
+  source /etc/os-release
+  DIST_ID="$ID"
+  DIST_CODENAME="${VERSION_CODENAME:-}"
+  case "$DIST_ID" in
+    ubuntu)
+      DOCKER_REPO_DIST=ubuntu
+      ;;
+    debian|raspbian)
+      DOCKER_REPO_DIST=debian
+      ;;
+    kali)
+      DOCKER_REPO_DIST=debian
+      # Kali her zaman Debian testing/sid takip eder; en yakın stable: bookworm.
+      DIST_CODENAME=bookworm
+      ;;
+    linuxmint)
+      DOCKER_REPO_DIST=ubuntu
+      DIST_CODENAME="${UBUNTU_CODENAME:-jammy}"
+      ;;
+    *)
+      warn "Bilinmeyen dağıtım: $DIST_ID — Debian repo'su deneniyor."
+      DOCKER_REPO_DIST=debian
+      DIST_CODENAME="${DIST_CODENAME:-bookworm}"
+      ;;
+  esac
+
+  $SUDO install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL "https://download.docker.com/linux/${DOCKER_REPO_DIST}/gpg" \
+    | $SUDO gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+  $SUDO chmod a+r /etc/apt/keyrings/docker.gpg
+
+  ARCH="$(dpkg --print-architecture)"
+  echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_REPO_DIST} ${DIST_CODENAME} stable" \
+    | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+  $SUDO apt-get update -qq
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+
+  $SUDO systemctl enable --now docker >/dev/null 2>&1 || true
+
+  # Kullanıcıyı docker grubuna ekle — yeni shell'de sudo'suz kullanım için.
+  if [ -n "${SUDO_USER:-${USER:-}}" ] && [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    $SUDO usermod -aG docker "${SUDO_USER:-$USER}" 2>/dev/null || true
+    warn "Mevcut shell'de docker grubu henüz aktif değil. Yeni oturumda sudo'suz 'docker' kullanılabilir."
+  fi
+
+  ok "Docker $(docker --version | awk '{print $3}' | tr -d ',') kuruldu."
+else
+  ok "Docker zaten yüklü: $(docker --version | awk '{print $3}' | tr -d ',')."
+fi
+
+# Docker daemon erişimi
+if ! $SUDO docker info >/dev/null 2>&1; then
+  log "Docker daemon başlatılıyor…"
+  $SUDO systemctl start docker || die "Docker daemon başlatılamadı. 'sudo systemctl status docker' ile bakın."
+fi
+
+# Kullanıcı docker grubunda mı? Değilse sonraki docker komutlarını sudo ile çalıştır.
+if [ "${EUID:-$(id -u)}" -ne 0 ] && ! groups | grep -qE '(^| )docker( |$)'; then
+  DOCKER_CMD="$SUDO docker"
+else
+  DOCKER_CMD="docker"
+fi
+
+# ── 3) Repo'yu çek veya güncelle ─────────────────────────────────────────────
+if [ -d "$TELFILES_DIR/.git" ]; then
+  log "Mevcut TelFiles kopyası bulundu: $TELFILES_DIR — güncelleniyor…"
+  git -C "$TELFILES_DIR" fetch --depth=1 origin "$TELFILES_BRANCH"
+  git -C "$TELFILES_DIR" reset --hard "origin/$TELFILES_BRANCH"
+elif [ -f "docker-compose.yml" ] && [ -d "app" ]; then
+  # Halihazırda proje kökündeyiz (örn. ./install.sh).
+  TELFILES_DIR="."
+  log "Mevcut proje kökünde çalışıyor: $(pwd)"
+else
+  log "TelFiles deposu klonlanıyor → $TELFILES_DIR"
+  git clone --depth=1 --branch "$TELFILES_BRANCH" "$REPO_URL" "$TELFILES_DIR"
+fi
+
+cd "$TELFILES_DIR"
+ok "Çalışma dizini: $(pwd)"
+
+# ── 4) .env hazırla ──────────────────────────────────────────────────────────
+if [ ! -f .env ]; then
+  cp .env.example .env 2>/dev/null || cat > .env <<'EOF'
+# Get these from https://my.telegram.org → API Development Tools
+TELEGRAM_API_ID=
+TELEGRAM_API_HASH=
+EOF
+fi
+
+api_id="${TELEGRAM_API_ID:-}"
+api_hash="${TELEGRAM_API_HASH:-}"
+
+# Mevcut .env içeriğini oku
+if [ -z "$api_id" ]; then
+  api_id="$(grep -E '^TELEGRAM_API_ID=' .env | head -n1 | cut -d= -f2-)"
+fi
+if [ -z "$api_hash" ]; then
+  api_hash="$(grep -E '^TELEGRAM_API_HASH=' .env | head -n1 | cut -d= -f2-)"
+fi
+
+if [ -z "$api_id" ] || [ -z "$api_hash" ]; then
+  if [ -n "$TTY" ]; then
+    printf "\n%sTelegram API kimlik bilgileri%s — https://my.telegram.org → API Development Tools\n" "$C_BOLD" "$C_RST" >/dev/tty
+    printf "%s(Şimdi boş bırakıp sonra .env dosyasını elle düzenleyebilirsiniz.)%s\n\n" "$C_DIM" "$C_RST" >/dev/tty
+    ask api_id  "TELEGRAM_API_ID    : "
+    ask api_hash "TELEGRAM_API_HASH  : "
+  else
+    warn "TELEGRAM_API_ID / TELEGRAM_API_HASH boş. Servis çalışacak ama hesap eklenemeyecek."
+    warn "Düzenle: $TELFILES_DIR/.env  (sonra: docker compose restart telfiles-app)"
+  fi
+fi
+
+# .env dosyasını yaz/güncelle
+{
+  echo "# Get these from https://my.telegram.org → API Development Tools"
+  echo "TELEGRAM_API_ID=$api_id"
+  echo "TELEGRAM_API_HASH=$api_hash"
+} > .env
+ok ".env güncellendi."
+
+# ── 5) Port çakışmasını çöz ──────────────────────────────────────────────────
+if ss -lnt "sport = :$TELFILES_PORT" 2>/dev/null | grep -q LISTEN; then
+  warn "$TELFILES_PORT portu zaten kullanımda."
+  # Sadece docker-compose.yml içindeki port'u değiştir (yalnızca host kısmını).
+  if grep -qE "\"$TELFILES_PORT:8765\"" docker-compose.yml; then
+    for try_port in 8766 8767 8768 8769 18765; do
+      if ! ss -lnt "sport = :$try_port" 2>/dev/null | grep -q LISTEN; then
+        sed -i -E "s|\"$TELFILES_PORT:8765\"|\"$try_port:8765\"|" docker-compose.yml
+        TELFILES_PORT="$try_port"
+        warn "Port → $TELFILES_PORT olarak değiştirildi."
+        break
+      fi
+    done
+  fi
+fi
+
+# ── 6) Build + up ────────────────────────────────────────────────────────────
+log "Container'lar inşa ediliyor (ilk kurulumda 2-5 dk sürebilir)…"
+$DOCKER_CMD compose build telfiles-app
+log "Servis başlatılıyor…"
+$DOCKER_CMD compose up -d
+ok "Containerlar ayakta."
+
+# Sağlık kontrolü — uygulama 8765'i dinlemeye başlayana kadar bekle.
+log "Uygulamanın açılması bekleniyor…"
+for i in $(seq 1 60); do
+  if curl -fsS "http://localhost:$TELFILES_PORT/api/uiauth/login" -o /dev/null \
+     -X POST -H 'Content-Type: application/json' -d '{}' 2>/dev/null; then
+    break
+  fi
+  # 401 de OK — auth endpoint cevap veriyor demektir.
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$TELFILES_PORT/api/uiauth/login" || true)"
+  case "$code" in 200|400|401|405|422) break ;; esac
+  sleep 1
+done
+
+# ── 7) Çıkış mesajı ──────────────────────────────────────────────────────────
+# Birincil IP'yi tespit et — default route'un kullandığı arabirimin IP'si.
+HOST_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+[ -z "${HOST_IP:-}" ] && HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -z "${HOST_IP:-}" ] && HOST_IP="localhost"
+
+cat <<EOF
+
+${C_G}${C_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RST}
+${C_G}${C_BOLD}  ✓ TelFiles kurulumu tamamlandı${C_RST}
+${C_G}${C_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RST}
+
+  ${C_BOLD}Web arayüzü ${C_RST}: http://${HOST_IP}:${TELFILES_PORT}
+  ${C_BOLD}Yerel       ${C_RST}: http://localhost:${TELFILES_PORT}
+  ${C_BOLD}Parola      ${C_RST}: ${C_Y}admin${C_RST}   ${C_DIM}(ilk girişte Ayarlar → Hesap → Arabirim Parolası'ndan değiştirin)${C_RST}
+
+  ${C_DIM}Proje dizini${C_RST}: $(pwd)
+  ${C_DIM}Loglar      ${C_RST}: docker compose logs -f telfiles-app
+  ${C_DIM}Durdur      ${C_RST}: docker compose down
+  ${C_DIM}Güncelle    ${C_RST}: git pull && docker compose up -d --build
+
+EOF
+
+if [ -z "${api_id:-}" ] || [ -z "${api_hash:-}" ]; then
+  warn "TELEGRAM_API_ID / TELEGRAM_API_HASH boş kaldı."
+  warn ".env'yi düzenleyip 'docker compose restart telfiles-app' çalıştırın."
+fi

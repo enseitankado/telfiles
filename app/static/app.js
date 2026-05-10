@@ -1246,13 +1246,13 @@ function renderFiles(files, gFilter) {
     // Same file (name + size) re-posted across multiple messages collapses
     // into one row; surface the underlying count.
     const dupBadge = (f.appearances && f.appearances > 1)
-      ? ` <span class="link-dup-badge" title="${f.appearances} mesajda paylaşılmış">×${f.appearances}</span>`
+      ? `<span class="link-dup-badge" title="${f.appearances} mesajda paylaşılmış">×${f.appearances}</span>`
       : '';
     return `<tr${selRow} onclick="selectFileRow(event,${f.id})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
-      <td title="${esc(f.file_name||'')}">${esc(f.file_name||'—')} ${tg}${dupBadge}</td>
+      <td title="${esc(f.file_name||'')}"><div class="fname-cell"><span class="fname-trunc">${esc(f.file_name||'—')}</span>${tg}${dupBadge}</div></td>
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
