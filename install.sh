@@ -71,8 +71,73 @@ ask() {
 }
 
 # ── 1) Sistem bağımlılıkları ──────────────────────────────────────────────────
+
+# Bir önceki başarısız kurulumdan kalmış bozuk docker.list dosyaları varsa
+# (örneğin Pardus'ta upstream Debian codename'i yerine 'etap-yirmiuc' yazılmış),
+# apt-get update bu satır yüzünden 404 alıp betiği daha başlangıçta çökertir.
+# Docker repo satırından (host, repo_dist, codename) üçlüsünü çıkarıp Release
+# URL'sini probe ediyoruz; 200 dönmüyorsa dosyayı askıya alıyoruz. Docker
+# kurulum aşamasında doğrusu zaten yeniden yazılacak.
+if [ -f /etc/apt/sources.list.d/docker.list ]; then
+  # `[...]` opsiyonlarını at, sonra `deb URL CODENAME` formatından field'ları çıkar.
+  _docker_url="$(sed 's/\[[^]]*\]//' /etc/apt/sources.list.d/docker.list | awk '/^deb /{print $2; exit}')"
+  _docker_codename="$(sed 's/\[[^]]*\]//' /etc/apt/sources.list.d/docker.list | awk '/^deb /{print $3; exit}')"
+  if [ -n "$_docker_url" ] && [ -n "$_docker_codename" ]; then
+    if ! curl -fsIL --max-time 8 \
+        "${_docker_url%/}/dists/${_docker_codename}/Release" >/dev/null 2>&1; then
+      warn "Bozuk docker.list bulundu (codename=${_docker_codename}) — askıya alınıyor."
+      $SUDO mv /etc/apt/sources.list.d/docker.list \
+                "/etc/apt/sources.list.d/docker.list.broken.$(date +%s)" \
+        2>/dev/null || $SUDO rm -f /etc/apt/sources.list.d/docker.list
+    fi
+  fi
+  unset _docker_url _docker_codename
+fi
+
+# apt-get update'i dirençli yap: ilk başarısızlıkta, çıktı içinde 404/NoRelease
+# hatası veren üçüncü-taraf sources.list.d/* dosyalarını yedekleyip tekrar dener.
+_apt_update() {
+  local out rc urls
+  # -qq locale'e bağlı olarak W: satırlarını bastırabilir; verbose çalışıp
+  # çıktıdan URL'leri çıkarmamız gerek.
+  out="$($SUDO apt-get update 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then return 0; fi
+
+  # Çıktıdaki tüm http/https URL'lerini topla. Hem W: satırlarındaki tam
+  # `/dists/codename/Release` formunu, hem E: satırlarındaki `'<url> <codename>
+  # Release'` formunu yakalamak için.
+  urls="$(printf '%s\n' "$out" \
+    | grep -oE "https?://[^ ']+" \
+    | sed -E 's|/dists/[^/]+/Release$||; s|/?$||' \
+    | sort -u || true)"
+
+  local cleaned=0
+  if [ -n "$urls" ]; then
+    local url f
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      # Bu URL'yi (prefix olarak) içeren her sources.list.d dosyasını askıya al.
+      for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [ -f "$f" ] || continue
+        if grep -qF "$url" "$f" 2>/dev/null; then
+          warn "Bozuk apt kaynağı askıya alındı: $f (içeriği: $url)"
+          $SUDO mv "$f" "${f}.broken.$(date +%s)" 2>/dev/null || true
+          cleaned=1
+        fi
+      done
+    done <<< "$urls"
+  fi
+
+  if [ $cleaned -eq 1 ]; then
+    log "Bozuk kaynaklar temizlendi, apt-get update tekrar deneniyor…"
+    $SUDO apt-get update -qq && return 0
+  fi
+  printf '%s\n' "$out" >&2
+  return 1
+}
+
 log "Sistem paket dizini güncelleniyor…"
-$SUDO apt-get update -qq
+_apt_update || die "apt-get update başarısız. Yukarıdaki hatalara bakın; bozuk depo dosyaları /etc/apt/sources.list.d/ altında olabilir."
 
 log "Temel araçlar kuruluyor (curl, git, ca-certificates, gnupg)…"
 $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
@@ -190,15 +255,23 @@ if [ "$need_docker_install" -eq 1 ]; then
   echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_REPO_DIST} ${DIST_CODENAME} stable" \
     | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
 
-  if ! $SUDO apt-get update -qq; then
-    warn "apt-get update başarısız — Docker repo satırı kaldırılıp manuel docker.io paketi deneniyor."
+  if ! _apt_update; then
+    warn "apt-get update başarısız — Docker resmi repo satırı kaldırılıp dağıtımın docker.io paketi deneniyor."
     $SUDO rm -f /etc/apt/sources.list.d/docker.list
-    $SUDO apt-get update -qq
+    _apt_update || die "apt-get update tekrar başarısız oldu."
     $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io docker-compose-v2 >/dev/null \
+      || $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io docker-compose >/dev/null \
       || die "Docker kurulumu başarısız. Manuel kurulum: https://docs.docker.com/engine/install/"
   else
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-      docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+    if ! $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+           docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1; then
+      warn "docker-ce paketleri kurulamadı — dağıtımın docker.io paketine düşülüyor."
+      $SUDO rm -f /etc/apt/sources.list.d/docker.list
+      _apt_update
+      $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io docker-compose-v2 >/dev/null \
+        || $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker.io docker-compose >/dev/null \
+        || die "Docker kurulumu başarısız."
+    fi
   fi
 
   $SUDO systemctl enable --now docker >/dev/null 2>&1 || true
