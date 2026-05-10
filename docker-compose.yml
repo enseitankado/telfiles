@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: telfiles-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: telfiles
+      POSTGRES_USER: telfiles
+      POSTGRES_PASSWORD: telfiles
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telfiles -d telfiles"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  telfiles-app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: telfiles-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+      - ./downloads:/app/downloads
+      - ./app/static:/app/static
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/app/data
+      - DOWNLOADS_DIR=/app/downloads
+      - DATABASE_URL=postgresql://telfiles:telfiles@postgres/telfiles

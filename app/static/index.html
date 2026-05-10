@@ -1,0 +1,1582 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TelFiles</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+
+/* ── Theme variables ── */
+:root{
+  --bg-1:#f0f2f5; --bg-2:#fff; --bg-3:#f9fafb;
+  --bg-hover:#f8faff; --bg-selected:#eff6ff;
+  --bg-info:#dbeafe; --bg-info-h:#bfdbfe;
+  --border-1:#e0e3ea; --border-2:#e5e7eb; --border-3:#f0f2f5;
+  --input-border:#d1d5db;
+  --text-1:#1a1a2e; --text-2:#374151; --text-3:#6b7280; --text-4:#9ca3af;
+  --accent:#2563eb; --accent-h:#1d4ed8; --accent-soft:#93c5fd;
+  --frozen-shadow:rgba(0,0,0,.12);
+}
+[data-theme="dark"]{
+  --bg-1:#0f172a; --bg-2:#1e293b; --bg-3:#0f172a;
+  --bg-hover:#27374e; --bg-selected:#1e3a5f;
+  --bg-info:#1e3a5f; --bg-info-h:#2e4d75;
+  --border-1:#334155; --border-2:#334155; --border-3:#1e293b;
+  --input-border:#475569;
+  --text-1:#e2e8f0; --text-2:#cbd5e1; --text-3:#94a3b8; --text-4:#64748b;
+  --accent:#3b82f6; --accent-h:#60a5fa; --accent-soft:#1e3a5f;
+  --frozen-shadow:rgba(0,0,0,.4);
+}
+[data-theme="nord"]{
+  --bg-1:#2e3440; --bg-2:#3b4252; --bg-3:#2e3440;
+  --bg-hover:#434c5e; --bg-selected:#4c566a;
+  --bg-info:#4c566a; --bg-info-h:#5e6b83;
+  --border-1:#4c566a; --border-2:#434c5e; --border-3:#3b4252;
+  --input-border:#4c566a;
+  --text-1:#eceff4; --text-2:#d8dee9; --text-3:#aab1bd; --text-4:#7c8694;
+  --accent:#88c0d0; --accent-h:#8fbcbb; --accent-soft:#5e81ac;
+  --frozen-shadow:rgba(0,0,0,.4);
+}
+[data-theme="solarized"]{
+  --bg-1:#fdf6e3; --bg-2:#fefaf3; --bg-3:#eee8d5;
+  --bg-hover:#f5efd9; --bg-selected:#ebe2c4;
+  --bg-info:#dcdab0; --bg-info-h:#cccca0;
+  --border-1:#d3cdb5; --border-2:#e5dfc8; --border-3:#eee8d5;
+  --input-border:#c8c0a0;
+  --text-1:#073642; --text-2:#586e75; --text-3:#657b83; --text-4:#93a1a1;
+  --accent:#268bd2; --accent-h:#1e6fa8; --accent-soft:#83b9d9;
+  --frozen-shadow:rgba(0,0,0,.1);
+}
+[data-theme="sepia"]{
+  --bg-1:#f4ecd8; --bg-2:#fbf6e8; --bg-3:#efe5cc;
+  --bg-hover:#ede2c0; --bg-selected:#e3d4ad;
+  --bg-info:#dec998; --bg-info-h:#cab87a;
+  --border-1:#d3c4a3; --border-2:#e0d3b3; --border-3:#ede2c0;
+  --input-border:#bfac82;
+  --text-1:#3b2e16; --text-2:#5d4a26; --text-3:#7d6841; --text-4:#9b8762;
+  --accent:#a64b1c; --accent-h:#7e3812; --accent-soft:#d4a385;
+  --frozen-shadow:rgba(120,80,30,.14);
+}
+[data-theme="forest"]{
+  --bg-1:#0d1f17; --bg-2:#142c20; --bg-3:#0f2519;
+  --bg-hover:#1c3a2c; --bg-selected:#1f4534;
+  --bg-info:#1f4534; --bg-info-h:#2d5d47;
+  --border-1:#2a4a3a; --border-2:#1f3a2c; --border-3:#142c20;
+  --input-border:#37614e;
+  --text-1:#dceee2; --text-2:#bcd6c5; --text-3:#8caf9b; --text-4:#5e8474;
+  --accent:#4ade80; --accent-h:#22c55e; --accent-soft:#1e4536;
+  --frozen-shadow:rgba(0,0,0,.4);
+}
+[data-theme="slate"]{
+  --bg-1:#0f172a; --bg-2:#1e293b; --bg-3:#0f172a;
+  --bg-hover:#27374e; --bg-selected:#3a4a61;
+  --bg-info:#374b69; --bg-info-h:#445a7c;
+  --border-1:#3e4d66; --border-2:#324154; --border-3:#1e293b;
+  --input-border:#4f6280;
+  --text-1:#e2e8f0; --text-2:#cbd5e1; --text-3:#94a3b8; --text-4:#64748b;
+  --accent:#a78bfa; --accent-h:#8b5cf6; --accent-soft:#3a3a5e;
+  --frozen-shadow:rgba(0,0,0,.4);
+}
+[data-theme="crimson"]{
+  --bg-1:#1a0d11; --bg-2:#291418; --bg-3:#1a0d11;
+  --bg-hover:#3a1d22; --bg-selected:#451f25;
+  --bg-info:#5e2128; --bg-info-h:#7d2c34;
+  --border-1:#4a2228; --border-2:#3a1d22; --border-3:#291418;
+  --input-border:#5b2c33;
+  --text-1:#fce7e9; --text-2:#e2c3c8; --text-3:#b88d96; --text-4:#8b6470;
+  --accent:#ef4444; --accent-h:#dc2626; --accent-soft:#5e2128;
+  --frozen-shadow:rgba(0,0,0,.4);
+}
+[data-theme="rosepine"]{
+  --bg-1:#191724; --bg-2:#1f1d2e; --bg-3:#191724;
+  --bg-hover:#2a273f; --bg-selected:#393552;
+  --bg-info:#393552; --bg-info-h:#524f6c;
+  --border-1:#403d52; --border-2:#2a273f; --border-3:#1f1d2e;
+  --input-border:#52507a;
+  --text-1:#e0def4; --text-2:#c4c1d8; --text-3:#908caa; --text-4:#6e6a86;
+  --accent:#ebbcba; --accent-h:#eb6f92; --accent-soft:#3e3a55;
+  --frozen-shadow:rgba(0,0,0,.45);
+}
+[data-theme="mocha"]{
+  --bg-1:#f3eee6; --bg-2:#faf6ee; --bg-3:#ece4d4;
+  --bg-hover:#e7dccb; --bg-selected:#ddc8a9;
+  --bg-info:#d8c5a3; --bg-info-h:#c5af89;
+  --border-1:#cdbb9c; --border-2:#dccfb6; --border-3:#ece4d4;
+  --input-border:#b39c79;
+  --text-1:#382e1c; --text-2:#5a4a30; --text-3:#7a6747; --text-4:#9c8966;
+  --accent:#7c5a30; --accent-h:#5e4221; --accent-soft:#bda37a;
+  --frozen-shadow:rgba(80,55,20,.14);
+}
+
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg-1);color:var(--text-1);height:100vh;display:flex;flex-direction:column}
+a{color:inherit;text-decoration:none}
+
+/* ── Top row (brand + tabs + stats + tab icons) ──
+   Visually the "where am I" anchor — taller, bolder, with a subtle drop
+   shadow so it floats above everything below. */
+#top-row{background:var(--bg-2);border-bottom:1px solid var(--border-1);box-shadow:0 2px 6px rgba(0,0,0,.05);display:flex;align-items:stretch;flex-shrink:0;height:60px;z-index:10;margin-bottom:10px}
+#brand{display:flex;align-items:center;gap:7px;font-size:1.13rem;font-weight:700;color:var(--accent);padding:0 22px 0 20px;flex-shrink:0;white-space:nowrap;align-self:stretch;margin-right:6px;border-right:1px solid var(--border-1);letter-spacing:-.005em}
+#brand>span:first-child{font-size:1.25em}
+#tabs{display:flex;align-items:center;flex:1;padding:0 10px;min-width:0;overflow-x:auto;overflow-y:hidden;gap:4px}
+#tabs::-webkit-scrollbar{display:none}
+.tab-btn{padding:9px 18px;font-size:.93rem;font-weight:600;color:var(--text-3);border:1px solid transparent;border-radius:10px;background:transparent;cursor:pointer;white-space:nowrap;height:40px;transition:all .15s ease;flex-shrink:0;display:inline-flex;align-items:center;gap:7px;letter-spacing:.005em;position:relative}
+.tab-btn .tab-ico{font-size:1.08em;line-height:1;display:inline-block;opacity:.8}
+.tab-btn .tab-ico.tab-ico-mute{filter:grayscale(.7) brightness(.95);font-size:.98em;opacity:.7}
+.tab-btn:hover .tab-ico.tab-ico-mute,.tab-btn.active .tab-ico.tab-ico-mute{filter:grayscale(.4);opacity:.95}
+.tab-btn:hover{color:var(--text-1);background:var(--bg-3)}
+.tab-btn:hover .tab-ico{opacity:1}
+.tab-btn.active{color:var(--accent);background:var(--bg-selected);border-color:var(--accent-soft);box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.tab-btn.active .tab-ico{opacity:1}
+[data-theme="dark"] .tab-btn.active,[data-theme="nord"] .tab-btn.active,[data-theme="forest"] .tab-btn.active,[data-theme="slate"] .tab-btn.active,[data-theme="crimson"] .tab-btn.active,[data-theme="rosepine"] .tab-btn.active{box-shadow:inset 0 0 0 1px var(--accent-soft),0 1px 6px rgba(0,0,0,.18)}
+/* (#top-stats deprecated — values now live in #app-status-bar as .sb-stats) */
+#top-actions{display:flex;gap:5px;align-items:center;padding:0 14px 0 10px;border-left:1px solid var(--border-1);flex-shrink:0}
+.tab-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;background:transparent;border:1px solid transparent;border-radius:10px;cursor:pointer;font-size:1.18rem;color:var(--text-3);transition:all .15s ease;flex-shrink:0;line-height:1;padding:0}
+.tab-icon-btn:hover{background:var(--bg-3);color:var(--text-1);border-color:var(--border-2)}
+.tab-icon-btn.active{background:var(--bg-selected);border-color:var(--accent-soft);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.04)}
+[data-theme="dark"] .tab-icon-btn.active,[data-theme="nord"] .tab-icon-btn.active,[data-theme="forest"] .tab-icon-btn.active,[data-theme="slate"] .tab-icon-btn.active,[data-theme="crimson"] .tab-icon-btn.active,[data-theme="rosepine"] .tab-icon-btn.active{box-shadow:inset 0 0 0 1px var(--accent-soft),0 1px 6px rgba(0,0,0,.18)}
+/* Status-bar inline stats (Son 24S / Son 7G / Tümü) — match the bar's .72rem family */
+.sb-stats{white-space:nowrap;flex-shrink:0;color:var(--text-3)}
+.sb-stat-lbl{color:var(--text-4)}
+.sb-stats span#ts-24h,.sb-stats span#ts-7d,.sb-stats span#ts-all{color:var(--text-2);font-weight:600}
+.ts-sz{font-size:.66rem;color:var(--text-4);font-weight:400;white-space:nowrap}
+
+/* ── Layout ── */
+#layout{display:flex;flex:1;overflow:hidden}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Settings panel ── */
+#settings-panel{flex:1;overflow:hidden;display:none;flex-direction:column;background:var(--bg-1);padding:12px 16px;gap:10px;min-height:0}
+#settings-sub-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border-1);padding:0 4px;flex-shrink:0}
+.sub-tab-btn{padding:7px 16px;font-size:.83rem;font-weight:500;color:var(--text-3);border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;margin-bottom:-1px;display:inline-flex;align-items:center;gap:5px}
+.sub-tab-btn:hover{color:var(--text-1)}
+.sub-tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.settings-tab-content{display:none;flex-direction:column;gap:12px;flex:1;min-height:0;overflow-y:auto}
+.settings-tab-content.active{display:flex}
+#settings-tab-groups.settings-tab-content{overflow:hidden}
+#settings-row{display:flex;flex-direction:row;gap:12px;flex:1;min-height:0}
+#settings-row > .settings-card{flex:0 0 320px;align-self:stretch;overflow-y:auto;max-width:none}
+#settings-row > #settings-inner{flex:1;max-width:none;min-width:0}
+.settings-card{background:var(--bg-2);border-radius:10px;border:1px solid var(--border-1);padding:12px 16px;flex-shrink:0;max-width:1400px}
+.settings-card h3{font-size:.7rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.creds-current{font-size:.78rem;color:var(--text-2);margin-bottom:10px}
+.creds-current b{color:var(--text-1);font-family:'Cascadia Code','JetBrains Mono',monospace;font-weight:700}
+.creds-current span{font-family:'Cascadia Code','JetBrains Mono',monospace;color:var(--text-3)}
+.creds-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.creds-form input{flex:1;min-width:160px;padding:6px 10px;border:1px solid var(--input-border);border-radius:6px;font-size:.82rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:'Cascadia Code','JetBrains Mono',monospace}
+.creds-form input:focus{border-color:var(--accent)}
+.creds-btn{padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:600;white-space:nowrap}
+.creds-btn:hover{background:var(--accent-h)}
+.creds-btn-alt{background:transparent;color:#dc2626;border:1px solid #fca5a5}
+.creds-btn-alt:hover{background:#fee2e2;color:#b91c1c}
+.creds-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px;flex-wrap:wrap}
+.creds-hint{font-size:.71rem;color:var(--text-4)}
+.sync-current{font-size:.78rem;color:var(--text-2);margin-bottom:8px}
+.sync-current b{color:var(--text-1);font-family:'Cascadia Code','JetBrains Mono',monospace;font-weight:700}
+.sync-current span{font-family:'Cascadia Code','JetBrains Mono',monospace;color:var(--text-3)}
+.sync-presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.sync-preset{padding:5px 11px;border:1px solid var(--input-border);border-radius:99px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.74rem;font-weight:600}
+.sync-preset:hover{border-color:var(--accent-soft);background:var(--bg-selected)}
+.sync-preset.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sync-hint{font-size:.71rem;color:var(--text-3);line-height:1.5;background:var(--bg-3);padding:6px 9px;border-radius:6px}
+.sync-hint b{color:var(--text-2)}
+#settings-inner{display:flex;flex-direction:column;background:var(--bg-2);border-radius:10px;border:1px solid var(--border-1);overflow:hidden;max-width:900px;min-width:0;flex:1}
+#sidebar-head{padding:6px 6px 0;border-bottom:1px solid var(--border-3)}
+#sidebar-sort{display:flex;gap:3px;padding:4px 2px 5px}
+.gsort-btn{flex:1;padding:2px 0;border:1px solid var(--input-border);border-radius:5px;font-size:.69rem;cursor:pointer;background:var(--bg-2);color:var(--text-3);text-align:center}
+.gsort-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+#group-filter{width:100%;padding:5px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;outline:none;background:var(--bg-2);color:var(--text-1)}
+#group-filter:focus{border-color:var(--accent)}
+#group-list{flex:1;overflow-y:auto;padding:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:7px;align-content:start}
+.g-item{display:flex;flex-direction:column;padding:9px 11px;cursor:pointer;border-radius:9px;border:1px solid var(--border-2);position:relative;min-height:86px;transition:all .12s;gap:6px;background:var(--bg-2);user-select:none}
+.g-item:hover{background:var(--bg-hover);border-color:var(--accent-soft);transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+.g-item.excluded{opacity:.5}
+.g-item.g-hidden{opacity:.6}
+.g-item.g-selected{background:var(--bg-selected);border-color:var(--accent)}
+.g-name{font-size:.79rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35;color:var(--text-1);font-weight:600}
+.g-acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:auto;padding-top:2px}
+.ga{display:inline-flex;align-items:center;justify-content:center;padding:3px 7px;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-3);cursor:pointer;font-size:.78rem;color:var(--text-3);line-height:1.3;transition:all .12s;flex-shrink:0;text-decoration:none}
+.ga:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--input-border)}
+.ga-hidden-on{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.ga-follow-on{background:var(--bg-info);border-color:var(--accent-soft);color:var(--accent)}
+.g-meta{font-size:.7rem;color:var(--text-3);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.005em}
+#sidebar-bulk{display:none;flex-direction:column;padding:6px 8px;gap:4px;border-top:1px solid var(--bg-info);background:var(--bg-selected);flex-shrink:0}
+#sidebar-bulk .bulk-info{font-size:.72rem;color:var(--accent-h);font-weight:600;padding:1px 4px}
+.bulk-actions{display:flex;gap:4px}
+.bulk-btn{flex:1;padding:4px 6px;border:1px solid var(--accent-soft);border-radius:6px;background:var(--bg-2);cursor:pointer;font-size:.71rem;font-weight:600;color:var(--accent-h)}
+.bulk-btn:hover{background:var(--bg-info)}
+.bulk-btn.cancel{color:var(--text-3);border-color:var(--input-border)}
+.bulk-btn-danger{color:#dc2626;border-color:#fca5a5}
+.bulk-btn-danger:hover{background:#fee2e2}
+.ga-leave{color:#dc2626;border-color:#fca5a5}
+.ga-leave:hover{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}
+#sidebar-foot{padding:6px 12px;border-top:1px solid var(--border-3)}
+#show-hidden-btn{padding:5px 12px;border:1px solid var(--input-border);border-radius:7px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.76rem;font-weight:500;transition:all .12s}
+#show-hidden-btn:hover{background:var(--bg-hover);border-color:var(--accent-soft)}
+#show-hidden-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* ── Theme picker ── */
+.theme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.theme-card{padding:6px;border:2px solid var(--border-1);border-radius:8px;cursor:pointer;text-align:center;transition:border-color .15s;background:var(--bg-1)}
+.theme-card:hover{border-color:var(--text-4)}
+.theme-card.active{border-color:var(--accent)}
+.theme-preview{width:100%;height:48px;border-radius:5px;overflow:hidden;position:relative}
+.theme-preview .prev-card{position:absolute;left:14%;top:18%;width:72%;height:64%;border-radius:3px}
+.theme-preview .prev-line{position:absolute;height:4px;border-radius:2px}
+.theme-card span{display:block;margin-top:5px;font-size:.74rem;color:var(--text-2);font-weight:600}
+.lang-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.lang-card{display:flex;align-items:center;gap:9px;padding:9px 12px;border:2px solid var(--border-1);border-radius:8px;cursor:pointer;transition:all .15s;background:var(--bg-1)}
+.lang-card:hover{border-color:var(--text-4);background:var(--bg-hover)}
+.lang-card.active{border-color:var(--accent);background:var(--bg-selected)}
+.lang-card .lang-flag{font-size:1.4rem;line-height:1}
+.lang-card .lang-name{font-size:.86rem;font-weight:600;color:var(--text-2)}
+.lang-card.active .lang-name{color:var(--accent)}
+
+/* ── Telemetry card ── */
+#telemetry-card .tlm-row{display:flex;align-items:center;gap:9px;margin-bottom:8px;font-size:.82rem;color:var(--text-2)}
+#telemetry-card .tlm-row.tlm-row-stack{flex-direction:column;align-items:flex-start;gap:3px}
+#telemetry-card .tlm-row input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent)}
+#telemetry-card .tlm-row input[type="text"],#telemetry-card .tlm-row input[type="number"]{width:100%;padding:6px 9px;border:1px solid var(--input-border);border-radius:6px;font-size:.82rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:inherit}
+#telemetry-card .tlm-row input:focus{border-color:var(--accent)}
+#telemetry-card .tlm-status{font-size:.74rem;color:var(--text-3);margin-top:8px;font-family:'Cascadia Code',monospace}
+#telemetry-card .tlm-status.error{color:#dc2626}
+#telemetry-card .tlm-status.ok{color:#16a34a}
+#telemetry-card .tlm-foot{display:flex;align-items:center;gap:6px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border-3);flex-wrap:wrap}
+#telemetry-card .tlm-id{font-size:.72rem;color:var(--text-3)}
+#telemetry-card .tlm-id code{background:var(--bg-3);padding:1px 6px;border-radius:4px;font-size:.95em}
+#telemetry-card .tlm-flex{flex:1}
+
+
+/* ── Downloads panel ── */
+#downloads-panel{flex:1;overflow:hidden;display:none;flex-direction:column;background:var(--bg-2)}
+#dl-hist-hd{padding:8px 16px 6px;font-size:.73rem;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border-1);flex-shrink:0;background:var(--bg-2);display:flex;align-items:center;gap:8px}
+#dl-hist-body-wrap{flex:1;overflow-y:auto;background:var(--bg-2)}
+.dlt-table{width:100%;border-collapse:collapse;font-size:.79rem}
+.dlt-table thead{position:sticky;top:0;z-index:3}
+.dlt-table th{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:6px 10px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap}
+.dlt-table td{padding:5px 10px;border-bottom:1px solid var(--border-3);color:var(--text-1);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlt-table tr:hover td{background:var(--bg-hover)}
+.dlt-table th.dlt-sortable{cursor:pointer;user-select:none}
+.dlt-table th.dlt-sortable:hover{background:var(--bg-hover)}
+.dlt-table tr.dl-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);padding:3px 6px}
+.dlt-table tr.dl-flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.dlt-table tr.dl-flt-row input:focus{border-color:var(--accent)}
+.dl-st-active{color:var(--accent);font-weight:600;font-size:.73rem}
+.dl-st-done{color:#16a34a;font-weight:600;font-size:.73rem}
+.dl-st-queued{color:var(--text-4);font-size:.73rem}
+.dl-bar{width:70px;height:4px;background:var(--border-2);border-radius:2px;overflow:hidden;flex-shrink:0}
+.dl-bar-fill{height:100%;background:var(--accent);transition:width .3s}
+.dl-act{padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;font-size:.78rem;margin-right:4px;color:var(--text-2);line-height:1}
+.dl-act:hover{background:var(--bg-hover);border-color:var(--accent-soft)}
+.dl-act-del:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.dl-bulk-btn{padding:3px 10px;border:1px solid var(--accent-soft);border-radius:5px;background:var(--bg-2);cursor:pointer;font-size:.72rem;font-weight:600;color:var(--accent-h)}
+.dl-bulk-btn:hover{background:var(--bg-info)}
+.dl-bulk-btn-del{color:#dc2626;border-color:#fca5a5}
+.dl-bulk-btn-del:hover{background:#fee2e2}
+.dl-bulk-btn-alt{color:var(--text-3);border-color:var(--input-border)}
+.dl-bulk-btn-alt:hover{background:var(--bg-hover)}
+
+/* ── Combined filter bar ──
+   Secondary surface beneath the tab strip — recessed background, tighter,
+   muted; the user reads it as "controls", not as primary navigation. */
+#filter-bar{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:5px 16px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;flex-shrink:0;color:var(--text-3)}
+#filter-bar.hidden-bar{display:none}
+#type-divider{width:1px;height:22px;background:var(--border-1);flex-shrink:0}
+.type-btn{padding:3px 10px;border:1px solid var(--input-border);border-radius:99px;font-size:.75rem;font-weight:400;cursor:pointer;background:var(--bg-2);color:var(--text-1);transition:all .15s;white-space:nowrap}
+.type-btn:hover{border-color:var(--accent-soft);background:var(--bg-selected)}
+.type-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.flt-group{display:flex;align-items:center;gap:6px}
+.flt-label{font-size:.72rem;color:var(--text-3);white-space:nowrap}
+#ext-input,#date-from,#date-to{padding:4px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;outline:none;background:var(--bg-2);color:var(--text-1)}
+#ext-input{width:70px}
+#ext-input:focus,#date-from:focus,#date-to:focus{border-color:var(--accent)}
+.sep{color:var(--input-border)}
+#chip-list{display:flex;flex-wrap:wrap;gap:4px}
+.flt-count-pill{display:inline-flex;align-items:center;font-size:.74rem;font-weight:600;color:var(--text-2);background:var(--bg-3);padding:4px 11px;border-radius:99px;border:1px solid var(--border-2);white-space:nowrap;line-height:1.3}
+.chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.72rem;font-weight:600;cursor:pointer}
+.chip::after{content:'×'}
+.chip:hover{background:var(--bg-info-h)}
+
+/* ── Size slider ── */
+#size-slider-wrap{display:flex;flex-direction:column;gap:1px;min-width:160px}
+#size-slider-track{position:relative;height:20px;display:flex;align-items:center}
+#size-range-fill{position:absolute;height:4px;background:var(--accent);border-radius:2px;pointer-events:none}
+.size-thumb{position:absolute;width:100%;height:4px;background:transparent;outline:none;-webkit-appearance:none;pointer-events:none;border-radius:2px}
+.size-thumb::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--bg-2);box-shadow:0 1px 4px rgba(0,0,0,.25);pointer-events:all;cursor:pointer}
+.size-thumb::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--bg-2);box-shadow:0 1px 4px rgba(0,0,0,.25);pointer-events:all;cursor:pointer;border-style:solid}
+#size-labels{display:flex;justify-content:space-between;font-size:.67rem;color:var(--text-3)}
+
+/* ── Link filter bar ── */
+#link-filter-bar{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:5px 16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;flex-shrink:0;color:var(--text-3)}
+#link-filter-bar.hidden-bar{display:none}
+#link-search{padding:4px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;width:190px;outline:none;background:var(--bg-2);color:var(--text-1)}
+#link-search:focus{border-color:var(--accent)}
+#platform-sel{padding:4px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none}
+
+/* ── Table ── */
+#table-wrap{flex:1;overflow:auto;position:relative;background:var(--bg-2)}
+table{width:100%;border-collapse:collapse;font-size:.79rem}
+#files-table{table-layout:fixed;min-width:860px;width:100%}
+#files-table .col-group{width:16%}
+#files-table .col-size {width:9%}
+#files-table .col-date {width:14%}
+#files-table .col-ext  {width:60px}    /* fixed so the sticky col 4 (name) can use a px left offset */
+#files-table .col-dl   {width:10%}
+#files-table .col-ctx  {width:13%}
+thead{position:sticky;top:0;z-index:5}
+thead tr:first-child th{background:var(--bg-3);border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);padding:7px 10px;white-space:nowrap;text-align:left;font-weight:600;color:var(--text-2);position:relative;user-select:none}
+thead tr:first-child th:last-child{border-right:none}
+thead tr:first-child th.sortable{cursor:pointer;user-select:none}
+thead tr:first-child th.sortable:hover{background:var(--bg-hover)}
+thead tr.flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);border-right:1px solid var(--border-2);padding:3px 6px}
+thead tr.flt-row th:last-child{border-right:none}
+thead tr.flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+thead tr.flt-row input:focus{border-color:var(--accent)}
+.range-input-wrap{display:flex;gap:2px}
+.range-input-wrap input{font-size:.7rem!important;padding:2px 3px!important;text-align:center}
+tbody tr{border-bottom:1px solid var(--border-2);transition:background .1s;cursor:pointer}
+tbody tr:hover{background:var(--bg-hover)}
+tbody tr.row-selected{background:var(--bg-selected)!important}
+tbody td{border-right:1px solid var(--border-3)}
+tbody td:last-child{border-right:none}
+.col-resize-handle{position:absolute;top:0;right:-3px;width:7px;height:100vh;cursor:col-resize;z-index:6;background:transparent}
+.col-resize-handle:hover,.col-resize-handle.active{background:rgba(37,99,235,.25)}
+td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
+.chk-cell{width:26px;padding:2px 3px;text-align:center;white-space:nowrap}
+.num-cell{width:40px;text-align:right;color:var(--text-4);font-size:.72rem;padding:4px 6px}
+.ext-badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:.67rem;font-weight:700;letter-spacing:.03em;cursor:pointer;white-space:nowrap}
+.sort-arrow{margin-left:3px;opacity:.4;font-size:.72em}
+.sort-arrow.active{opacity:1;color:var(--accent)}
+.no-data{text-align:center;padding:48px;color:var(--text-4);font-size:.9rem}
+.dl-link{color:var(--accent);cursor:pointer;text-decoration:underline;font-size:.73rem}
+.dl-prog{font-size:.71rem;color:var(--text-3)}
+.dl-done{font-size:.73rem;color:#16a34a;font-weight:600}
+.g-link{color:var(--accent);cursor:pointer}
+.g-link:hover{text-decoration:underline}
+.ctx-cell{font-size:.71rem;color:var(--text-3)}
+.link-files-cell{font-size:.74rem}
+.link-dup-badge{display:inline-block;padding:1px 6px;margin-left:5px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.66rem;font-weight:700;letter-spacing:.02em;cursor:help;vertical-align:middle}
+.link-files-ok{color:var(--text-1);font-weight:500;cursor:default}
+.link-files-pending{color:var(--text-4);cursor:default}
+.link-files-dead{color:#dc2626;font-style:italic;cursor:default}
+.link-files-unknown{color:var(--text-4);cursor:default}
+
+/* ── Sticky frozen columns (files table) ──
+   Order: chk(26) | #(40) | ext(60) | name(rest). The shadow + border live
+   on the rightmost sticky col (name) to mark the end of the frozen zone. */
+#files-table th:nth-child(1),#files-table td:nth-child(1){position:sticky;left:0}
+#files-table th:nth-child(2),#files-table td:nth-child(2){position:sticky;left:26px}
+#files-table th:nth-child(3),#files-table td:nth-child(3){position:sticky;left:66px}
+#files-table th:nth-child(4),#files-table td:nth-child(4){position:sticky;left:126px;border-right:1px solid var(--border-1);box-shadow:4px 0 6px -2px var(--frozen-shadow)}
+#files-table thead th:nth-child(1),#files-table thead th:nth-child(2),#files-table thead th:nth-child(3),#files-table thead th:nth-child(4){z-index:7;background:var(--bg-3)}
+#files-table tbody td:nth-child(1),#files-table tbody td:nth-child(2),#files-table tbody td:nth-child(3),#files-table tbody td:nth-child(4){z-index:3;background:var(--bg-2)}
+#files-table tbody tr:hover td:nth-child(1),#files-table tbody tr:hover td:nth-child(2),#files-table tbody tr:hover td:nth-child(3),#files-table tbody tr:hover td:nth-child(4){background:var(--bg-hover)}
+#files-table tbody tr.row-selected td:nth-child(1),#files-table tbody tr.row-selected td:nth-child(2),#files-table tbody tr.row-selected td:nth-child(3),#files-table tbody tr.row-selected td:nth-child(4){background:var(--bg-selected)}
+
+/* ── Sticky frozen columns (links table) ── */
+#links-table{table-layout:fixed;min-width:780px;width:100%}
+#links-table .lcol-platform{width:12%}
+#links-table .lcol-files   {width:16%}
+#links-table .lcol-group   {width:14%}
+#links-table .lcol-date    {width:9%}
+#links-table .lcol-ctx     {width:12%}
+#links-table th:nth-child(1),#links-table td:nth-child(1){position:sticky;left:0}
+#links-table th:nth-child(2),#links-table td:nth-child(2){position:sticky;left:26px}
+#links-table th:nth-child(3),#links-table td:nth-child(3){position:sticky;left:66px;border-right:1px solid var(--border-1);box-shadow:4px 0 6px -2px var(--frozen-shadow)}
+#links-table thead th:nth-child(1),#links-table thead th:nth-child(2),#links-table thead th:nth-child(3){z-index:7;background:var(--bg-3)}
+#links-table tbody td:nth-child(1),#links-table tbody td:nth-child(2),#links-table tbody td:nth-child(3){z-index:3;background:var(--bg-2)}
+#links-table tbody tr:hover td:nth-child(1),#links-table tbody tr:hover td:nth-child(2),#links-table tbody tr:hover td:nth-child(3){background:var(--bg-hover)}
+
+/* ── Context tooltip ── */
+#ctx-tip{position:fixed;z-index:999;background:#1e293b;color:#f1f5f9;border-radius:8px;padding:8px 12px;font-size:.78rem;max-width:320px;line-height:1.5;pointer-events:none;display:none;box-shadow:0 8px 24px rgba(0,0,0,.25);word-break:break-word;white-space:pre-wrap}
+
+/* ── Platform badges ── */
+.plat-badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:.7rem;font-weight:700;white-space:nowrap}
+.plat-gdrive{background:#e8f5e9;color:#2e7d32}.plat-mega{background:#fce4ec;color:#c62828}
+.plat-mediafire{background:#fff3e0;color:#e65100}.plat-onedrive{background:#e3f2fd;color:#0d47a1}
+.plat-dropbox{background:#e0f7fa;color:#00695c}.plat-youtube{background:#ffebee;color:#b71c1c}
+.plat-github{background:#f5f5f5;color:#212121}.plat-other{background:#f3f4f6;color:#374151}
+
+/* ── Pagination (now hosts sync info + Tara button) ── */
+#pagination{background:var(--bg-2);border-top:1px solid var(--border-1);padding:6px 16px;display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-shrink:0;flex-wrap:wrap;font-size:.73rem;color:var(--text-3)}
+#pag-limit{padding:3px 6px;border:1px solid var(--input-border);border-radius:6px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.pg-btn{min-width:30px;height:28px;padding:0 7px;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);cursor:pointer;font-size:.76rem;font-weight:500}
+.pg-btn:hover:not(:disabled){background:var(--bg-selected);border-color:var(--accent-soft)}
+.pg-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pg-btn:disabled{opacity:.4;cursor:default}
+.pg-ellipsis{color:var(--text-4);padding:0 2px;font-size:.78rem}
+#hunter-pager{display:none;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border-1);background:var(--bg-2);flex-wrap:wrap;font-size:.73rem;color:var(--text-3)}
+#hunter-pager.has-rows{display:flex}
+#hunter-pager .hp-info{font-size:.72rem;color:var(--text-3)}
+#hunter-pager .hp-info b{color:var(--text-1);font-variant-numeric:tabular-nums}
+#hunter-pager select{padding:3px 6px;border:1px solid var(--input-border);border-radius:6px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+
+/* ── Toast notifications ── */
+#toast-container{position:fixed;bottom:54px;right:16px;z-index:200;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--bg-2);border:1px solid var(--border-1);border-left:4px solid var(--accent);border-radius:8px;padding:9px 14px;box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:.78rem;color:var(--text-1);max-width:330px;display:flex;align-items:center;gap:10px;pointer-events:auto;opacity:0;transform:translateX(20px);transition:opacity .25s,transform .25s}
+.toast.show{opacity:1;transform:translateX(0)}
+.toast.fade{opacity:0;transform:translateX(20px)}
+.toast a{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline}
+
+/* ── App status bar (sync + bulk + last-sync) ── */
+#app-status-bar{background:var(--bg-2);border-top:1px solid var(--border-1);padding:5px 16px;flex-shrink:0;display:flex;align-items:center;gap:10px;font-size:.72rem;color:var(--text-3);min-height:32px;flex-wrap:nowrap;overflow:hidden}
+#app-status-bar #pag-sync{font-weight:600;white-space:nowrap;flex-shrink:0}
+#app-status-bar #pag-current-group{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-style:italic;flex-shrink:1}
+#app-status-bar #pag-next{white-space:nowrap;flex-shrink:0;color:var(--text-4)}
+#app-status-bar #pg-sync-btn{padding:3px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;white-space:nowrap;flex-shrink:0}
+#app-status-bar #pg-sync-btn:hover:not(:disabled){background:var(--accent-h)}
+#app-status-bar #pg-sync-btn:disabled{background:var(--accent-soft);cursor:not-allowed}
+#pagination #bulk-dl-btn,#pagination #bulk-copy-btn{padding:4px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;display:none;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap}
+#pagination #bulk-dl-btn:hover,#pagination #bulk-copy-btn:hover{background:var(--accent-h)}
+#app-status-bar .sb-spacer{flex:1}
+#sb-last-sync{white-space:nowrap;flex-shrink:0}
+#sb-elapsed{white-space:nowrap;color:var(--text-2);font-weight:600;flex-shrink:0}
+.sb-sep{color:var(--input-border);flex-shrink:0}
+
+/* ── Accounts ── */
+#accounts-card h3{display:flex;align-items:center;gap:6px}
+#accounts-list{display:flex;flex-direction:column;gap:8px}
+.acc-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:8px}
+.acc-row .acc-name{font-size:.86rem;font-weight:600;color:var(--text-1);flex-shrink:0;min-width:80px}
+.acc-row .acc-meta{font-size:.7rem;color:var(--text-3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-row .acc-status{font-size:.72rem;font-weight:600;padding:2px 9px;border-radius:99px;white-space:nowrap}
+.acc-row .acc-status.ok{background:#dcfce7;color:#166534}
+.acc-row .acc-status.no{background:#fee2e2;color:#991b1b}
+[data-theme="dark"] .acc-row .acc-status.ok,[data-theme="nord"] .acc-row .acc-status.ok,[data-theme="forest"] .acc-row .acc-status.ok,[data-theme="slate"] .acc-row .acc-status.ok,[data-theme="crimson"] .acc-row .acc-status.ok,[data-theme="rosepine"] .acc-row .acc-status.ok{background:#14532d;color:#86efac}
+[data-theme="dark"] .acc-row .acc-status.no,[data-theme="nord"] .acc-row .acc-status.no,[data-theme="forest"] .acc-row .acc-status.no,[data-theme="slate"] .acc-row .acc-status.no,[data-theme="crimson"] .acc-row .acc-status.no,[data-theme="rosepine"] .acc-row .acc-status.no{background:#7f1d1d;color:#fecaca}
+.acc-row .acc-actions{display:flex;gap:4px}
+.acc-row .acc-btn{padding:3px 9px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.72rem;font-weight:500}
+.acc-row .acc-btn:hover{background:var(--bg-hover)}
+.acc-row .acc-btn-danger:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.creds-btn-add{padding:4px 12px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.74rem;font-weight:600}
+.creds-btn-add:hover{background:var(--accent-h)}
+
+/* ── Column group multi-select filter ── */
+.cgf-wrap{position:relative;width:100%}
+.cgf-trigger{display:flex;align-items:center;gap:4px;width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;background:var(--bg-2);color:var(--text-1);font-size:.74rem;cursor:pointer;text-align:left;line-height:1.4;font-family:inherit}
+.cgf-trigger:hover{border-color:var(--accent-soft);background:var(--bg-hover)}
+.cgf-trigger #cgf-label{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cgf-trigger .cgf-caret{font-size:.7rem;color:var(--text-4);flex-shrink:0}
+.cgf-trigger.cgf-active{border-color:var(--accent);background:var(--bg-selected);color:var(--accent)}
+.cgf-dropdown{position:absolute;top:100%;left:0;margin-top:4px;width:280px;max-width:90vw;background:var(--bg-2);border:1px solid var(--border-1);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);z-index:50;padding:8px;display:flex;flex-direction:column;gap:6px;text-align:left}
+.cgf-dropdown #cgf-search{padding:5px 8px;border:1px solid var(--input-border);border-radius:5px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.cgf-dropdown #cgf-search:focus{border-color:var(--accent)}
+.cgf-actions{display:flex;gap:4px}
+.cgf-actions button{flex:1;padding:4px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-3);color:var(--text-2);cursor:pointer;font-size:.7rem;font-weight:500;font-family:inherit}
+.cgf-actions button:hover{background:var(--bg-hover);border-color:var(--accent-soft)}
+#cgf-list{max-height:280px;overflow-y:auto;border:1px solid var(--border-3);border-radius:5px;background:var(--bg-3)}
+.cgf-item{display:flex;align-items:center;gap:7px;padding:5px 8px;cursor:pointer;font-size:.76rem;color:var(--text-1);border-bottom:1px solid transparent;text-align:left}
+.cgf-item:hover{background:var(--bg-hover)}
+.cgf-item input[type="checkbox"]{width:14px!important;height:14px!important;flex:none;flex-shrink:0;cursor:pointer;margin:0;padding:0!important;border:1px solid var(--input-border)!important;border-radius:3px!important;background:var(--bg-2)!important;accent-color:var(--accent)}
+.cgf-item .cgf-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.cgf-item .cgf-cnt{color:var(--text-4);font-size:.66rem;flex-shrink:0}
+.cgf-item.cgf-selected{background:var(--bg-selected);color:var(--accent)}
+
+/* ── Hunter panel ── */
+
+.hunter-info-card{position:relative;background:linear-gradient(135deg,var(--bg-info),var(--bg-2));border:1px solid var(--accent-soft);border-radius:11px;padding:14px 18px}
+.hunter-info-card h3{font-size:.95rem;font-weight:700;color:var(--accent-h);margin-bottom:6px}
+.hunter-info-card .hunter-info-lead{font-size:.84rem;color:var(--text-2);margin-bottom:12px;line-height:1.5}
+.hunter-info-card h4{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-top:14px;margin-bottom:8px}
+.hunter-info-stages{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.hunter-info-stage{background:var(--bg-2);border:1px solid var(--border-2);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:3px}
+.hunter-info-stage b{font-size:.78rem;color:var(--text-1)}
+.hunter-info-stage span{font-size:.74rem;color:var(--text-3);line-height:1.45}
+.hunter-info-actions{list-style:none;display:flex;flex-direction:column;gap:6px;margin:0;padding:0}
+.hunter-info-actions li{background:var(--bg-2);border:1px solid var(--border-2);border-radius:8px;padding:8px 11px;display:flex;flex-direction:column;gap:2px}
+.hunter-info-actions li b{font-size:.78rem;color:var(--accent-h)}
+.hunter-info-actions li span{font-size:.74rem;color:var(--text-2);line-height:1.5}
+.hunter-info-actions li i{color:var(--text-3)}
+.hunter-info-close{position:absolute;top:8px;right:10px;width:24px;height:24px;border:none;background:transparent;color:var(--text-3);font-size:1.1rem;cursor:pointer;border-radius:5px;line-height:1}
+.hunter-info-close:hover{background:var(--bg-hover);color:var(--text-1)}
+.hunter-whatis-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;border:1px solid var(--accent-soft);background:var(--bg-info);color:var(--accent-h);font-weight:700;font-size:.95rem;cursor:pointer;transition:all .15s;font-family:inherit;flex-shrink:0}
+.hunter-whatis-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent);transform:scale(1.05)}
+/* When the info card is rendered inside an overlay, size it like a modal */
+.hunter-overlay > .hunter-info-card{max-width:760px;width:100%;max-height:88vh;overflow-y:auto;background:var(--bg-2);box-shadow:0 20px 60px rgba(0,0,0,.35);border-radius:12px}
+
+.hunter-info-card.collapsed{padding:8px 14px}
+.hunter-info-card.collapsed .hunter-info-lead,
+.hunter-info-card.collapsed .hunter-info-stages,
+.hunter-info-card.collapsed h4,
+.hunter-info-card.collapsed .hunter-info-actions{display:none}
+.hunter-info-card.collapsed h3{margin-bottom:0;cursor:pointer;font-size:.85rem}
+.hunter-info-card.collapsed h3::after{content:' ▾'}
+.hunter-info-card.collapsed .hunter-info-close{display:none}
+
+.hd-actions-help{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding:10px 12px;background:var(--bg-3);border-radius:7px;font-size:.74rem;color:var(--text-2);line-height:1.45}
+.hd-actions-help .hd-help-row{display:flex;gap:6px}
+.hd-actions-help .hd-help-row b{flex-shrink:0;min-width:80px;color:var(--accent-h)}
+#hunter-panel{flex:1;overflow-y:auto;display:none;flex-direction:column;background:var(--bg-1);padding:12px 16px;gap:10px;min-height:0}
+.hunter-toolbar{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;padding:8px 12px;flex-wrap:wrap}
+.hunter-flex{flex:1}
+.hunter-live{font-size:.75rem;color:var(--text-3);font-style:italic}
+.hunter-btn-primary{padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.78rem;font-weight:600}
+.hunter-btn-primary:hover:not(:disabled){background:var(--accent-h)}
+.hunter-btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.hunter-btn-alt{padding:5px 12px;background:var(--bg-3);color:var(--text-2);border:1px solid var(--input-border);border-radius:7px;cursor:pointer;font-size:.76rem;font-weight:500}
+.hunter-btn-alt:hover{background:var(--bg-hover)}
+.hunter-sel{padding:4px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.76rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.hunter-card{background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;padding:12px 16px}
+.hunter-card h3{font-size:.78rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.hunter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px 14px}
+.hunter-row{display:flex;flex-direction:column;gap:3px;font-size:.75rem;color:var(--text-2)}
+.hunter-row.hunter-row-wide{grid-column:span 2}
+.hunter-row input[type="text"],.hunter-row input[type="number"],.hunter-row select{padding:5px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.hunter-row input[type="text"]:focus,.hunter-row input[type="number"]:focus,.hunter-row select:focus{border-color:var(--accent)}
+.hunter-row input[type="checkbox"]{width:16px;height:16px;align-self:flex-start;margin-top:3px;accent-color:var(--accent)}
+.hf-help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--bg-3);color:var(--text-3);font-size:.65rem;font-weight:700;cursor:help;border:1px solid var(--border-2);position:relative;margin-left:4px;line-height:1;user-select:none;flex-shrink:0;vertical-align:middle}
+.hf-help:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hf-help::after{content:attr(data-help);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e293b;color:#f1f5f9;padding:8px 11px;border-radius:7px;font-size:.74rem;font-weight:400;white-space:normal;width:max-content;max-width:300px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .12s;z-index:300;text-align:left;font-style:normal;letter-spacing:0}
+.hf-help::before{content:'';position:absolute;bottom:calc(100% + 1px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#1e293b;opacity:0;pointer-events:none;transition:opacity .12s;z-index:300}
+.hf-help:hover::after,.hf-help:hover::before{opacity:1}
+/* Edge-clip protection: rightmost rows shift tooltip leftward */
+.hunter-grid > .hunter-row:nth-child(3n) .hf-help::after{left:auto;right:0;transform:none}
+.hunter-grid > .hunter-row:nth-child(3n) .hf-help::before{left:auto;right:7px;transform:none}
+
+.hunter-foot{display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border-3)}
+.hunter-meta{font-size:.72rem;color:var(--text-3)}
+
+#hunter-candidates-list
+#hunter-grid-wrap{background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;overflow:auto;max-height:calc(100vh - 280px)}
+#hunter-grid{width:100%;border-collapse:collapse;font-size:.78rem;table-layout:fixed}
+#hunter-grid thead{position:sticky;top:var(--hg-bar-h,0);z-index:5}
+#hunter-grid thead th{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:7px 10px;text-align:left;font-weight:600;color:var(--text-2);white-space:nowrap;font-size:.74rem;user-select:none}
+#hunter-grid th.hg-sortable{cursor:pointer}
+#hunter-grid th.hg-sortable:hover{background:var(--bg-hover)}
+#hunter-grid tr.hg-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);padding:3px 6px}
+#hunter-grid tr.hg-flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.72rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:inherit}
+#hunter-grid tr.hg-flt-row input:focus{border-color:var(--accent)}
+#hunter-grid tbody tr{border-bottom:1px solid var(--border-2);cursor:pointer;transition:background .1s}
+#hunter-grid tbody tr:hover{background:var(--bg-hover)}
+#hunter-grid tbody td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border-3)}
+#hunter-grid tbody td:last-child{border-right:none}
+#hunter-grid .hg-channel{display:flex;align-items:center;gap:6px;min-width:0}
+#hunter-grid .hg-channel .hg-title{font-weight:400;font-style:normal;text-decoration:none;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;font-family:inherit}
+#hunter-grid .hg-channel code{background:var(--bg-info);color:var(--accent-h);padding:0 6px;border-radius:4px;font-size:.72rem}
+#hunter-grid .hg-queue-badge{display:inline-flex;align-items:center;gap:3px;background:#fff7e0;color:#92400e;border:1px solid #fcd34d;padding:0 6px;border-radius:99px;font-size:.7rem;font-weight:600;cursor:help;flex-shrink:0}
+#hunter-grid .hg-already-joined{display:inline-flex;align-items:center;padding:2px 9px;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:99px;font-size:.7rem;font-weight:600;cursor:help}
+#hunter-grid .hg-score{display:inline-flex;align-items:center;justify-content:center;width:36px;height:24px;border-radius:6px;background:var(--bg-3);color:var(--text-2);font-weight:700;font-size:.78rem;border:1px solid var(--border-2)}
+#hunter-grid .hg-score.zero{background:var(--bg-3);color:var(--text-4)}
+#hunter-grid .hg-types{display:flex;gap:1px;height:14px;width:100%}
+#hunter-grid .hg-types-seg{border-radius:1px}
+#hunter-grid .hg-status{display:inline-block;padding:1px 7px;border-radius:99px;font-size:.66rem;font-weight:600}
+#hunter-grid .hg-status.s-discovered{background:var(--bg-info);color:var(--accent-h)}
+#hunter-grid .hg-status.s-enriched{background:#dcfce7;color:#166534}
+#hunter-grid .hg-status.s-joined{background:var(--accent);color:#fff}
+#hunter-grid .hg-status.s-rejected{background:#fee2e2;color:#991b1b}
+#hunter-grid .hg-act{display:flex;gap:3px}
+#hunter-grid .hg-btn{padding:3px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.7rem;font-weight:500}
+#hunter-grid .hg-btn:hover{background:var(--bg-hover)}
+#hunter-grid .hg-btn.hg-btn-join{background:var(--accent);color:#fff;border-color:var(--accent)}
+#hunter-grid .hg-btn.hg-btn-join:hover{background:var(--accent-h)}
+#hunter-grid .hg-btn-reject:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+#hunter-grid .hg-sources{font-size:.65rem;color:var(--text-3);font-family:'Cascadia Code',monospace}
+
+#hunter-grid .hg-chk-cell{width:26px;padding:2px 3px;text-align:center;white-space:nowrap}
+#hunter-grid .hg-chk-cell input[type="checkbox"]{width:14px!important;height:14px!important;cursor:pointer;padding:0!important;margin:0;flex:none;accent-color:var(--accent)}
+#hunter-grid tbody tr.hg-row-selected{background:var(--bg-selected)!important}
+#hunter-grid tbody tr.hg-row-selected td{background:var(--bg-selected)}
+
+
+/* ── Hunter live monitor ── */
+#hunter-monitor{background:var(--bg-2);border:1px solid var(--accent-soft);border-radius:11px;padding:12px 16px;margin-bottom:8px;box-shadow:0 2px 12px rgba(37,99,235,.06)}
+.hm-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.hm-title{font-size:.86rem;font-weight:700;color:var(--accent-h);display:flex;align-items:center;gap:7px}
+.hm-spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;animation:hm-spin 0.9s linear infinite}
+@keyframes hm-spin{to{transform:rotate(360deg)}}
+.hm-flex{flex:1}
+.hm-elapsed{font-size:.74rem;color:var(--text-3);font-variant-numeric:tabular-nums;font-family:'Cascadia Code',monospace}
+.hm-btn{padding:5px 12px;border:1px solid var(--input-border);border-radius:7px;background:var(--bg-2);cursor:pointer;font-size:.76rem;font-weight:600;font-family:inherit}
+.hm-btn:hover{background:var(--bg-hover)}
+.hm-btn-skip{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+.hm-btn-skip:hover{background:#fde68a}
+.hm-btn-cancel{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.hm-btn-cancel:hover{background:#fecaca}
+.hm-help-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--accent-soft);background:var(--bg-info);color:var(--accent-h);font-weight:700;font-size:.92rem;cursor:pointer;transition:all .15s}
+.hm-help-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent);transform:scale(1.05)}
+.hunter-help-modal{background:var(--bg-2);border-radius:12px;padding:0;max-width:780px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.hh-head{padding:16px 22px;border-bottom:1px solid var(--border-1);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.hh-head h2{font-size:1.05rem;color:var(--text-1);flex:1}
+.hh-close{padding:5px 12px;background:var(--bg-3);border:1px solid var(--input-border);border-radius:6px;cursor:pointer;font-weight:600;font-size:.78rem;color:var(--text-2);font-family:inherit}
+.hh-close:hover{background:var(--bg-hover)}
+.hh-body{padding:18px 22px;overflow-y:auto;flex:1;line-height:1.55;font-size:.84rem;color:var(--text-1)}
+.hh-body h3{font-size:.88rem;color:var(--accent-h);margin-top:18px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border-3)}
+.hh-body h3:first-child{margin-top:0}
+.hh-body h4{font-size:.82rem;color:var(--text-2);margin-top:12px;margin-bottom:4px;font-weight:700}
+.hh-body p{margin-bottom:8px;color:var(--text-1)}
+.hh-body ul{margin-left:20px;margin-bottom:10px}
+.hh-body li{margin-bottom:5px}
+.hh-body code{background:var(--bg-info);color:var(--accent-h);padding:1px 6px;border-radius:4px;font-size:.95em}
+.hh-body b{color:var(--text-1)}
+.hh-body .hh-tag{display:inline-block;padding:1px 7px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:99px;font-size:.7rem;color:var(--text-2);margin-right:4px;font-family:'Cascadia Code',monospace}
+.hh-body .hh-good{color:#16a34a;font-weight:600}
+.hh-body .hh-warn{color:#d97706;font-weight:600}
+
+
+
+.hm-stages{display:flex;align-items:center;gap:6px;margin-bottom:12px}
+.hm-stage{display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border-2);border-radius:99px;background:var(--bg-3);font-size:.74rem;color:var(--text-3);position:relative}
+.hm-stage:not(:last-child)::after{content:'›';position:absolute;right:-7px;color:var(--text-4);font-weight:700;font-size:.85rem}
+.hm-stage.active{background:var(--bg-info);color:var(--accent-h);border-color:var(--accent-soft);font-weight:600}
+.hm-stage.done{background:#dcfce7;color:#166534;border-color:#86efac}
+.hm-stage.done .hm-num::after{content:'✓ '}
+[data-theme="dark"] .hm-stage.done,[data-theme="nord"] .hm-stage.done,[data-theme="forest"] .hm-stage.done,[data-theme="slate"] .hm-stage.done,[data-theme="crimson"] .hm-stage.done,[data-theme="rosepine"] .hm-stage.done{background:#14532d;color:#86efac}
+.hm-stage .hm-num{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:var(--bg-2);border-radius:50%;font-size:.7rem;font-weight:700;color:inherit;border:1px solid currentColor}
+.hm-stage.active .hm-num{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+.hm-detail{margin-bottom:10px;padding:9px 12px;background:var(--bg-3);border-radius:7px;font-size:.78rem;color:var(--text-2);min-height:32px}
+.hm-detail .hm-current{font-weight:600;color:var(--text-1)}
+.hm-detail code{background:var(--bg-2);padding:1px 6px;border-radius:4px;font-size:.92em}
+.hm-progress{display:flex;align-items:center;gap:8px;margin-top:6px}
+.hm-bar{flex:1;height:8px;background:var(--border-2);border-radius:4px;overflow:hidden}
+.hm-bar-fill{height:100%;background:var(--accent);transition:width .3s}
+.hm-progress-text{font-size:.72rem;color:var(--text-3);white-space:nowrap;font-variant-numeric:tabular-nums;min-width:60px;text-align:right}
+
+.hm-sources-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:5px;margin-top:8px}
+.hm-source-card{padding:6px 9px;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);font-size:.72rem;display:flex;justify-content:space-between;align-items:center}
+.hm-source-card.queued{opacity:.55}
+.hm-source-card.running{border-color:var(--accent);background:var(--bg-info);font-weight:600;color:var(--accent-h);animation:hm-pulse 1.2s ease-in-out infinite}
+@keyframes hm-pulse{0%,100%{box-shadow:0 0 0 0 var(--accent-soft)}50%{box-shadow:0 0 0 4px transparent}}
+.hm-source-card.done{border-color:#86efac;background:#dcfce7;color:#166534}
+.hm-source-card.error{border-color:#fca5a5;background:#fee2e2;color:#991b1b}
+.hm-source-card.cooldown{border-color:#fcd34d;background:#fef3c7;color:#92400e;opacity:.7}
+[data-theme="dark"] .hm-source-card.error,[data-theme="nord"] .hm-source-card.error,[data-theme="forest"] .hm-source-card.error,[data-theme="slate"] .hm-source-card.error,[data-theme="crimson"] .hm-source-card.error,[data-theme="rosepine"] .hm-source-card.error{background:#7f1d1d;color:#fecaca}
+[data-theme="dark"] .hm-source-card.cooldown,[data-theme="nord"] .hm-source-card.cooldown,[data-theme="forest"] .hm-source-card.cooldown,[data-theme="slate"] .hm-source-card.cooldown,[data-theme="crimson"] .hm-source-card.cooldown,[data-theme="rosepine"] .hm-source-card.cooldown{background:#78350f;color:#fde68a}
+[data-theme="dark"] .hm-source-card.done,[data-theme="nord"] .hm-source-card.done,[data-theme="forest"] .hm-source-card.done,[data-theme="slate"] .hm-source-card.done,[data-theme="crimson"] .hm-source-card.done,[data-theme="rosepine"] .hm-source-card.done{background:#14532d;color:#86efac}
+.hm-source-card .hm-src-cnt{font-weight:700;font-size:.78rem}
+
+.hm-events-wrap{margin-top:8px;border-top:1px solid var(--border-3);padding-top:8px}
+.hm-events-title{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin-bottom:5px}
+.hm-events{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.7rem;line-height:1.6;max-height:140px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:5px 9px}
+.hm-event{display:flex;gap:8px;border-bottom:1px solid var(--border-3)}
+.hm-event:last-child{border-bottom:none}
+.hm-event .hm-evt-time{color:var(--text-4);flex-shrink:0;font-size:.65rem}
+.hm-event .hm-evt-stage{flex-shrink:0;width:55px;color:var(--text-3);text-transform:uppercase;font-weight:600;font-size:.65rem}
+.hm-event .hm-evt-msg{flex:1;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hm-event.warn .hm-evt-msg{color:#d97706}
+.hm-event.error .hm-evt-msg{color:#dc2626}
+
+#hunter-bulk-bar{position:sticky;top:0;z-index:20;background:linear-gradient(90deg,var(--bg-selected),var(--bg-info));border-bottom:1px solid var(--accent-soft);padding:8px 14px;display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--accent-h);font-weight:600;animation:hbbslide .2s ease;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+@keyframes hbbslide{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+#hunter-bulk-bar .hbb-flex{flex:1}
+#hunter-bulk-count::after{content:' ';white-space:pre}
+.hbb-btn{padding:5px 12px;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.74rem;font-weight:600;font-family:inherit}
+.hbb-btn:hover{background:var(--bg-hover)}
+.hbb-btn.hbb-btn-deep{background:#fff7e0;color:#92400e;border-color:#fcd34d}
+.hbb-btn.hbb-btn-deep:hover{background:#ffe9b3}
+.hbb-btn.hbb-btn-join{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hbb-btn.hbb-btn-join:hover{background:var(--accent-h)}
+.hbb-btn.hbb-btn-bl{background:#1e293b;color:#fca5a5;border-color:#1e293b}
+.hbb-btn.hbb-btn-bl:hover{background:#0f172a}
+.hbb-btn.hbb-btn-cancel{background:transparent}
+
+/* File list inside detail modal */
+.hd-files-bar{display:flex;align-items:center;gap:8px;margin-top:6px;padding:8px 10px;background:var(--bg-3);border-radius:7px;flex-wrap:wrap;flex-shrink:0}
+.hd-files-bar input{padding:4px 8px;border:1px solid var(--input-border);border-radius:5px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none;flex:1;min-width:120px}
+.hd-files-bar input:focus{border-color:var(--accent)}
+.hd-files-meta{font-size:.72rem;color:var(--text-3);white-space:nowrap}
+.hd-files-progress{display:inline-flex;align-items:center;gap:8px}
+.hd-files-progress .hd-bar{flex:1;height:6px;background:var(--border-2);border-radius:3px;overflow:hidden}
+.hd-files-progress .hd-bar-fill{height:100%;background:var(--accent);transition:width .3s}
+/* Spinner used both inline (small) and as a big centered loading block */
+.hd-spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border-2);border-top-color:var(--accent);border-radius:50%;animation:hd-spin .9s linear infinite;flex-shrink:0;vertical-align:middle}
+/* Generic in-grid loading row — used by Files / Links / Downloads / Hunter
+   while the initial fetch is in flight. */
+.grid-loading-row td{padding:34px 16px!important;text-align:center;color:var(--text-3)}
+.grid-loading-row .gl-inner{display:inline-flex;align-items:center;gap:10px;font-size:.84rem}
+.grid-loading-row .hd-spinner{width:18px;height:18px;border-width:2.5px}
+@keyframes hd-spin{to{transform:rotate(360deg)}}
+.hd-loading-big{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:32px 16px;color:var(--text-3);font-size:.86rem;flex:1;min-height:0;text-align:center}
+.hd-loading-big .hd-spinner{width:30px;height:30px;border-width:3px}
+.hd-loading-big small{color:var(--text-4);font-size:.74rem;line-height:1.5}
+.hd-loading-big b{color:var(--accent);font-weight:700}
+.hd-files-table{width:100%;border-collapse:collapse;font-size:.76rem;margin-top:8px;display:block;max-height:340px;overflow-y:auto}
+.hd-files-table thead,.hd-files-table tbody{display:table;width:100%;table-layout:fixed}
+.hd-files-table thead{position:sticky;top:0}
+.hd-files-table th{background:var(--bg-3);padding:5px 8px;border-bottom:1px solid var(--border-2);font-weight:600;color:var(--text-2);text-align:left;font-size:.7rem;cursor:pointer;user-select:none}
+.hd-files-table td{padding:4px 8px;border-bottom:1px solid var(--border-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
+.hd-files-table th:nth-child(1),.hd-files-table td:nth-child(1){width:auto}
+.hd-files-table th:nth-child(2),.hd-files-table td:nth-child(2){width:60px}
+.hd-files-table th:nth-child(3),.hd-files-table td:nth-child(3){width:90px;text-align:right}
+.hd-files-table th:nth-child(4),.hd-files-table td:nth-child(4){width:130px}
+
+
+/* Hunter detail: simple file list (no search) */
+.hd-file-list{list-style:none;margin:8px 0 0;padding:0;flex:1;min-height:0;overflow-y:auto;border:1px solid var(--border-2);border-radius:7px;background:var(--bg-2)}
+.hd-file-list li{display:flex;align-items:center;gap:10px;padding:6px 11px;border-bottom:1px solid var(--border-3);font-size:.78rem}
+.hd-file-list li:last-child{border-bottom:none}
+.hd-file-list li:nth-child(odd){background:var(--bg-3)}
+.hd-file-list .hf-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
+.hd-file-list .hf-size{flex-shrink:0;width:80px;text-align:right;color:var(--text-3);font-variant-numeric:tabular-nums}
+.hd-file-list .hf-date{flex-shrink:0;width:115px;color:var(--text-4);font-size:.72rem;text-align:right}
+{display:flex;flex-direction:column;gap:6px}
+.hunter-cand{background:var(--bg-2);border:1px solid var(--border-2);border-radius:9px;padding:9px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:all .12s}
+.hunter-cand:hover{border-color:var(--accent-soft);background:var(--bg-hover);transform:translateY(-1px);box-shadow:0 2px 5px rgba(0,0,0,.05)}
+.hunter-cand .h-score{width:50px;height:50px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-h));color:#fff;font-weight:700;font-size:.92rem;box-shadow:0 2px 4px rgba(0,0,0,.1)}
+.hunter-cand .h-score.zero{background:var(--bg-3);color:var(--text-4);box-shadow:none}
+.hunter-cand .h-info{flex:1;min-width:0}
+.hunter-cand .h-title{font-weight:600;color:var(--text-1);font-size:.86rem;display:flex;align-items:center;gap:6px}
+.hunter-cand .h-title code{background:var(--bg-info);color:var(--accent-h);padding:0 6px;border-radius:4px;font-size:.78rem}
+.hunter-cand .h-meta{font-size:.7rem;color:var(--text-3);margin-top:2px;display:flex;flex-wrap:wrap;gap:9px}
+.hunter-cand .h-bars{display:flex;gap:2px;height:14px;width:140px;flex-shrink:0}
+.hunter-cand .h-bar-seg{flex:1;border-radius:2px;min-height:14px}
+.hunter-cand .h-actions{display:flex;gap:5px;flex-shrink:0}
+.hunter-cand .h-btn{padding:3px 9px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;font-size:.72rem;font-weight:500;color:var(--text-2)}
+.hunter-cand .h-btn-join{background:var(--accent);color:#fff;border-color:var(--accent)}
+.hunter-cand .h-btn-join:hover{background:var(--accent-h)}
+.hunter-cand .h-btn-reject:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.hunter-cand .h-status-pill{padding:1px 8px;border-radius:99px;font-size:.66rem;font-weight:600;background:var(--bg-3);color:var(--text-3)}
+.hunter-cand .h-status-pill.s-discovered{background:var(--bg-info);color:var(--accent-h)}
+.hunter-cand .h-status-pill.s-enriched{background:#dcfce7;color:#166534}
+.hunter-cand .h-status-pill.s-joined{background:var(--accent);color:#fff}
+.hunter-cand .h-status-pill.s-rejected{background:#fee2e2;color:#991b1b}
+.hunter-cand .h-status-pill.s-blacklisted{background:#1e293b;color:#fca5a5}
+.hunter-cand .h-status-pill.s-failed{background:#fef3c7;color:#92400e}
+
+#hunter-runs-card{flex-shrink:0}
+#hunter-runs-list{display:flex;flex-direction:column;gap:4px;font-size:.74rem;max-height:180px;overflow-y:auto;padding-right:4px}
+.hunter-run-row{display:flex;gap:12px;padding:5px 8px;background:var(--bg-3);border-radius:6px;color:var(--text-2)}
+
+.hunter-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:120;display:none;align-items:center;justify-content:center;padding:20px}
+.hunter-overlay.open{display:flex}
+/* Modal is now a vertical flex container. The body sections each manage
+   their own padding; the file-list region grows to absorb leftover vertical
+   space and is the only place that scrolls. The modal itself never scrolls. */
+.hunter-detail-modal{background:var(--bg-2);border-radius:12px;padding:0;max-width:780px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.hunter-detail-modal h2{font-size:1.05rem;color:var(--text-1);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.hunter-detail-modal h4{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin:0 0 6px}
+.hd-head{padding:18px 22px 12px;border-bottom:1px solid var(--border-1);flex-shrink:0}
+.hd-head .hd-desc{font-size:.84rem;color:var(--text-3);line-height:1.45;margin-top:2px}
+.hd-meta{padding:14px 22px;border-bottom:1px solid var(--border-1);flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+.hd-grid{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:.82rem}
+.hd-grid b{color:var(--text-3);font-weight:500}
+.hd-types{display:flex;gap:6px;flex-wrap:wrap}
+.hd-type-pill{padding:3px 10px;background:var(--bg-3);border-radius:99px;font-size:.74rem;color:var(--text-2)}
+.hd-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 22px;border-bottom:1px solid var(--border-1);flex-shrink:0}
+.hd-actions .h-btn{padding:6px 14px;font-size:.82rem}
+.hd-files{flex:1;display:flex;flex-direction:column;min-height:140px;overflow:hidden;padding:14px 22px 16px}
+.hd-files h4{flex-shrink:0}
+#hd-files-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+
+
+.wg-table{width:100%;border-collapse:collapse;font-size:.78rem;table-layout:fixed}
+.wg-table thead th{background:var(--bg-3);padding:7px 10px;font-weight:600;color:var(--text-2);text-align:left;font-size:.72rem;border-bottom:1px solid var(--border-1);user-select:none;white-space:nowrap}
+.wg-table th.wg-sortable{cursor:pointer}
+.wg-table th.wg-sortable:hover{background:var(--bg-hover)}
+.wg-table tbody td{padding:7px 10px;border-bottom:1px solid var(--border-3);vertical-align:middle;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wg-table tbody tr:hover td{background:var(--bg-hover)}
+.wg-table .wg-kw{background:var(--bg-info);color:var(--accent-h);padding:2px 8px;border-radius:5px;font-size:.78rem}
+.wg-table .wg-count{display:inline-flex;align-items:center;justify-content:center;min-width:34px;padding:2px 9px;background:#dc2626;color:#fff;border-radius:99px;font-weight:700;font-size:.74rem}
+.wg-table .wg-count.wg-count-zero{background:var(--bg-info);color:var(--accent-h)}
+.wg-table .wg-time{color:var(--text-3);font-size:.72rem}
+.wg-table .wg-acts{display:flex;gap:4px}
+.wg-table .wg-btn{padding:3px 9px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.72rem;font-weight:500;font-family:inherit}
+.wg-table .wg-btn:hover{background:var(--bg-hover)}
+.wg-table .wg-btn-show{background:var(--accent);color:#fff;border-color:var(--accent)}
+.wg-table .wg-btn-show:hover{background:var(--accent-h)}
+.wg-table .wg-btn-del:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+
+/* ── Watches & notifications ── */
+.settings-tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;background:#dc2626;color:#fff;border-radius:9px;font-size:.66rem;font-weight:700;margin-left:4px;line-height:1}
+.watches-help{font-size:.74rem;color:var(--text-3);margin-bottom:9px;line-height:1.5}
+.watches-help b{color:var(--text-2)}
+.watch-form{display:flex;gap:6px;margin-bottom:10px}
+.watch-form input{flex:1;padding:7px 10px;border:1px solid var(--input-border);border-radius:7px;font-size:.85rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.watch-form input:focus{border-color:var(--accent)}
+.watch-form button{padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:.82rem;font-weight:600}
+.watch-form button:hover{background:var(--accent-h)}
+#watches-list{display:flex;flex-direction:column;gap:6px}
+.watch-row{display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--border-2);border-radius:8px;background:var(--bg-3)}
+.watch-row .wr-kw{font-weight:600;color:var(--text-1);font-size:.83rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.watch-row .wr-kw code{background:var(--bg-info);color:var(--accent-h);padding:1px 6px;border-radius:4px;font-family:inherit;font-size:.95em}
+.watch-row .wr-meta{font-size:.69rem;color:var(--text-3);white-space:nowrap}
+.watch-row .wr-count{padding:2px 8px;background:#dc2626;color:#fff;border-radius:99px;font-size:.7rem;font-weight:700;white-space:nowrap}
+.watch-row .wr-count.zero{background:var(--bg-info);color:var(--accent-h)}
+.watch-row .wr-actions{display:flex;gap:4px}
+.watch-row .wr-btn{padding:3px 9px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.71rem;font-weight:500}
+.watch-row .wr-btn:hover{background:var(--bg-hover);border-color:var(--accent-soft);color:var(--text-1)}
+.watch-row .wr-btn-danger:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+#notif-log{display:flex;flex-direction:column;gap:5px;max-height:340px;overflow-y:auto}
+.notif-row{display:flex;align-items:center;gap:8px;padding:7px 11px;border-left:3px solid var(--accent);background:var(--bg-3);border-radius:0 6px 6px 0;font-size:.76rem}
+.notif-row.dismissed{opacity:.5;border-left-color:var(--border-2)}
+.notif-row .nl-time{color:var(--text-4);font-size:.7rem;white-space:nowrap;flex-shrink:0}
+.notif-row .nl-kw{font-weight:600;color:var(--text-2);font-size:.74rem}
+.notif-row .nl-cnt{color:var(--accent);font-weight:600}
+.notif-row .nl-groups{display:inline-flex;align-items:center;gap:3px;flex-wrap:wrap;flex:1;min-width:0;margin-left:4px}
+.nl-grp-pill{display:inline-flex;align-items:center;padding:1px 8px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.69rem;font-weight:500;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+#watch-banner .wb-item .wb-grp{font-size:.68rem;color:var(--text-3);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notif-row .nl-actions{margin-left:auto;display:flex;gap:4px}
+#watch-banner{background:linear-gradient(90deg,#fef3c7,#fef9e7);border-bottom:1px solid #fcd34d;padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;font-size:.78rem;color:#7c2d12;flex-wrap:wrap}
+[data-theme="dark"] #watch-banner,[data-theme="nord"] #watch-banner,[data-theme="forest"] #watch-banner,[data-theme="slate"] #watch-banner,[data-theme="crimson"] #watch-banner,[data-theme="rosepine"] #watch-banner{background:linear-gradient(90deg,#3a2510,#2a1d0a);border-bottom-color:#92400e;color:#fde68a}
+#watch-banner .wb-bell{font-size:1.1rem;animation:wbring 2s ease-in-out infinite}
+@keyframes wbring{0%,100%{transform:rotate(0)}10%,30%{transform:rotate(-12deg)}20%,40%{transform:rotate(12deg)}}
+#watch-banner .wb-title{font-weight:700}
+#watch-banner .wb-list{display:flex;flex-wrap:wrap;gap:6px;flex:1}
+#watch-banner .wb-item{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;background:rgba(255,255,255,.55);border:1px solid rgba(146,64,14,.25);border-radius:99px;font-size:.74rem}
+[data-theme="dark"] #watch-banner .wb-item,[data-theme="nord"] #watch-banner .wb-item,[data-theme="forest"] #watch-banner .wb-item,[data-theme="slate"] #watch-banner .wb-item,[data-theme="crimson"] #watch-banner .wb-item,[data-theme="rosepine"] #watch-banner .wb-item{background:rgba(0,0,0,.35);border-color:rgba(253,230,138,.2)}
+#watch-banner .wb-item code{font-weight:700;color:inherit}
+#watch-banner .wb-item .wb-cnt{font-weight:700;background:#dc2626;color:#fff;padding:0 6px;border-radius:99px;font-size:.7rem}
+#watch-banner .wb-item .wb-show{cursor:pointer;color:#1d4ed8;text-decoration:underline}
+[data-theme="dark"] #watch-banner .wb-item .wb-show,[data-theme="nord"] #watch-banner .wb-item .wb-show,[data-theme="forest"] #watch-banner .wb-item .wb-show,[data-theme="slate"] #watch-banner .wb-item .wb-show,[data-theme="crimson"] #watch-banner .wb-item .wb-show,[data-theme="rosepine"] #watch-banner .wb-item .wb-show{color:#93c5fd}
+#watch-banner .wb-item .wb-x{cursor:pointer;font-weight:700;opacity:.7;padding:0 2px}
+#watch-banner .wb-item .wb-x:hover{opacity:1}
+
+/* ── Name edit modal ── */
+#gn-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
+#gn-overlay.open{display:flex}
+#gn-modal{background:var(--bg-2);border-radius:10px;padding:18px 20px;width:300px;box-shadow:0 16px 48px rgba(0,0,0,.2)}
+#gn-modal h3{font-size:.85rem;font-weight:700;color:var(--text-1);margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#gn-name{width:100%;padding:7px 10px;border:1px solid var(--input-border);border-radius:7px;font-size:.875rem;outline:none;display:block;background:var(--bg-2);color:var(--text-1)}
+#gn-name:focus{border-color:var(--accent)}
+.gn-btns{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
+#gn-cancel{padding:6px 14px;border-radius:7px;border:1px solid var(--input-border);background:var(--bg-3);cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text-2)}
+#gn-save{padding:6px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:.82rem;font-weight:600}
+#gn-cancel:hover{background:var(--border-2)}#gn-save:hover{background:var(--accent-h)}
+
+/* ── Auth / loading ── */
+#loading-screen,#login-screen{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px}
+#login-screen h2{font-size:1.1rem;font-weight:700;color:var(--text-1)}
+.login-step{display:none;flex-direction:column;gap:8px;align-items:center}
+.login-step.active{display:flex}
+#login-screen input{padding:8px 12px;border:1px solid var(--input-border);border-radius:8px;font-size:.9rem;width:240px;outline:none;background:var(--bg-2);color:var(--text-1)}
+#login-screen input:focus{border-color:var(--accent)}
+#login-screen button{padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:.9rem;font-weight:600;width:240px}
+#login-screen button:hover{background:var(--accent-h)}
+#login-msg{font-size:.8rem;color:#dc2626;min-height:1.2em}
+
+/* ── UI password gate (greeter) ──────────────────────────────────────────── */
+#ui-greeter{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;background:var(--bg-1);padding:24px}
+#ui-greeter .ug-card{background:var(--bg-2);border:1px solid var(--border-1);border-radius:14px;padding:28px 30px;width:340px;display:flex;flex-direction:column;gap:14px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+#ui-greeter .ug-brand{display:flex;align-items:center;gap:8px;font-size:1.1rem;font-weight:700;color:var(--accent);justify-content:center}
+#ui-greeter .ug-brand>span{font-size:1.6rem}
+#ui-greeter .ug-msg{font-size:.83rem;color:#dc2626;min-height:1.2em;text-align:center}
+#ui-greeter input[type=password]{padding:10px 12px;border:1px solid var(--input-border);border-radius:8px;font-size:.92rem;outline:none;background:var(--bg-2);color:var(--text-1)}
+#ui-greeter input[type=password]:focus{border-color:var(--accent)}
+#ui-greeter .ug-remember{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--text-2);user-select:none;cursor:pointer}
+#ui-greeter button{padding:10px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:.92rem;font-weight:600}
+#ui-greeter button:hover{background:var(--accent-h)}
+#ui-greeter .ug-hint{font-size:.74rem;color:var(--text-3);text-align:center;line-height:1.5}
+#ui-greeter .ug-hint code{background:var(--bg-3);padding:1px 5px;border-radius:4px;font-family:'Cascadia Code','JetBrains Mono',monospace;color:var(--text-1)}
+
+#app-shell{display:none;flex-direction:column;flex:1;overflow:hidden}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--input-border);border-radius:3px}
+
+/* ── Status panel ── */
+#status-panel{flex:1;overflow-y:auto;padding:16px;background:var(--bg-1);flex-direction:column;gap:12px}
+.st-cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.st-card{background:var(--bg-2);border-radius:10px;padding:12px 16px;flex:1;min-width:130px;border:1px solid var(--border-1);box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.st-card .st-lbl{font-size:.67rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+.st-card .st-val{font-size:1.45rem;font-weight:800;color:var(--text-1);margin-top:4px;line-height:1}
+.st-card .st-sub{font-size:.69rem;color:var(--text-4);margin-top:5px}
+.st-section{background:var(--bg-2);border-radius:10px;padding:13px 16px;border:1px solid var(--border-1);box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.st-section h4{font-size:.69rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0;animation:livepulse 1.4s ease-in-out infinite}
+@keyframes livepulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
+.st-2col{display:flex;gap:12px}
+.st-2col>.st-section{flex:1;min-width:0}
+.st-tbl{width:100%;border-collapse:collapse;font-size:.77rem}
+.st-tbl th{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-4);padding:3px 8px 5px;text-align:left;border-bottom:2px solid var(--border-3)}
+.st-tbl td{padding:5px 8px;border-bottom:1px solid var(--border-3);color:var(--text-2);vertical-align:middle}
+.st-tbl tr:last-child td{border-bottom:none}
+.st-tbl tr:hover td{background:var(--bg-3)}
+.st-tbl td.r,.st-tbl th.r{text-align:right}
+.mini-bar{height:3px;border-radius:2px;background:var(--border-2);overflow:hidden;margin-top:4px;width:100%;min-width:40px}
+.mini-bar-fill{height:100%;border-radius:2px;transition:width .4s}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:.76rem}
+.bar-row:last-child{margin-bottom:0}
+.bar-lbl{width:90px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.st-bar{height:10px;border-radius:5px;background:var(--border-2);overflow:hidden;flex:1}
+.st-bar-fill{height:100%;border-radius:5px;background:var(--accent);transition:width .4s}
+.bar-val{width:auto;min-width:72px;max-width:170px;flex-shrink:0;text-align:right;color:var(--text-3);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log-wrap{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.71rem;line-height:1.7;max-height:220px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:6px 10px}
+.log-entry{border-bottom:1px solid var(--border-3);white-space:pre-wrap;word-break:break-all}
+.log-entry:last-child{border-bottom:none}
+.log-INFO{color:var(--text-2)}.log-WARNING{color:#d97706;font-weight:600}.log-ERROR{color:#dc2626;font-weight:600}.log-DEBUG{color:var(--text-4)}
+.kv-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-3);font-size:.76rem}
+.kv-row:last-child{border-bottom:none}
+.kv-key{color:var(--text-3)}.kv-val{font-weight:600;color:var(--text-1)}
+</style>
+</head>
+<body>
+
+<div id="ctx-tip"></div>
+
+<div id="loading-screen">
+  <div style="font-size:2rem">📡</div>
+  <div style="color:var(--text-3);font-size:.9rem" data-i18n="common.loading">Bağlanıyor…</div>
+</div>
+
+<div id="login-screen">
+  <div style="font-size:2.5rem">📱</div>
+  <h2 data-i18n="login.title">TelFiles — Giriş</h2>
+  <div id="login-step-phone" class="login-step active">
+    <input id="inp-phone" type="tel" placeholder="+905xxxxxxxxx" data-i18n-ph="login.phonePh" autocomplete="tel">
+    <button onclick="authSendCode()" data-i18n="login.sendCode">Kod Gönder</button>
+  </div>
+  <div id="login-step-code" class="login-step">
+    <input id="inp-code" type="text" placeholder="Telegram kodu" data-i18n-ph="login.codePh" maxlength="10">
+    <button onclick="authVerifyCode()" data-i18n="login.verify">Doğrula</button>
+  </div>
+  <div id="login-step-2fa" class="login-step">
+    <input id="inp-pass" type="password" placeholder="2FA şifresi" data-i18n-ph="login.passPh">
+    <button onclick="authVerifyPass()" data-i18n="login.signIn">Giriş Yap</button>
+  </div>
+  <div id="login-msg"></div>
+</div>
+
+<div id="ui-greeter">
+  <div class="ug-card">
+    <div class="ug-brand"><span>📡</span> TelFiles</div>
+    <input id="ug-pass" type="password" placeholder="Parola" autocomplete="current-password" onkeydown="if(event.key==='Enter')uiAuthLogin()">
+    <label class="ug-remember"><input id="ug-remember" type="checkbox"> <span>Bu bilgisayarda hatırla</span></label>
+    <button id="ug-login" onclick="uiAuthLogin()">Giriş</button>
+    <div class="ug-msg" id="ug-msg"></div>
+    <div class="ug-hint" id="ug-hint">Varsayılan parola: <code>admin</code> · Ayarlar → Hesap'tan değiştirebilirsin.</div>
+  </div>
+</div>
+
+<div id="app-shell">
+  <div id="top-row">
+    <div id="brand">📡 <span>TelFiles</span></div>
+    <div id="tabs">
+      <button class="tab-btn active" id="tab-files"     onclick="switchTab('files')"><span class="tab-ico">📁</span><span data-i18n="tab.files">Dosyalar</span></button>
+      <button class="tab-btn"        id="tab-links"     onclick="switchTab('links')"><span class="tab-ico">🔗</span><span data-i18n="tab.links">Linkler</span></button>
+      <button class="tab-btn"        id="tab-downloads" onclick="switchTab('downloads')"><span class="tab-ico">⬇</span><span data-i18n="tab.downloads">İndirmeler</span></button>
+      <button class="tab-btn"        id="tab-hunter"    onclick="switchTab('hunter')"><span class="tab-ico">📡</span><span data-i18n="tab.hunter">Kanal Avcısı</span></button>
+    </div>
+    <div id="top-actions">
+      <button class="tab-icon-btn" id="tab-status"   onclick="switchTab('status')"   title="Durum"   data-i18n-title="tab.status">📊</button>
+      <button class="tab-icon-btn" id="tab-settings" onclick="switchTab('settings')" title="Ayarlar" data-i18n-title="tab.settings">⚙</button>
+    </div>
+  </div>
+
+  <div id="layout">
+    <div id="main">
+
+      <div id="filter-bar">
+        <button class="type-btn active" data-group="" onclick="setTypeFilter('')" data-i18n="filter.all">Tümü</button>
+        <button class="type-btn" data-group="audio"    onclick="setTypeFilter('audio')" data-i18n="filter.audio">🎵 Ses</button>
+        <button class="type-btn" data-group="video"    onclick="setTypeFilter('video')" data-i18n="filter.video">🎬 Video</button>
+        <button class="type-btn" data-group="image"    onclick="setTypeFilter('image')" data-i18n="filter.image">🖼 Resim</button>
+        <button class="type-btn" data-group="archive"  onclick="setTypeFilter('archive')" data-i18n="filter.archive">🗜 Arşiv</button>
+        <button class="type-btn" data-group="document" onclick="setTypeFilter('document')" data-i18n="filter.document">📄 Döküman</button>
+        <button class="type-btn" data-group="software" onclick="setTypeFilter('software')" data-i18n="filter.software">💾 Yazılım</button>
+        <div id="type-divider"></div>
+        <div class="flt-group">
+          <span class="flt-label" data-i18n="filter.ext">Uzantı</span>
+          <input id="ext-input" type="text" placeholder="zip…" data-i18n-ph="filter.extPh" oninput="debouncedLoad()">
+        </div>
+        <div class="flt-group">
+          <span class="flt-label" data-i18n="filter.date">Tarih</span>
+          <input id="date-from" type="date" onchange="loadFiles()">
+          <span class="sep">–</span>
+          <input id="date-to" type="date" onchange="loadFiles()">
+        </div>
+        <div class="flt-group">
+          <span class="flt-label" data-i18n="filter.size">Boyut</span>
+          <div id="size-slider-wrap">
+            <div id="size-slider-track">
+              <div id="size-range-fill"></div>
+              <input type="range" class="size-thumb" id="sl-min" min="0" max="1000" value="0" oninput="onSizeSlider()">
+              <input type="range" class="size-thumb" id="sl-max" min="0" max="1000" value="1000" oninput="onSizeSlider()">
+            </div>
+            <div id="size-labels">
+              <span id="sl-min-lbl">0 MB</span>
+              <span id="sl-max-lbl">—</span>
+            </div>
+          </div>
+        </div>
+        <span id="flt-count" class="flt-count-pill" data-i18n-title="filter.fileCountTitle" title="Eşleşen dosya sayısı">—</span>
+        <div id="chip-list"></div>
+      </div>
+
+      <div id="link-filter-bar" class="hidden-bar">
+        <div class="flt-group">
+          <span class="flt-label" data-i18n="common.search">Ara</span>
+          <input id="link-search" type="search" placeholder="URL veya içerik…" data-i18n-ph="filter.linkSearchPh" oninput="debouncedLoadLinks()">
+        </div>
+        <div class="flt-group">
+          <span class="flt-label" data-i18n="filter.platform">Platform</span>
+          <select id="platform-sel" onchange="loadLinks()">
+            <option value="" data-i18n="filter.all">Tümü</option>
+            <option>Google Drive</option><option>Mega</option><option>MediaFire</option>
+            <option>OneDrive</option><option>Dropbox</option><option>WeTransfer</option>
+            <option>pCloud</option><option>Yandex Disk</option><option>Box</option>
+            <option>Zippyshare</option><option>Gofile</option><option>Pixeldrain</option>
+            <option>Filebin</option><option>GitHub</option><option>YouTube</option>
+            <option>Archive.org</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Settings: sub-tabs (Groups | Account & Theme) -->
+      <div id="settings-panel" style="display:none">
+        <div id="settings-sub-tabs">
+          <button class="sub-tab-btn active" data-stab="groups"  onclick="switchSettingsTab('groups')" data-i18n="settings.subtab.groups">📋 Gruplar</button>
+          <button class="sub-tab-btn"        data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
+          <button class="sub-tab-btn"        data-stab="watches" onclick="switchSettingsTab('watches')"><span data-i18n="settings.subtab.notifications">🔔 Bildirimler</span> <span id="settings-watch-count" class="settings-tab-badge" style="display:none">0</span></button>
+        </div>
+
+        <div id="settings-tab-account" class="settings-tab-content">
+        <div class="settings-card" id="ui-pw-card">
+          <h3>Arabirim Parolası</h3>
+          <div class="creds-current" id="ui-pw-current">
+            Mevcut: <b id="ui-pw-state">—</b>
+          </div>
+          <div class="creds-form">
+            <input id="ui-cur-pw" type="password" placeholder="Mevcut parola" autocomplete="current-password">
+            <input id="ui-new-pw" type="password" placeholder="Yeni parola" autocomplete="new-password">
+            <button class="creds-btn" onclick="uiAuthChangePassword()">Parolayı Değiştir</button>
+          </div>
+          <div class="creds-foot">
+            <span class="creds-hint">Değiştirince mevcut tarayıcı oturumların hepsi kapanır.</span>
+            <button class="creds-btn creds-btn-alt" onclick="uiAuthLogout()">Arabirim Oturumunu Kapat</button>
+          </div>
+        </div>
+
+        <div class="settings-card" id="accounts-card">
+          <h3>
+            <span data-i18n="accounts.title">Telegram Hesapları</span>
+            <button class="creds-btn creds-btn-add" onclick="openAddAccount()" style="margin-left:auto"><span data-i18n="accounts.add">+ Hesap Ekle</span></button>
+          </h3>
+          <div id="accounts-list"></div>
+          <div id="add-account-form" style="display:none;margin-top:14px;padding:12px;background:var(--bg-3);border-radius:8px">
+            <div style="font-weight:600;margin-bottom:8px;color:var(--text-2)" data-i18n="accounts.newTitle">Yeni Hesap</div>
+            <div class="creds-form">
+              <input id="new-acc-name" type="text" placeholder="Hesap adı" data-i18n-ph="accounts.namePh">
+              <input id="new-acc-api-id" type="text" placeholder="API ID (sayı)" data-i18n-ph="settings.api.idPh">
+              <input id="new-acc-api-hash" type="text" placeholder="API Hash" data-i18n-ph="settings.api.hashPh">
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <button class="creds-btn" onclick="submitAddAccount()" data-i18n="common.save">Kaydet</button>
+                <button class="creds-btn creds-btn-alt" onclick="closeAddAccount()" data-i18n="common.cancel">İptal</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card" id="sync-interval-card">
+          <h3>Tarama Sıklığı</h3>
+          <div class="sync-current">
+            Mevcut: <b id="sync-int-cur">—</b> · Sonraki tarama: <span id="sync-int-next">—</span>
+          </div>
+          <div class="sync-presets" id="sync-int-presets">
+            <button class="sync-preset" data-secs="900">15 dk</button>
+            <button class="sync-preset" data-secs="1800">30 dk</button>
+            <button class="sync-preset" data-secs="3600">1 saat</button>
+            <button class="sync-preset" data-secs="7200">2 saat</button>
+            <button class="sync-preset" data-secs="14400">4 saat</button>
+            <button class="sync-preset" data-secs="21600">6 saat</button>
+            <button class="sync-preset" data-secs="43200">12 saat</button>
+            <button class="sync-preset" data-secs="86400">24 saat</button>
+          </div>
+          <div class="sync-hint">
+            <b>Önerim:</b> 1–2 saat. Realtime handler yeni mesajları zaten anında yakalıyor; periyodik tarama yalnızca backfill güvencesi. 30 dk altına inmek floodwait riskini artırır, gözle görülür kazanç sağlamaz.
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3 data-i18n="settings.theme.title">Tema</h3>
+          <div class="theme-grid">
+            <div class="theme-card" data-theme="light" onclick="setTheme('light')">
+              <div class="theme-preview" style="background:#f0f2f5">
+                <div class="prev-card" style="background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)"></div>
+                <div class="prev-line" style="background:#2563eb;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#9ca3af;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#d1d5db;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.light">Aydınlık</span>
+            </div>
+            <div class="theme-card" data-theme="dark" onclick="setTheme('dark')">
+              <div class="theme-preview" style="background:#0f172a">
+                <div class="prev-card" style="background:#1e293b"></div>
+                <div class="prev-line" style="background:#3b82f6;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#94a3b8;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#475569;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.dark">Karanlık</span>
+            </div>
+            <div class="theme-card" data-theme="nord" onclick="setTheme('nord')">
+              <div class="theme-preview" style="background:#2e3440">
+                <div class="prev-card" style="background:#3b4252"></div>
+                <div class="prev-line" style="background:#88c0d0;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#d8dee9;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#5e81ac;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.nord">Nord</span>
+            </div>
+            <div class="theme-card" data-theme="solarized" onclick="setTheme('solarized')">
+              <div class="theme-preview" style="background:#fdf6e3">
+                <div class="prev-card" style="background:#fefaf3;box-shadow:0 1px 2px rgba(0,0,0,.08)"></div>
+                <div class="prev-line" style="background:#268bd2;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#586e75;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#93a1a1;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.solarized">Solarized</span>
+            </div>
+            <div class="theme-card" data-theme="sepia" onclick="setTheme('sepia')">
+              <div class="theme-preview" style="background:#f4ecd8">
+                <div class="prev-card" style="background:#fbf6e8;box-shadow:0 1px 2px rgba(0,0,0,.06)"></div>
+                <div class="prev-line" style="background:#a64b1c;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#5d4a26;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#9b8762;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.sepia">Sepia</span>
+            </div>
+            <div class="theme-card" data-theme="forest" onclick="setTheme('forest')">
+              <div class="theme-preview" style="background:#0d1f17">
+                <div class="prev-card" style="background:#142c20"></div>
+                <div class="prev-line" style="background:#4ade80;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#bcd6c5;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#5e8474;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.forest">Forest</span>
+            </div>
+            <div class="theme-card" data-theme="slate" onclick="setTheme('slate')">
+              <div class="theme-preview" style="background:#0f172a">
+                <div class="prev-card" style="background:#1e293b"></div>
+                <div class="prev-line" style="background:#a78bfa;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#cbd5e1;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#64748b;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.slate">Slate</span>
+            </div>
+            <div class="theme-card" data-theme="crimson" onclick="setTheme('crimson')">
+              <div class="theme-preview" style="background:#1a0d11">
+                <div class="prev-card" style="background:#291418"></div>
+                <div class="prev-line" style="background:#ef4444;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#e2c3c8;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#8b6470;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.crimson">Crimson</span>
+            </div>
+            <div class="theme-card" data-theme="rosepine" onclick="setTheme('rosepine')">
+              <div class="theme-preview" style="background:#191724">
+                <div class="prev-card" style="background:#1f1d2e"></div>
+                <div class="prev-line" style="background:#ebbcba;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#c4c1d8;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#6e6a86;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.rosepine">Rosé Pine</span>
+            </div>
+            <div class="theme-card" data-theme="mocha" onclick="setTheme('mocha')">
+              <div class="theme-preview" style="background:#f3eee6">
+                <div class="prev-card" style="background:#faf6ee;box-shadow:0 1px 2px rgba(0,0,0,.06)"></div>
+                <div class="prev-line" style="background:#7c5a30;left:22%;top:32%;width:30%"></div>
+                <div class="prev-line" style="background:#5a4a30;left:22%;top:50%;width:50%"></div>
+                <div class="prev-line" style="background:#9c8966;left:22%;top:62%;width:40%"></div>
+              </div>
+              <span data-i18n="theme.mocha">Mocha</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h3 data-i18n="settings.lang.title">Dil</h3>
+          <div class="lang-grid">
+            <div class="lang-card" data-lang="tr" onclick="setLanguage('tr')">
+              <span class="lang-flag">🇹🇷</span>
+              <span class="lang-name">Türkçe</span>
+            </div>
+            <div class="lang-card" data-lang="en" onclick="setLanguage('en')">
+              <span class="lang-flag">🇬🇧</span>
+              <span class="lang-name">English</span>
+            </div>
+            <div class="lang-card" data-lang="de" onclick="setLanguage('de')">
+              <span class="lang-flag">🇩🇪</span>
+              <span class="lang-name">Deutsch</span>
+            </div>
+            <div class="lang-card" data-lang="ru" onclick="setLanguage('ru')">
+              <span class="lang-flag">🇷🇺</span>
+              <span class="lang-name">Русский</span>
+            </div>
+            <div class="lang-card" data-lang="zh" onclick="setLanguage('zh')">
+              <span class="lang-flag">🇨🇳</span>
+              <span class="lang-name">中文</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card" id="telemetry-card">
+          <h3 data-i18n="telemetry.title">Kullanıcı istatistiklerini gönder</h3>
+          <label class="tlm-row">
+            <input type="checkbox" id="tlm-enabled" onchange="tlmToggle(this.checked)">
+            <span data-i18n="telemetry.enabledLabel">Bu kuruluma ait istatistikleri gönder</span>
+          </label>
+        </div>
+        </div>
+
+        <div id="settings-tab-groups" class="settings-tab-content active">
+          <div id="settings-inner">
+            <div id="sidebar-head">
+              <input id="group-filter" type="search" placeholder="Grup ara…" data-i18n-ph="groups.searchPh" oninput="renderSidebar()">
+              <div id="sidebar-sort">
+                <button class="gsort-btn" id="gsort-name"  onclick="setGroupSort('name')">A–Z</button>
+                <button class="gsort-btn active" id="gsort-count" onclick="setGroupSort('count')">Sayı ↓</button>
+              </div>
+            </div>
+            <div id="group-list"></div>
+            <div id="sidebar-bulk">
+              <span id="bulk-count" class="bulk-info">0 grup</span>
+              <div class="bulk-actions">
+                <button class="bulk-btn" id="bulk-hide-btn" onclick="bulkToggleHide()" data-i18n="groups.bulkHide">Gizle</button>
+                <button class="bulk-btn" id="bulk-excl-btn" onclick="bulkToggleExcluded()" data-i18n="groups.bulkUntrack">Takip Etme</button>
+                <button class="bulk-btn" onclick="bulkRescanGroups()">Yeniden Tara</button>
+                <button class="bulk-btn bulk-btn-danger" onclick="bulkLeaveGroups()" data-i18n="groups.bulkLeave">Telegram'dan Ayrıl</button>
+                <button class="bulk-btn cancel" onclick="bulkClearSelection()" data-i18n="common.cancel">İptal</button>
+              </div>
+            </div>
+            <div id="sidebar-foot">
+              <button id="show-hidden-btn" onclick="toggleShowHidden()"></button>
+            </div>
+          </div>
+        </div>
+
+        <div id="settings-tab-watches" class="settings-tab-content">
+          <div class="settings-card">
+            <h3 data-i18n="watch.title">İzlenen Anahtar Kelimeler</h3>
+            <div class="watches-help" data-i18n-html="watch.help">Buraya eklediğin terimler dosya adı ve açıklamada %like% ile aranır. Birden fazla kelime girersen aralarında <b>OR</b> uygulanır. Sonraki tarama turunda eşleşen yeni dosyalar gelirse bildirim oluşur.</div>
+            <div class="watch-form">
+              <input id="watch-input" type="text" placeholder="örn: linux iso, ubuntu, kitap pdf" data-i18n-ph="watch.placeholder" onkeydown="if(event.key==='Enter')addWatch()">
+              <button onclick="addWatch()" data-i18n="watch.add">Ekle</button>
+            </div>
+            <div id="watches-list"></div>
+          </div>
+          <div class="settings-card">
+            <h3 data-i18n="watch.history">Bildirim Geçmişi</h3>
+            <div id="notif-log"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Downloads tab -->
+      <div id="downloads-panel" style="display:none">
+        <div id="dl-hist-hd">
+          <span data-i18n="downloads.title">İndirmeler</span> <span id="dl-hist-count" style="color:var(--text-4);font-weight:400"></span>
+          <span id="dl-bulk-actions" style="display:none;align-items:center;gap:6px;margin-left:14px">
+            <span id="dl-bulk-count" style="font-size:.72rem;color:var(--accent-h);font-weight:600"></span>
+            <button class="dl-bulk-btn" id="dl-bulk-dl" onclick="bulkDownloadDownloaded()">⬇ Seçilenleri İndir</button>
+            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-del" onclick="bulkDeleteDownloaded()">🗑 Seçilenleri Sil</button>
+            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-cancel" onclick="bulkCancelDownloads()">✕ İndirmeyi İptal Et</button>
+            <button class="dl-bulk-btn dl-bulk-btn-alt" onclick="clearDownloadSelection()">Temizle</button>
+          </span>
+          <button onclick="loadDownloadsList()" data-i18n="downloads.refresh" style="margin-left:auto;font-size:.72rem;padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;color:var(--text-3)">Yenile</button>
+        </div>
+        <div id="dl-hist-body-wrap">
+          <table class="dlt-table">
+            <thead>
+              <tr>
+                <th class="chk-cell"><input type="checkbox" id="dl-select-all" onchange="toggleAllDownloads(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
+                <th class="dlt-sortable" onclick="sortDownloads('name')"><span data-i18n="table.fileName">Dosya Adı</span> <span class="sort-arrow" id="dl-arr-name"></span></th>
+                <th class="dlt-sortable" onclick="sortDownloads('size')" style="width:84px"><span data-i18n="table.size">Boyut</span> <span class="sort-arrow" id="dl-arr-size"></span></th>
+                <th class="dlt-sortable" onclick="sortDownloads('group')" style="width:150px"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="dl-arr-group"></span></th>
+                <th class="dlt-sortable" onclick="sortDownloads('downloaded_at')" style="width:152px"><span data-i18n="table.downloadedAt">İndirilme Tarihi</span> <span class="sort-arrow" id="dl-arr-downloaded_at"></span></th>
+                <th class="dlt-sortable" onclick="sortDownloads('progress')" style="width:170px"><span data-i18n="table.progress">İlerleme</span> <span class="sort-arrow" id="dl-arr-progress"></span></th>
+                <th class="dlt-sortable" onclick="sortDownloads('status')" style="width:110px"><span data-i18n="table.status">Durum</span> <span class="sort-arrow" id="dl-arr-status"></span></th>
+                <th style="width:96px" data-i18n="table.actions">İşlemler</th>
+              </tr>
+              <tr class="dl-flt-row">
+                <th class="chk-cell"></th>
+                <th><input id="dl-col-name" type="text" placeholder="ad…" data-i18n-ph="filter.colName" oninput="renderDownloadsTab()"></th>
+                <th></th>
+                <th><input id="dl-col-group" type="text" placeholder="grup…" data-i18n-ph="filter.colGroup" oninput="renderDownloadsTab()"></th>
+                <th></th><th></th><th></th><th></th>
+              </tr>
+            </thead>
+            <tbody id="dl-hist-tbody"></tbody>
+          </table>
+          <div id="dl-hist-empty" class="no-data" data-i18n="downloads.empty" style="display:none">Henüz indirme başlatılmadı</div>
+        </div>
+      </div>
+
+      <div id="hunter-panel" style="display:none">
+        <div id="hunter-whatis-overlay" class="hunter-overlay" onclick="hunterWhatisOverlayClick(event)"><div class="hunter-info-card" id="hunter-info-card">
+          <button class="hunter-info-close" onclick="hunterCloseWhatis()" data-i18n-title="common.close" title="Kapat">×</button>
+          <h3>🎯 <span data-i18n="hunter.infoTitle">Kanal Avcısı nedir?</span></h3>
+          <p class="hunter-info-lead" data-i18n="hunter.infoLead">Yüksek miktarda dosya paylaşan Telegram kanallarını otomatik olarak keşfeder, raporlar ve önünüze getirir. Hangisine katılacağına sen karar verirsin.</p>
+          <div class="hunter-info-stages">
+            <div class="hunter-info-stage"><b data-i18n="hunter.infoStage1Title">Stage 1 — Dahili madencilik</b><span data-i18n="hunter.infoStage1Desc">Takip ettiğin gruplardaki mesaj/link'lerden @username'leri çıkarır.</span></div>
+            <div class="hunter-info-stage"><b data-i18n="hunter.infoStage2Title">Stage 2 — Web tarama</b><span data-i18n="hunter.infoStage2Desc">TGStat gibi kamuya açık Telegram dizinlerinden kanal listeleri toplar.</span></div>
+            <div class="hunter-info-stage"><b data-i18n="hunter.infoStage3Title">Stage 3 — Telegram zenginleştirme</b><span data-i18n="hunter.infoStage3Desc">Her aday için son mesajları örnekler; dosya sayısı, türü, üye sayısı, güncellik bilgilerini toplar.</span></div>
+            <div class="hunter-info-stage"><b data-i18n="hunter.infoStage4Title">Stage 4 — Puanlama</b><span data-i18n="hunter.infoStage4Desc">Yoğunluk + üye sayısı + güncellik + çeşitlilik karışımıyla 0-100 puan üretir.</span></div>
+          </div>
+          <h4 data-i18n="hunter.infoActionsTitle">Aksiyon farkları</h4>
+          <ul class="hunter-info-actions">
+            <li><b data-i18n="hunter.join">Üye Ol</b><span data-i18n="hunter.infoJoin">Hesabın kanala katılır ve takip listene eklenir. Sonraki sync turunda dosyaları indekslenir.</span></li>
+            <li><b data-i18n="hunter.reject">Reddet</b><span data-i18n="hunter.infoReject">Listeden gizler. Aday DB'de kalır (status=rejected); <i>tekrar otomatik gözükmez</i>, ama "Reddedildi" filtresinden geri çekebilirsin.</span></li>
+            <li><b data-i18n="hunter.blacklist">Kara Liste</b><span data-i18n="hunter.infoBlacklist">Username'i kalıcı olarak bloklar. Sonraki taramalarda <i>aday olarak bile eklenmez</i>. Spam/çöp kanallar için.</span></li>
+          </ul>
+
+          <h4 data-i18n="hunter.infoStatusTitle">Durum etiketleri</h4>
+          <ul class="hunter-info-actions">
+            <li><b data-i18n="hunter.statusDiscovered">Keşfedildi</b><span data-i18n="hunter.infoStatusDiscovered">Stage 1/2 sırasında bulundu, ama henüz Telegram'dan zenginleştirilmedi. Üye sayısı/dosya örneği yok, puan 0.</span></li>
+            <li><b data-i18n="hunter.statusEnriched">Zenginleştirildi</b><span data-i18n="hunter.infoStatusEnriched">Stage 3 tamamlandı: Telethon ile son N (varsayılan 200) dosya mesajı örneklendi. Üye sayısı, dosya türü dağılımı ve puan hesaplandı. Karar vermeye hazır.</span></li>
+            <li><b data-i18n="hunter.statusJoined">Katıldı</b><span data-i18n="hunter.infoStatusJoined">Üye Ol butonuna basıldı; hesap kanala katıldı ve takip listesine eklendi. Bir sonraki sync turunda dosyaları indekslenecek.</span></li>
+            <li><b data-i18n="hunter.statusRejected">Reddedildi</b><span data-i18n="hunter.infoStatusRejected">Reddet butonuna basıldı; varsayılan listede gözükmez ama DB'de kalır. "Reddedildi" filtresiyle geri çekilebilir; otomatik tekrar aday olmaz.</span></li>
+            <li><b data-i18n="hunter.statusBlacklisted">Kara Listede</b><span data-i18n="hunter.infoStatusBlacklisted">Username kara listeye eklendi; gelecekteki tüm taramalarda aday olarak bile gözükmez. Hatalı/spam kanal username'leri otomatik bu duruma alınır.</span></li>
+            <li><b data-i18n="hunter.statusFailed">Başarısız</b><span data-i18n="hunter.infoStatusFailed">Telegram tarafında geçersiz/erişilemez username. Otomatik olarak kara listeye alınıp adaylar listesinden silinir — bir daha rahatsız etmez.</span></li>
+          </ul>
+        </div></div>
+        <div class="hunter-toolbar">
+          <button id="hunter-run-btn" class="hunter-btn-primary" onclick="hunterRun()" data-i18n="hunter.runNow">▶ Şimdi Çalıştır</button>
+          <span id="hunter-live-status" class="hunter-live"></span>
+          <span class="hunter-flex"></span>
+          <button class="hunter-btn-alt" onclick="hunterClearList()" data-i18n="hunter.clearListBtn" title="">🗑 Listeyi Temizle</button>
+          <button class="hunter-btn-alt" onclick="hunterToggleSettings()" data-i18n="hunter.settingsBtn">⚙ Ayarlar</button>
+          <select id="hunter-filter-status" class="hunter-sel" onchange="hunterFilterChange()">
+            <option value="" data-i18n="hunter.statusAll">Tüm durumlar</option>
+            <option value="discovered" data-i18n="hunter.statusDiscovered">Keşfedildi</option>
+            <option value="enriched" data-i18n="hunter.statusEnriched">Zenginleştirildi</option>
+            <option value="reviewed" data-i18n="hunter.statusReviewed">İncelendi</option>
+            <option value="joined" data-i18n="hunter.statusJoined">Katıldı</option>
+            <option value="rejected" data-i18n="hunter.statusRejected">Reddedildi</option>
+            <option value="blacklisted" data-i18n="hunter.statusBlacklisted">Kara Listede</option>
+            <option value="failed" data-i18n="hunter.statusFailed">Başarısız</option>
+          </select>
+          <select id="hunter-sort" class="hunter-sel" onchange="hunterFilterChange()">
+            <option value="score" data-i18n="hunter.sortScore">Puan</option>
+            <option value="discovered_at" data-i18n="hunter.sortDate">Keşif tarihi</option>
+            <option value="members" data-i18n="hunter.sortMembers">Üye sayısı</option>
+          </select>
+          <button class="hunter-whatis-btn" onclick="hunterShowWhatis()" data-i18n-title="hunter.infoTitle" title="Kanal Avcısı nedir?">?</button>
+        </div>
+
+        <div id="hunter-settings-card" class="hunter-card" style="display:none">
+          <h3 data-i18n="hunter.settingsTitle">Avcı Ayarları</h3>
+          <div class="hunter-grid">
+            <label class="hunter-row"><span data-i18n="hunter.enabled">Etkin</span><span class="hf-help" data-i18n-help="hunter.helpEnabled">?</span><input type="checkbox" id="h-enabled"></label>
+            <label class="hunter-row"><span data-i18n="hunter.stage1">Stage 1: Dahili tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage1">?</span><input type="checkbox" id="h-stage1"></label>
+            <label class="hunter-row"><span data-i18n="hunter.stage2">Stage 2: Web tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage2">?</span><input type="checkbox" id="h-stage2"></label>
+            <label class="hunter-row"><span data-i18n="hunter.webDelay">Web istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpWebDelay">?</span><input type="number" min="500" id="h-web-delay"></label>
+            <label class="hunter-row"><span data-i18n="hunter.webConcurrency">Web eşzamanlı</span><span class="hf-help" data-i18n-help="hunter.helpWebConc">?</span><input type="number" min="1" max="8" id="h-web-conc"></label>
+            <label class="hunter-row"><span data-i18n="hunter.tgDelay">Telegram istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpTgDelay">?</span><input type="number" min="500" id="h-tg-delay"></label>
+            <label class="hunter-row"><span data-i18n="hunter.tgCap">Günlük lookup limiti</span><span class="hf-help" data-i18n-help="hunter.helpTgCap">?</span><input type="number" min="10" id="h-tg-cap"></label>
+            <label class="hunter-row"><span data-i18n="hunter.tgSample">Örneklenecek mesaj</span><span class="hf-help" data-i18n-help="hunter.helpTgSample">?</span><input type="number" min="20" max="2000" id="h-tg-sample"></label>
+            <label class="hunter-row"><span data-i18n="hunter.tgAccount">Telegram hesabı</span><span class="hf-help" data-i18n-help="hunter.helpTgAccount">?</span><input type="number" min="1" id="h-tg-account"></label>
+            <label class="hunter-row"><span data-i18n="hunter.tempJoin">Geçici üyelik ile tara</span><span class="hf-help" data-i18n-help="hunter.helpTempJoin">?</span><input type="checkbox" id="h-temp-join"></label>
+            <label class="hunter-row"><span data-i18n="hunter.scheduleKind">Zamanlama</span><span class="hf-help" data-i18n-help="hunter.helpScheduleKind">?</span>
+              <select id="h-schedule-kind">
+                <option value="manual" data-i18n="hunter.schManual">Manuel</option>
+                <option value="interval" data-i18n="hunter.schInterval">Aralıkla</option>
+              </select>
+            </label>
+            <label class="hunter-row"><span data-i18n="hunter.scheduleInterval">Aralık (saniye)</span><span class="hf-help" data-i18n-help="hunter.helpScheduleInt">?</span><input type="number" min="3600" id="h-schedule-int"></label>
+            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.keywords">Anahtar kelimeler (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpKeywords">?</span><input type="text" id="h-keywords"></label>
+            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.sources">Kaynaklar</span><span class="hf-help" data-i18n-help="hunter.helpSources">?</span><input type="text" id="h-sources" placeholder="boş bırak = tümü; ya da: internal,tgstat,telemetrio,combot,tdirectory,tlgrm,telegramic,tgchannels,searchtg,tdoru,telegaio,telegramly,google,duckduckgo,brave,bing,mojeek,startpage,yandex,ecosia,reddit,hackernews,github"></label>
+            <label class="hunter-row"><span data-i18n="hunter.minSubs">Min. üye</span><span class="hf-help" data-i18n-help="hunter.helpMinSubs">?</span><input type="number" min="0" id="h-min-subs"></label>
+            <label class="hunter-row"><span data-i18n="hunter.languages">Diller (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpLanguages">?</span><input type="text" id="h-languages" placeholder="tr,en"></label>
+          </div>
+          <div class="hunter-foot">
+            <span id="hunter-cap-info" class="hunter-meta"></span>
+            <span class="hunter-flex"></span>
+            <button class="hunter-btn-alt" onclick="hunterToggleSettings()" data-i18n="common.cancel">İptal</button>
+            <button class="hunter-btn-primary" onclick="hunterSaveSettings()" data-i18n="common.save">Kaydet</button>
+          </div>
+        </div>
+
+        <div id="hunter-monitor" style="display:none">
+          <div class="hm-head">
+            <span class="hm-title"><span class="hm-spinner"></span> <span data-i18n="hm.title">Avcı Çalışma Durumu</span></span>
+            <span class="hm-flex"></span>
+            <span id="hm-elapsed" class="hm-elapsed"></span>
+            <button class="hm-btn hm-btn-skip"   onclick="hunterSkipStage()" data-i18n="hm.skip">⏭ Bu Aşamayı Atla</button>
+            <button class="hm-btn hm-btn-cancel" onclick="hunterCancelRun()" data-i18n="hm.cancel">❌ İptal Et</button>
+            <button class="hm-help-btn" onclick="hunterShowHelp()" title="Yardım" data-i18n-title="hm.helpTip">?</button>
+          </div>
+          <div class="hm-stages">
+            <div class="hm-stage" data-stage="stage1"><span class="hm-num">1</span><span data-i18n="hm.stage1">Dahili madencilik</span></div>
+            <div class="hm-stage" data-stage="stage2"><span class="hm-num">2</span><span data-i18n="hm.stage2">Web tarama</span></div>
+            <div class="hm-stage" data-stage="stage3"><span class="hm-num">3</span><span data-i18n="hm.stage3">Telegram zenginleştirme</span></div>
+          </div>
+          <div id="hm-detail" class="hm-detail"></div>
+          <div class="hm-events-wrap">
+            <div class="hm-events-title" data-i18n="hm.events">Canlı olay akışı</div>
+            <div id="hm-events" class="hm-events"></div>
+          </div>
+        </div>
+
+        <div id="hunter-grid-wrap">
+          <div id="hunter-bulk-bar" style="display:none">
+            <span id="hunter-bulk-count">0</span>
+            <span class="hbb-flex"></span>
+            <button class="hbb-btn hbb-btn-deep"  onclick="hgBulkDeepScan()"><span data-i18n="hbb.deepScan">⚡ Tam Tara</span></button>
+            <button class="hbb-btn hbb-btn-join"  onclick="hgBulkJoin()"><span data-i18n="hbb.join">Üye Ol</span></button>
+            <button class="hbb-btn"               onclick="hgBulkReject()"><span data-i18n="hbb.reject">Reddet</span></button>
+            <button class="hbb-btn hbb-btn-bl"    onclick="hgBulkBlacklist()"><span data-i18n="hbb.blacklist">Kara Liste</span></button>
+            <button class="hbb-btn hbb-btn-cancel" onclick="hgClearSelection()"><span data-i18n="common.cancel">İptal</span></button>
+          </div>
+          <table id="hunter-grid">
+            <thead>
+              <tr>
+                <th class="hg-chk-cell"><input type="checkbox" id="hg-select-all" onchange="hgSelectAll(this.checked)" title="Tümünü seç"></th>
+                <th class="hg-sortable" onclick="hgSort('score')" style="width:62px"><span data-i18n="hunter.score">Puan</span> <span class="sort-arrow" id="hg-arr-score"></span></th>
+                <th class="hg-sortable" onclick="hgSort('username')"><span data-i18n="hg.channel">Kanal</span> <span class="sort-arrow" id="hg-arr-username"></span></th>
+                <th class="hg-sortable" onclick="hgSort('members')" style="width:80px"><span data-i18n="hunter.members">Üye</span> <span class="sort-arrow" id="hg-arr-members"></span></th>
+                <th class="hg-sortable" onclick="hgSort('estimated_files')" style="width:80px"><span data-i18n="hg.files">Dosya</span> <span class="sort-arrow" id="hg-arr-files"></span></th>
+                <th style="width:130px"><span data-i18n="hg.types">Tür Dağılımı</span></th>
+                <th class="hg-sortable" onclick="hgSort('last_message_at')" style="width:118px"><span data-i18n="hg.lastMsg">Son Mesaj</span> <span class="sort-arrow" id="hg-arr-last"></span></th>
+                <th class="hg-sortable" onclick="hgSort('discovered_at')" style="width:118px"><span data-i18n="hg.discovered">Keşif</span> <span class="sort-arrow" id="hg-arr-disc"></span></th>
+                <th class="hg-sortable" onclick="hgSort('status')" style="width:96px"><span data-i18n="table.status">Durum</span> <span class="sort-arrow" id="hg-arr-status"></span></th>
+                <th class="hg-sortable" onclick="hgSort('sources')" style="width:130px"><span data-i18n="hg.sources">Kaynaklar</span> <span class="sort-arrow" id="hg-arr-sources"></span></th>
+                <th style="width:155px"><span data-i18n="hg.actions">Aksiyon</span></th>
+              </tr>
+              <tr class="hg-flt-row">
+                <th></th><th></th>
+                <th><input id="hg-flt-username" type="text" placeholder="@ ara…" data-i18n-ph="hg.searchPh" oninput="hgFilterChange()"></th>
+                <th><input id="hg-flt-min-members" type="number" placeholder="min" oninput="hgFilterChange()"></th>
+                <th><input id="hg-flt-min-files" type="number" placeholder="min" oninput="hgFilterChange()"></th>
+                <th></th><th></th><th></th>
+                <th>
+                  <select id="hg-flt-status" onchange="hgFilterChange()" style="width:100%;font-family:inherit">
+                    <option value="" data-i18n="hunter.statusAll">Tüm durumlar</option>
+                    <option value="discovered" data-i18n="hunter.statusDiscovered">Keşfedildi</option>
+                    <option value="enriched" data-i18n="hunter.statusEnriched">Zenginleştirildi</option>
+                    <option value="joined" data-i18n="hunter.statusJoined">Katıldı</option>
+                    <option value="rejected" data-i18n="hunter.statusRejected">Reddedildi</option>
+                    <option value="blacklisted" data-i18n="hunter.statusBlacklisted">Kara Listede</option>
+                  </select>
+                </th>
+                <th><input id="hg-flt-sources" type="text" placeholder="ör. brave" oninput="hgFilterChange()"></th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="hunter-grid-body"></tbody>
+          </table>
+          <div id="hunter-grid-empty" style="display:none;text-align:center;padding:30px;color:var(--text-4);font-size:.86rem"></div>
+          <div id="hunter-pager"></div>
+        </div>
+
+        <div id="hunter-runs-card" class="hunter-card">
+          <h3 data-i18n="hunter.runs">Tarama Geçmişi</h3>
+          <div id="hunter-runs-list"></div>
+        </div>
+
+        <div id="hunter-detail-overlay" class="hunter-overlay" onclick="hunterDetailOverlayClick(event)">
+          <div class="hunter-detail-modal" id="hunter-detail-body"></div>
+        </div>
+
+        <div id="hunter-help-overlay" class="hunter-overlay" onclick="hunterHelpOverlayClick(event)">
+          <div class="hunter-help-modal" id="hunter-help-body"></div>
+        </div>
+      </div>
+
+      <div id="status-panel" style="display:none"></div>
+
+      <div id="watch-banner" style="display:none"></div>
+
+      <div id="table-wrap">
+        <table id="files-table">
+          <thead>
+            <tr>
+              <th class="chk-cell"><input type="checkbox" id="select-all" onchange="toggleAllFiles(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
+              <th class="num-cell" style="font-size:.72rem">#</th>
+              <th class="col-ext" data-i18n="table.ext">Uzantı</th>
+              <th class="sortable" onclick="sortBy('name')"><span data-i18n="table.fileName">Dosya Adı</span> <span class="sort-arrow" id="arr-name"></span></th>
+              <th class="sortable col-size" onclick="sortBy('size')"><span data-i18n="table.size">Boyut</span> <span class="sort-arrow" id="arr-size"></span></th>
+              <th class="sortable col-group" onclick="sortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="arr-group"></span></th>
+              <th class="sortable col-date" onclick="sortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="arr-date"></span></th>
+              <th class="col-dl" data-i18n="table.download">İndir</th>
+              <th class="col-ctx" data-i18n="table.context">İçerik</th>
+            </tr>
+            <tr class="flt-row">
+              <th class="chk-cell"></th>
+              <th></th>
+              <th><input id="col-ext"   type="text" placeholder="ext…"  data-i18n-ph="filter.colExt" oninput="debouncedLoad()"></th>
+              <th><input id="col-name"  type="text" placeholder="ad…"   data-i18n-ph="filter.colName" oninput="debouncedLoad()"></th>
+              <th>
+                <div class="range-input-wrap">
+                  <input id="col-size-min" type="text" placeholder="min" data-i18n-ph="filter.min" title="MB" oninput="debouncedLoad()">
+                  <input id="col-size-max" type="text" placeholder="max" data-i18n-ph="filter.max" title="MB" oninput="debouncedLoad()">
+                </div>
+              </th>
+              <th>
+                <div class="cgf-wrap">
+                  <button type="button" id="cgf-trigger" class="cgf-trigger" onclick="cgfToggle(event)">
+                    <span id="cgf-label" data-i18n="cgf.allGroups">Tüm gruplar</span><span class="cgf-caret">▾</span>
+                  </button>
+                  <div id="cgf-dropdown" class="cgf-dropdown" style="display:none">
+                    <input id="cgf-search" type="text" placeholder="Ara…" data-i18n-ph="cgf.searchPh" oninput="cgfRenderList()">
+                    <div class="cgf-actions">
+                      <button type="button" onclick="cgfSelectAll()" data-i18n="cgf.selectAll">Tümünü Seç</button>
+                      <button type="button" onclick="cgfClear()" data-i18n="cgf.clearAll">Temizle</button>
+                    </div>
+                    <div id="cgf-list"></div>
+                  </div>
+                </div>
+              </th>
+              <th></th>
+              <th></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="files-body"></tbody>
+        </table>
+
+        <table id="links-table" style="display:none">
+          <thead>
+            <tr>
+              <th class="chk-cell"><input type="checkbox" id="links-select-all" onchange="toggleAllLinks(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
+              <th class="num-cell" style="font-size:.72rem">#</th>
+              <th data-i18n="table.url">URL</th>
+              <th class="lcol-platform" data-i18n="table.platform">Platform</th>
+              <th class="lcol-files" data-i18n="table.linkFiles">Dosyalar</th>
+              <th class="lcol-group" data-i18n="table.group">Grup</th>
+              <th class="lcol-date" data-i18n="table.date">Tarih</th>
+              <th class="lcol-ctx" data-i18n="table.context">İçerik</th>
+            </tr>
+          </thead>
+          <tbody id="links-body"></tbody>
+        </table>
+      </div>
+
+      <div id="pagination"></div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <div id="app-status-bar">
+    <span id="pag-sync">● Canlı</span>
+    <span id="pag-current-group" style="display:none"></span>
+    <button id="pg-sync-btn" onclick="startSync()">Tara</button>
+    <span id="pag-next"></span>
+    <span class="sb-spacer"></span>
+    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last24h">Son 24S</span>: <span id="ts-24h">—</span></span>
+    <span class="sb-sep">·</span>
+    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last7d">Son 7G</span>: <span id="ts-7d">—</span></span>
+    <span class="sb-sep">·</span>
+    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.all">Tümü</span>: <span id="ts-all">—</span></span>
+    <span class="sb-sep">·</span>
+    <span id="sb-last-sync">Son tarama: —</span>
+    <span class="sb-sep">·</span>
+    <span id="sb-elapsed">—</span>
+  </div>
+</div>
+
+<!-- Group name-edit modal -->
+<div id="gn-overlay" onclick="gnOverlayClick(event)">
+  <div id="gn-modal">
+    <h3 id="gn-title" data-i18n="groups.nameModal">Görünen İsim</h3>
+    <input type="text" id="gn-name" placeholder="(orijinal isim bırakmak için boş)" data-i18n-ph="groups.nameModalPh">
+    <div class="gn-btns">
+      <button id="gn-cancel" onclick="closeNameEdit()" data-i18n="common.cancel">İptal</button>
+      <button id="gn-save"   onclick="saveNameEdit()" data-i18n="common.save">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Apply saved theme before app boots to avoid flash of unstyled content
+  (function(){
+    try {
+      const t = localStorage.getItem('theme') || 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch(e){}
+  })();
+</script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

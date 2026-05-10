@@ -1,0 +1,28 @@
+# Secrets / environment
+.env
+.env.local
+
+# Local runtime data (Telegram sessions, UI auth, user DB, downloads)
+data/
+downloads/
+pgdata/
+
+# Telemetry server runtime data (auto-created on first POST)
+telemetry-server/data/
+
+# Local dev / tooling
+.claude/
+.vscode/
+.idea/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

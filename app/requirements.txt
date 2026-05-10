@@ -1,0 +1,9 @@
+telethon==1.36.0
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+asyncpg==0.29.0
+aiosqlite==0.20.0
+aiofiles==23.2.1
+python-dotenv==1.0.1
+aiohttp==3.10.11
+brotli==1.1.0
