@@ -2087,13 +2087,30 @@ const I18N_LANGS = [
   { code: 'zh', name: '中文',      flag: '🇨🇳' },
 ];
 
-let _lang = 'tr';
-try { _lang = localStorage.getItem('lang') || 'tr'; } catch(e){}
-if (!I18N[_lang]) _lang = 'tr';
+// Dil seçimi:
+//  1) Kullanıcı daha önce dili açıkça seçtiyse (localStorage.lang) onu kullan.
+//  2) Aksi halde tarayıcının/sistemin dil tercihlerini (navigator.languages)
+//     destekleneninlere göre dene.
+//  3) Hiçbiri uymazsa İngilizce'ye düş — daha önce 'tr' fallback'i, sistem
+//     dili İngilizce/Almanca/vs. olan kullanıcıları Türkçe'ye zorluyordu.
+let _lang = null;
+try { _lang = localStorage.getItem('lang'); } catch(e){}
+if (!_lang) {
+  const _candidates = []
+    .concat(navigator.language || [])
+    .concat(navigator.languages || []);
+  for (const c of _candidates) {
+    const code = String(c || '').toLowerCase().split('-')[0];
+    if (I18N[code]) { _lang = code; break; }
+  }
+}
+if (!_lang || !I18N[_lang]) _lang = 'en';
 
 function t(key, params) {
-  const dict = I18N[_lang] || I18N.tr;
-  let s = dict[key] != null ? dict[key] : (I18N.tr[key] != null ? I18N.tr[key] : key);
+  const dict = I18N[_lang] || I18N.en;
+  // Eksik anahtarlar için İngilizce'ye düş; o da yoksa anahtarı olduğu gibi
+  // dön (geliştirici görsün, kullanıcı kötü bir UX yaşamasın).
+  let s = dict[key] != null ? dict[key] : (I18N.en[key] != null ? I18N.en[key] : key);
   if (params) {
     for (const k in params) {
       s = s.split('{' + k + '}').join(params[k]);
@@ -2155,6 +2172,8 @@ function applyLanguage() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  // Apply on initial load
+  // Apply on initial load; ayrıca <html lang="..."> attribute'unu da
+  // ekran okuyucular/SEO için algılanan dile çek.
+  document.documentElement.lang = _lang;
   applyLanguage();
 });
