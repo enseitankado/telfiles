@@ -82,7 +82,16 @@ Bu betik şunları yapar:
 - 8765 portu doluysa otomatik olarak bir sonraki boş porta geçer
 - Sonunda erişim URL'sini ve giriş parolasını ekrana basar
 
-**İlk giriş**: `admin` parolasıyla. Ayarlar → Hesap → Arabirim Parolası ekranından değiştirin (zorunlu).
+**İlk giriş — iki aşamalı**:
+
+1. **Arabirim parolası**: İlk açılışta `admin` parolasıyla giriş yapın. Ayarlar → Hesap → Arabirim Parolası ekranından değiştirin (zorunlu).
+2. **Telegram hesabı**: Giriş yaptıktan sonra karşınıza telefon numarası soran bir form çıkar. Bu, programın kendi paneline değil — TelFiles'ın **sizin Telegram hesabınızla** Telegram'a bağlanması içindir. Bu adım olmadan grup ve kanallarınızdaki dosyalar görüntülenemez.
+   - Telefon numaranızı uluslararası formatta girin (örn. `+9055xxxxxxxx`)
+   - **Kod gönder** → Telegram resmi uygulamasına bir doğrulama kodu gelir (SMS değil, uygulama içi mesaj)
+   - Kodu girip onaylayın; iki adımlı doğrulama (2FA) tanımlıysa parolanız da sorulur
+   - Bağlantı kurulunca arka planda dosya taraması otomatik başlar
+
+> **Önemli**: Telegram bağlantısı için `.env` dosyasında `TELEGRAM_API_ID` ve `TELEGRAM_API_HASH` değerlerinin **dolu olması** gerekir. Kurulum sırasında boş bıraktıysanız "Kod gönder" hata verir veya **No credentials configured for account 1** mesajı gösterilir. Çözüm: [my.telegram.org](https://my.telegram.org) → API Development Tools'dan kimlik bilgilerini alın, projenin kök dizininde `.env` dosyasını düzenleyin, sonra `sudo docker compose restart telfiles-app` çalıştırın.
 
 **Güncelleme**: Program her açılışta GitHub'daki en yeni sürümü kontrol eder; yeni sürüm varsa sağ alt köşede küçük bir bilgi kutusu çıkar. Güncellemek için aynı kurulum komutunu yeniden çalıştırmanız yeterlidir — betik mevcut kurulumu algılar, kodu çeker, container'ı yeniden inşa eder ve verilerinizi olduğu gibi korur.
 
