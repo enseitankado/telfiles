@@ -358,18 +358,62 @@ fi
 ok ".env güncellendi."
 
 # ── 5) Port çakışmasını çöz ──────────────────────────────────────────────────
+# Çoğu zaman porttaki "çakışma" aslında bir önceki TelFiles container'ı:
+# update sırasında eski sürüm hâlâ ayakta. Önce bunu durdurmayı dene; port
+# serbest kalırsa orijinal portu koruyup üzerine yenisini başlatırız.
+# Yalnızca *gerçekten* bizim olmayan başka bir servis tutuyorsa yedek porta
+# kayarız.
+
+# Mevcut docker-compose.yml içindeki host portu = otorite. Önceki bir kurulum
+# port-swap yaptıysa (örn. 8766:8765) TELFILES_PORT bunu yansıtmalı; aksi
+# halde son mesajdaki URL yanlış porta işaret eder ve port kontrolü de
+# yanlış portu sorgular.
+_cur_host_port="$(awk -F'"' '/[0-9]+:8765"/{print $2; exit}' docker-compose.yml | cut -d: -f1)"
+if [ -n "$_cur_host_port" ] && [ "$_cur_host_port" != "$TELFILES_PORT" ]; then
+  TELFILES_PORT="$_cur_host_port"
+  log "docker-compose.yml host port'u $TELFILES_PORT olarak algılandı."
+fi
+
 if ss -lnt "sport = :$TELFILES_PORT" 2>/dev/null | grep -q LISTEN; then
-  warn "$TELFILES_PORT portu zaten kullanımda."
-  # Sadece docker-compose.yml içindeki port'u değiştir (yalnızca host kısmını).
-  if grep -qE "\"$TELFILES_PORT:8765\"" docker-compose.yml; then
-    for try_port in 8766 8767 8768 8769 18765; do
-      if ! ss -lnt "sport = :$try_port" 2>/dev/null | grep -q LISTEN; then
-        sed -i -E "s|\"$TELFILES_PORT:8765\"|\"$try_port:8765\"|" docker-compose.yml
-        TELFILES_PORT="$try_port"
-        warn "Port → $TELFILES_PORT olarak değiştirildi."
-        break
-      fi
-    done
+  warn "$TELFILES_PORT portu zaten kullanımda — eski TelFiles container'ı mı diye bakılıyor."
+
+  # 5a) Bizim eski compose servisimiz çalışıyor mu? Çalışıyorsa durdur.
+  if $DOCKER_CMD compose ps -q telfiles-app 2>/dev/null | grep -q .; then
+    log "Eski telfiles-app container'ı durduruluyor (sağlıklı yeniden başlatma için)…"
+    $DOCKER_CMD compose stop telfiles-app >/dev/null 2>&1 || true
+    # Compose-yönetimli olmayan ama aynı isimde yetim bir container varsa
+    # (eski kurulum, --name flag'iyle elle başlatılmış vs.) onu da temizle.
+    $DOCKER_CMD rm -f telfiles-app >/dev/null 2>&1 || true
+  else
+    # Compose tanımıyor olabilir ama yine de container adı eşleşebilir.
+    if $DOCKER_CMD ps -a --filter "name=^telfiles-app$" --format '{{.ID}}' 2>/dev/null | grep -q .; then
+      log "telfiles-app adındaki eski container kaldırılıyor…"
+      $DOCKER_CMD rm -f telfiles-app >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # Stop'tan sonra portun gerçekten boşalması bir saniye alabilir.
+  for _i in 1 2 3 4 5; do
+    if ! ss -lnt "sport = :$TELFILES_PORT" 2>/dev/null | grep -q LISTEN; then
+      ok "$TELFILES_PORT portu serbest bırakıldı; orijinal port korunuyor."
+      break
+    fi
+    sleep 1
+  done
+
+  # 5b) Hâlâ doluysa bizim olmayan bir servis bunu tutuyor — yedek porta kay.
+  if ss -lnt "sport = :$TELFILES_PORT" 2>/dev/null | grep -q LISTEN; then
+    warn "Port hâlâ bizim olmayan başka bir servis tarafından kullanılıyor."
+    if grep -qE "\"$TELFILES_PORT:8765\"" docker-compose.yml; then
+      for try_port in 8766 8767 8768 8769 18765; do
+        if ! ss -lnt "sport = :$try_port" 2>/dev/null | grep -q LISTEN; then
+          sed -i -E "s|\"$TELFILES_PORT:8765\"|\"$try_port:8765\"|" docker-compose.yml
+          TELFILES_PORT="$try_port"
+          warn "Port → $TELFILES_PORT olarak değiştirildi."
+          break
+        fi
+      done
+    fi
   fi
 fi
 
