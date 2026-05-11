@@ -763,17 +763,38 @@ async def _files_dedupe_count_cached(where: str, c_args: List) -> int:
     return total
 
 
+_LINK_SORT_COLS = {
+    "date":     "l.date",
+    "url":      "l.url",
+    "platform": "l.platform",
+    "files":    "l.file_count",
+    "group":    "g.name",
+    "context":  "l.context",
+}
+
+
 async def search_links(
     query: str = "",
     platform: Optional[str] = None,
     group_id: Optional[int] = None,
+    sort_by: str = "date",
     sort_dir: str = "desc",
     limit: int = 50,
     offset: int = 0,
     show_dead: bool = False,
     dedupe: bool = True,
+    url_filter: str = "",
+    context_filter: str = "",
+    group_filter: str = "",
+    min_files: Optional[int] = None,
+    max_files: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ) -> Tuple[List[Dict], int]:
     direction = _SORT_DIRS.get(sort_dir, "DESC")
+    sort_col  = _LINK_SORT_COLS.get(sort_by, "l.date")
+    # Outer ORDER BY (dedupe path) refers to projected columns.
+    sort_col_outer = sort_col.replace("l.", "d.").replace("g.name", "d.group_name")
 
     conditions: List[str] = []
     args: List[Any] = []
@@ -786,6 +807,32 @@ async def search_links(
         conditions.append(f"l.platform = ${idx}"); args.append(platform); idx += 1
     if group_id is not None:
         conditions.append(f"l.group_id = ${idx}"); args.append(group_id); idx += 1
+    if url_filter:
+        conditions.append(f"l.url ILIKE ${idx}"); args.append(f"%{url_filter}%"); idx += 1
+    if context_filter:
+        conditions.append(f"l.context ILIKE ${idx}")
+        args.append(f"%{context_filter}%"); idx += 1
+    if group_filter:
+        conditions.append(
+            f"(COALESCE(g.display_name, g.name) ILIKE ${idx} OR g.username ILIKE ${idx})"
+        )
+        args.append(f"%{group_filter}%"); idx += 1
+    if min_files is not None:
+        conditions.append(f"l.file_count >= ${idx}"); args.append(int(min_files)); idx += 1
+    if max_files is not None:
+        conditions.append(f"l.file_count <= ${idx}"); args.append(int(max_files)); idx += 1
+    def _parse_date(s: str):
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d")
+        except Exception:
+            return None
+    df = _parse_date(date_from) if date_from else None
+    dt = _parse_date(date_to)   if date_to   else None
+    if df:
+        conditions.append(f"l.date >= ${idx}"); args.append(df); idx += 1
+    if dt:
+        conditions.append(f"l.date < ${idx}")
+        args.append(dt + timedelta(days=1)); idx += 1
     if not show_dead:
         # Only hide links the prober has confirmed dead. NULL (not yet
         # probed) and TRUE (alive) are both kept visible.
@@ -806,7 +853,7 @@ async def search_links(
                 FROM links l
                 JOIN groups g ON g.id = l.group_id
                 {where}
-                ORDER BY l.date {direction}
+                ORDER BY {sort_col} {direction}, l.id {direction}
                 LIMIT ${idx} OFFSET ${idx+1}""",
             *args,
         )
@@ -833,14 +880,15 @@ async def search_links(
                 ORDER BY l.url, l.date DESC
             ),
             c AS (
-                SELECT url, COUNT(*)::int AS appearances
+                SELECT l.url, COUNT(*)::int AS appearances
                 FROM links l
+                JOIN groups g ON g.id = l.group_id
                 {where}
-                GROUP BY url
+                GROUP BY l.url
             )
             SELECT d.*, c.appearances
             FROM d JOIN c ON c.url = d.url
-            ORDER BY d.date {direction}
+            ORDER BY {sort_col_outer} {direction}, d.id {direction}
             LIMIT ${idx} OFFSET ${idx+1}""",
         *args,
     )
