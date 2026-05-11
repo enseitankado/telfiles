@@ -583,6 +583,14 @@ async def update_credentials(req: CredentialsRequest):
     aid = req.account_id or 1
     a = await database.get_account(aid)
     if not a:
+        # First-run case: .env was left blank during install, so init_db
+        # didn't seed account 1. Create it now from the values the user
+        # is entering through the greeter, so the login flow can proceed.
+        if aid == 1:
+            await database.create_account(
+                "Hesap 1", int(req.api_id), req.api_hash.strip()
+            )
+            return {"ok": True, "next_step": "login", "created": True}
         raise HTTPException(404, f"Account {aid} not found")
     # Disconnect this account's client; if it's the only account, also stop sync loops
     accounts = await database.list_accounts()

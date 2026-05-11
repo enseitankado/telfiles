@@ -154,7 +154,9 @@ function hide(id) { document.getElementById(id).style.display = 'none'; }
 async function checkAuth() {
   const r = await api('/api/auth/status');
   hide('loading-screen');
-  if (r.authorized) showApp(); else show('login-screen');
+  if (r.authorized) showApp();
+  else startLoginForAccount(1, null);   // creds eksikse "creds" adımı,
+                                        // varsa "phone" adımı gösterilir.
 }
 
 async function showApp() {
@@ -294,16 +296,46 @@ function initColResize() {
 let _loginAccountId = 1;       // which account the login wizard is currently targeting
 let _loginReturnTo = null;     // null = come from boot screen; 'settings' = come from accounts panel
 
-function startLoginForAccount(accountId, returnTo) {
+async function startLoginForAccount(accountId, returnTo) {
   _loginAccountId = accountId || 1;
   _loginReturnTo = returnTo || null;
   hide('app-shell');
   show('login-screen');
-  showStep('phone');
   loginMsg('');
   document.getElementById('inp-phone').value = '';
   document.getElementById('inp-code').value = '';
   document.getElementById('inp-pass').value = '';
+  // Eğer bu hesap için API_ID/HASH henüz tanımlı değilse — örneğin kurulum
+  // sırasında .env boş bırakılmışsa — telefon adımı yerine önce credentials
+  // formu göster. Kullanıcı buradan girdiğinde backend account'u yaratır
+  // veya günceller, sonra normal telefon akışına geçilir.
+  try {
+    const r = await api('/api/credentials?account_id=' + (_loginAccountId || 1));
+    if (!r || !r.configured) {
+      document.getElementById('inp-api-id').value = '';
+      document.getElementById('inp-api-hash').value = '';
+      showStep('creds');
+      setTimeout(() => document.getElementById('inp-api-id')?.focus(), 30);
+      return;
+    }
+  } catch (e) { /* credentials endpoint düştüyse normal akışa düş */ }
+  showStep('phone');
+  setTimeout(() => document.getElementById('inp-phone')?.focus(), 30);
+}
+
+async function authSaveCreds() {
+  const idStr   = document.getElementById('inp-api-id').value.trim();
+  const hashStr = document.getElementById('inp-api-hash').value.trim();
+  const apiId = parseInt(idStr, 10);
+  if (!apiId || !hashStr) { loginMsg('API ID ve API Hash gerekli.'); return; }
+  try {
+    await api('/api/credentials', { method: 'POST', json: {
+      api_id: apiId, api_hash: hashStr, account_id: _loginAccountId || 1
+    }});
+  } catch (e) { loginMsg('Kaydedilemedi: ' + e.message); return; }
+  loginMsg('');
+  showStep('phone');
+  setTimeout(() => document.getElementById('inp-phone')?.focus(), 30);
 }
 
 async function authSendCode() {
@@ -343,7 +375,7 @@ function _afterLogin() {
   }
 }
 function showStep(s) {
-  ['phone','code','2fa'].forEach(x =>
+  ['creds','phone','code','2fa'].forEach(x =>
     document.getElementById('login-step-'+x).classList.toggle('active', x===s));
 }
 function loginMsg(m) { document.getElementById('login-msg').textContent = m; }

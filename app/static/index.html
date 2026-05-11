@@ -929,6 +929,16 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 <div id="login-screen">
   <div style="font-size:2.5rem">📱</div>
   <h2 data-i18n="login.title">TelFiles — Giriş</h2>
+  <div id="login-step-creds" class="login-step">
+    <div style="font-size:.82rem;color:var(--text-3);text-align:center;max-width:300px;line-height:1.4">
+      Telegram'a bağlanmak için <b>API ID</b> ve <b>API Hash</b> gerekir.
+      <a href="https://my.telegram.org" target="_blank" rel="noopener" style="color:var(--accent)">my.telegram.org</a>
+      → API Development Tools'tan bir kez alıp aşağıya girin.
+    </div>
+    <input id="inp-api-id" type="number" placeholder="API ID (sayı)" autocomplete="off">
+    <input id="inp-api-hash" type="text" placeholder="API Hash (uzun karakter dizisi)" autocomplete="off">
+    <button onclick="authSaveCreds()">Kaydet ve devam et</button>
+  </div>
   <div id="login-step-phone" class="login-step active">
     <input id="inp-phone" type="tel" placeholder="+905xxxxxxxxx" data-i18n-ph="login.phonePh" autocomplete="tel">
     <button onclick="authSendCode()" data-i18n="login.sendCode">Kod Gönder</button>
