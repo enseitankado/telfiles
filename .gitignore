@@ -11,6 +11,7 @@ pgdata/
 telemetry-server/data/
 
 # Local dev / tooling
+.claude/
 .vscode/
 .idea/
 
