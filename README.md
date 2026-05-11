@@ -85,6 +85,8 @@ Bu betik şunları yapar:
 
 **İlk giriş**: `admin` parolasıyla. Ayarlar → Hesap → Arabirim Parolası ekranından değiştirin (zorunlu).
 
+**Güncelleme**: Program her açılışta GitHub'daki en yeni sürümü kontrol eder; yeni sürüm varsa sağ alt köşede küçük bir bilgi kutusu çıkar. Güncellemek için aynı kurulum komutunu yeniden çalıştırmanız yeterlidir — betik mevcut kurulumu algılar, kodu çeker, container'ı yeniden inşa eder ve verilerinizi olduğu gibi korur.
+
 ### Sessiz / scripted kurulum
 
 ```bash

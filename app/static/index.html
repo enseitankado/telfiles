@@ -361,6 +361,18 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .fname-cell{display:flex;align-items:center;min-width:0;overflow:hidden;gap:0}
 .fname-cell .fname-trunc{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fname-cell > a{flex-shrink:0}
+/* Update banner — sağ-alt köşede yüzer; "Daha sonra" tıklanana veya
+   yeni bir sürüm gelene kadar görünür kalır. */
+#tf-update-banner{position:fixed;right:20px;bottom:20px;z-index:9999;max-width:480px;background:var(--bg-3);color:var(--text-1);border:1px solid var(--accent);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);padding:12px 14px;font-size:.85rem}
+#tf-update-banner .tfu-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+#tf-update-banner .tfu-msg b{color:var(--accent-h)}
+#tf-update-banner .tfu-dim{margin-left:6px;color:var(--text-3);font-size:.78rem}
+#tf-update-banner .tfu-dim code{background:var(--bg-2);padding:1px 5px;border-radius:3px}
+#tf-update-banner .tfu-actions{display:flex;gap:8px;align-items:center}
+#tf-update-banner .tfu-btn{background:var(--accent);color:#fff;border:none;border-radius:5px;padding:5px 10px;font-size:.78rem;cursor:pointer;font-weight:600}
+#tf-update-banner .tfu-btn:hover{filter:brightness(1.1)}
+#tf-update-banner .tfu-link{background:none;border:none;color:var(--text-3);font-size:.78rem;cursor:pointer;text-decoration:underline}
+#tf-update-banner .tfu-cmd{margin-top:8px;background:var(--bg-2);padding:6px 8px;border-radius:4px;font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text-2);overflow-x:auto;white-space:nowrap}
 .link-files-ok{color:var(--text-1);font-weight:500;cursor:default}
 .link-files-pending{color:var(--text-4);cursor:default}
 .link-files-dead{color:#dc2626;font-style:italic;cursor:default}

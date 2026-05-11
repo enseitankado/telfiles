@@ -946,6 +946,81 @@ async def get_stats():
     return await database.get_stats()
 
 
+# ── Version + update check ───────────────────────────────────────────────────
+# install.sh writes /app/version.json with the commit SHA at install time.
+# The frontend hits /api/version on boot and shows a banner if origin/main
+# has moved past the local commit. GitHub responses are cached for an hour
+# so we don't burn the 60-req/h anon rate limit when many tabs are open.
+
+_VERSION_CACHE: dict = {"checked_at": 0.0, "latest": None}
+_VERSION_TTL_S = 3600.0
+_GITHUB_REPO   = "enseitankado/telfiles"
+_REPO_URL      = f"https://github.com/{_GITHUB_REPO}"
+
+
+def _local_version() -> dict:
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "version.json")) as f:
+            d = _json.load(f) or {}
+            return {
+                "commit":      str(d.get("commit") or "")[:40],
+                "commit_date": d.get("commit_date") or None,
+            }
+    except Exception:
+        return {"commit": "", "commit_date": None}
+
+
+async def _fetch_latest_commit() -> Optional[dict]:
+    now = _time.time()
+    if _VERSION_CACHE["latest"] and now - _VERSION_CACHE["checked_at"] < _VERSION_TTL_S:
+        return _VERSION_CACHE["latest"]
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"https://api.github.com/repos/{_GITHUB_REPO}/commits/main",
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": "telfiles-update-check"},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                if r.status != 200:
+                    return _VERSION_CACHE["latest"]
+                d = await r.json()
+                msg = ((d.get("commit") or {}).get("message") or "").splitlines()
+                out = {
+                    "commit":      str(d.get("sha") or "")[:40],
+                    "commit_date": ((d.get("commit") or {}).get("committer") or {}).get("date"),
+                    "message":     msg[0] if msg else "",
+                    "html_url":    d.get("html_url"),
+                }
+                _VERSION_CACHE["latest"]     = out
+                _VERSION_CACHE["checked_at"] = now
+                return out
+    except Exception:
+        return _VERSION_CACHE["latest"]
+
+
+@app.get("/api/version")
+async def get_version():
+    local  = _local_version()
+    latest = await _fetch_latest_commit()
+    update_available = False
+    if local.get("commit") and latest and latest.get("commit"):
+        # SHAs may be full or short; one being a prefix of the other = equal.
+        l, r = local["commit"], latest["commit"]
+        update_available = not (l.startswith(r) or r.startswith(l))
+    return {
+        "local": local,
+        "latest": latest,
+        "update_available": update_available,
+        "repo_url": _REPO_URL,
+        "install_cmd": (
+            "curl -fsSL https://raw.githubusercontent.com/"
+            f"{_GITHUB_REPO}/main/install.sh | bash"
+        ),
+    }
+
+
 @app.get("/api/status")
 async def get_status():
     now = _time.time()

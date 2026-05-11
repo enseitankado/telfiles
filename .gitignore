@@ -2,6 +2,10 @@
 .env
 .env.local
 
+# Generated at install time by install.sh — records the HEAD SHA so /api/version
+# can tell the user when a newer commit exists on origin/main.
+app/version.json
+
 # Local runtime data (Telegram sessions, UI auth, user DB, downloads)
 data/
 downloads/

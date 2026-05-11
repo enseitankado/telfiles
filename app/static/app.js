@@ -169,6 +169,53 @@ async function showApp() {
   setInterval(pollSync, 5000);
   setInterval(updateNextSyncDisplay, 1000);
   setInterval(loadActiveNotifications, 30000);
+  // Açılışta bir kez, sonra 6 saatte bir GitHub'da yeni sürüm var mı bakar.
+  setTimeout(checkForUpdate, 4000);
+  setInterval(checkForUpdate, 6 * 3600 * 1000);
+}
+
+async function checkForUpdate() {
+  try {
+    const v = await api('/api/version');
+    if (!v || !v.update_available || !v.latest || !v.latest.commit) return;
+    // Kullanıcı bu sürüm için "Daha sonra" derse o commit'e kadar sus.
+    const dismissed = localStorage.getItem('tf_update_dismissed_commit');
+    if (dismissed === v.latest.commit) return;
+    showUpdateBanner(v);
+  } catch (e) { /* sessizce geç (offline / rate-limit) */ }
+}
+
+function showUpdateBanner(v) {
+  const existing = document.getElementById('tf-update-banner');
+  if (existing) existing.remove();
+  const short = (s) => (s || '').substring(0, 7);
+  const localShort  = short(v.local && v.local.commit) || '?';
+  const latestShort = short(v.latest && v.latest.commit);
+  const cmd = v.install_cmd || '';
+  const el = document.createElement('div');
+  el.id = 'tf-update-banner';
+  el.innerHTML = `
+    <div class="tfu-row">
+      <div class="tfu-msg">
+        <b>Yeni sürüm var.</b>
+        <span class="tfu-dim">Yüklü: <code>${esc(localShort)}</code> · GitHub: <code>${esc(latestShort)}</code></span>
+      </div>
+      <div class="tfu-actions">
+        <button class="tfu-btn" id="tfu-copy">Güncelleme komutunu kopyala</button>
+        <button class="tfu-link" id="tfu-later">Daha sonra</button>
+      </div>
+    </div>
+    <div class="tfu-cmd"><code>${esc(cmd)}</code></div>
+  `;
+  document.body.appendChild(el);
+  document.getElementById('tfu-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(cmd); showToast('Komut kopyalandı. Sunucunuzda çalıştırın.'); }
+    catch { showToast('Kopyalama başarısız — komutu elle kopyalayın.'); }
+  });
+  document.getElementById('tfu-later').addEventListener('click', () => {
+    localStorage.setItem('tf_update_dismissed_commit', v.latest.commit);
+    el.remove();
+  });
 }
 
 async function fetchStats() {
