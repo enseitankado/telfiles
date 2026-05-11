@@ -285,8 +285,16 @@ async def _migrate_to_multi_account():
         except Exception:
             pass
         if not api_id:
-            api_id = int(os.environ.get("TELEGRAM_API_ID", "0")) or None
-            api_hash = os.environ.get("TELEGRAM_API_HASH", "") or None
+            # Tolerate TELEGRAM_API_ID being unset OR set to "" (install.sh
+            # writes an empty value when the user skips the prompt). int("")
+            # would raise ValueError and crash the lifespan handler — leaving
+            # the container in a restart loop with no accounts seeded.
+            _raw_id = (os.environ.get("TELEGRAM_API_ID") or "").strip()
+            try:
+                api_id = int(_raw_id) or None if _raw_id else None
+            except ValueError:
+                api_id = None
+            api_hash = (os.environ.get("TELEGRAM_API_HASH") or "").strip() or None
         if api_id and api_hash:
             await _exec(
                 "INSERT INTO accounts (id, name, api_id, api_hash) VALUES ($1, $2, $3, $4)",

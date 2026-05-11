@@ -430,5 +430,8 @@ EOF
 
 if [ -z "${api_id:-}" ] || [ -z "${api_hash:-}" ]; then
   warn "TELEGRAM_API_ID / TELEGRAM_API_HASH boş kaldı."
-  warn ".env'yi düzenleyip 'docker compose restart telfiles-app' çalıştırın."
+  warn "Şu adımları izleyin:"
+  warn "    cd $(pwd)"
+  warn "    \$EDITOR .env     # iki değişkene değerlerini girin"
+  warn "    docker compose restart telfiles-app"
 fi
