@@ -19,6 +19,7 @@ const S = {
   extChip: '', typeGroup: '',
   sizeMinMB: null, sizeMaxMB: null, sliderMax: 0,
   linkOffset: 0, linkLimit: 100,
+  linkSortBy: 'date', linkSortDir: 'desc',
   dlQueue: {}, polls: {},
   selectedFiles: new Set(),
   colGroupIds: new Set(),
@@ -1779,18 +1780,48 @@ function debouncedLoadLinks() {
 }
 
 async function loadLinks() {
-  const params = new URLSearchParams({
-    q:        document.getElementById('link-search').value.trim(),
-    platform: document.getElementById('platform-sel').value,
-    sort_dir: 'desc', limit: S.linkLimit, offset: S.linkOffset,
+  const v  = (id) => (document.getElementById(id)?.value || '').trim();
+  const p  = new URLSearchParams({
+    q:        v('link-search'),
+    platform: v('lcol-platform'),
+    sort_by:  S.linkSortBy,
+    sort_dir: S.linkSortDir,
+    limit:    S.linkLimit,
+    offset:   S.linkOffset,
   });
-  if (S.activeGroupId!=null) params.set('group_id', S.activeGroupId);
+  if (S.activeGroupId != null) p.set('group_id', S.activeGroupId);
+  // Per-column filters (sent only when non-empty so the API treats them as absent)
+  const urlF  = v('lcol-url');         if (urlF)  p.set('url_filter', urlF);
+  const ctxF  = v('lcol-context');     if (ctxF)  p.set('context_filter', ctxF);
+  const grpF  = v('lcol-group');       if (grpF)  p.set('group_filter', grpF);
+  const fmin  = v('lcol-files-min');   if (fmin && !isNaN(+fmin)) p.set('min_files', +fmin);
+  const fmax  = v('lcol-files-max');   if (fmax && !isNaN(+fmax)) p.set('max_files', +fmax);
+  const dfrom = v('lcol-date-from');   if (dfrom) p.set('date_from', dfrom);
+  const dto   = v('lcol-date-to');     if (dto)   p.set('date_to',   dto);
+
   _paintGridLoading('links-body', 8);
-  const data = await api('/api/links?'+params);
+  const data = await api('/api/links?' + p);
   renderLinks(data.links);
   const lc = document.getElementById('link-flt-count');
   if (lc) lc.textContent = t("filter.linkCount", {n: (data.total || 0).toLocaleString()});
+  _updateLinkSortArrows();
   renderPagination(data.total, S.linkLimit, S.linkOffset);
+}
+
+function linkSortBy(col) {
+  S.linkSortDir = (S.linkSortBy === col) ? (S.linkSortDir === 'asc' ? 'desc' : 'asc') : 'asc';
+  S.linkSortBy  = col;
+  S.linkOffset  = 0;
+  loadLinks();
+}
+
+function _updateLinkSortArrows() {
+  ['url','platform','files','group','date','context'].forEach(c => {
+    const el = document.getElementById('larr-' + c);
+    if (!el) return;
+    el.textContent = (S.linkSortBy === c) ? (S.linkSortDir === 'asc' ? '▲' : '▼') : '▲▼';
+    el.classList.toggle('active', S.linkSortBy === c);
+  });
 }
 
 function cleanUrl(raw) {

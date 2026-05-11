@@ -1025,18 +1025,6 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           <span class="flt-label" data-i18n="common.search">Ara</span>
           <input id="link-search" type="search" placeholder="URL veya içerik…" data-i18n-ph="filter.linkSearchPh" oninput="debouncedLoadLinks()">
         </div>
-        <div class="flt-group">
-          <span class="flt-label" data-i18n="filter.platform">Platform</span>
-          <select id="platform-sel" onchange="loadLinks()">
-            <option value="" data-i18n="filter.all">Tümü</option>
-            <option>Google Drive</option><option>Mega</option><option>MediaFire</option>
-            <option>OneDrive</option><option>Dropbox</option><option>WeTransfer</option>
-            <option>pCloud</option><option>Yandex Disk</option><option>Box</option>
-            <option>Zippyshare</option><option>Gofile</option><option>Pixeldrain</option>
-            <option>Filebin</option><option>GitHub</option><option>YouTube</option>
-            <option>Archive.org</option>
-          </select>
-        </div>
         <span id="link-flt-count" class="flt-count-pill" data-i18n-title="filter.linkCountTitle" title="Eşleşen link sayısı">—</span>
       </div>
 
@@ -1547,12 +1535,42 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             <tr>
               <th class="chk-cell"><input type="checkbox" id="links-select-all" onchange="toggleAllLinks(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
               <th class="num-cell" style="font-size:.72rem">#</th>
-              <th data-i18n="table.url">URL</th>
-              <th class="lcol-platform" data-i18n="table.platform">Platform</th>
-              <th class="lcol-files" data-i18n="table.linkFiles">Dosyalar</th>
-              <th class="lcol-group" data-i18n="table.group">Grup</th>
-              <th class="lcol-date" data-i18n="table.date">Tarih</th>
-              <th class="lcol-ctx" data-i18n="table.context">İçerik</th>
+              <th class="sortable" onclick="linkSortBy('url')"><span data-i18n="table.url">URL</span> <span class="sort-arrow" id="larr-url"></span></th>
+              <th class="sortable lcol-platform" onclick="linkSortBy('platform')"><span data-i18n="table.platform">Platform</span> <span class="sort-arrow" id="larr-platform"></span></th>
+              <th class="sortable lcol-files" onclick="linkSortBy('files')"><span data-i18n="table.linkFiles">Dosyalar</span> <span class="sort-arrow" id="larr-files"></span></th>
+              <th class="sortable lcol-group" onclick="linkSortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="larr-group"></span></th>
+              <th class="sortable lcol-date" onclick="linkSortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="larr-date"></span></th>
+              <th class="sortable lcol-ctx" onclick="linkSortBy('context')"><span data-i18n="table.context">İçerik</span> <span class="sort-arrow" id="larr-context"></span></th>
+            </tr>
+            <tr class="flt-row">
+              <th class="chk-cell"></th>
+              <th></th>
+              <th><input id="lcol-url" type="text" placeholder="url…" data-i18n-ph="filter.colUrl" oninput="debouncedLoadLinks()"></th>
+              <th>
+                <select id="lcol-platform" onchange="loadLinks()">
+                  <option value="" data-i18n="filter.all">Tümü</option>
+                  <option>Google Drive</option><option>Mega</option><option>MediaFire</option>
+                  <option>OneDrive</option><option>Dropbox</option><option>WeTransfer</option>
+                  <option>pCloud</option><option>Yandex Disk</option><option>Box</option>
+                  <option>Zippyshare</option><option>Gofile</option><option>Pixeldrain</option>
+                  <option>Filebin</option><option>GitHub</option><option>YouTube</option>
+                  <option>Archive.org</option>
+                </select>
+              </th>
+              <th>
+                <div class="range-input-wrap">
+                  <input id="lcol-files-min" type="text" placeholder="min" data-i18n-ph="filter.min" oninput="debouncedLoadLinks()">
+                  <input id="lcol-files-max" type="text" placeholder="max" data-i18n-ph="filter.max" oninput="debouncedLoadLinks()">
+                </div>
+              </th>
+              <th><input id="lcol-group" type="text" placeholder="grup…" data-i18n-ph="filter.colGroup" oninput="debouncedLoadLinks()"></th>
+              <th>
+                <div class="range-input-wrap">
+                  <input id="lcol-date-from" type="date" oninput="debouncedLoadLinks()">
+                  <input id="lcol-date-to"   type="date" oninput="debouncedLoadLinks()">
+                </div>
+              </th>
+              <th><input id="lcol-context" type="text" placeholder="içerik…" data-i18n-ph="filter.colContext" oninput="debouncedLoadLinks()"></th>
             </tr>
           </thead>
           <tbody id="links-body"></tbody>
