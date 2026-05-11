@@ -339,6 +339,23 @@ async function authSaveCreds() {
   setTimeout(() => document.getElementById('inp-phone')?.focus(), 30);
 }
 
+// "Şimdi geç" — kullanıcı credentials adımını atlayıp uygulamaya doğrudan
+// girmek isterse. Hesap henüz tanımlı olmadığı için Telegram bağlantısı
+// gerektiren her özellik boş çalışır; kullanıcı Ayarlar → Hesap üzerinden
+// API bilgilerini girip sonra giriş akışını oradan başlatır.
+function authSkipCreds() {
+  loginMsg('');
+  hide('login-screen');
+  show('app-shell');
+  showApp().then(() => {
+    try {
+      switchTab('settings');
+      switchSettingsTab('account');
+    } catch (e) { /* tab switcher henüz hazır değilse sessizce geç */ }
+    showToast('API ID/Hash girilmedi. Ayarlar → Hesap üzerinden ekleyebilirsiniz.', 6000);
+  });
+}
+
 async function authSendCode() {
   const phone = document.getElementById('inp-phone').value.trim();
   if (!phone) return;
