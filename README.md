@@ -41,8 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <td><a href="docs/screenshots/06-status.png"><img src="docs/screenshots/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform bazlı link istatistikleri.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/07-downloads.png"><img src="docs/screenshots/07-downloads.png" alt="İndirilenler"></a><br><b>⬇️ İndirilenler</b> — eş zamanlı indirme kuyruğu, ilerleme, geçmiş.</td>
-<td><a href="docs/screenshots/05-settings.png"><img src="docs/screenshots/05-settings.png" alt="Ayarlar"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, hesap & tema, izleme kelimeleri, çok dil.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/05-settings.png"><img src="docs/screenshots/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, hesap & tema, izleme kelimeleri, çok dil.</td>
 </tr>
 </table>
 
