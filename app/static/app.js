@@ -1783,6 +1783,8 @@ async function loadLinks() {
   _paintGridLoading('links-body', 8);
   const data = await api('/api/links?'+params);
   renderLinks(data.links);
+  const lc = document.getElementById('link-flt-count');
+  if (lc) lc.textContent = t("filter.linkCount", {n: (data.total || 0).toLocaleString()});
   renderPagination(data.total, S.linkLimit, S.linkOffset);
 }
 
