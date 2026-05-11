@@ -1318,9 +1318,14 @@ function renderFiles(files, gFilter) {
     const ext     = (f.file_ext||'').toUpperCase();
     const color   = extColor(f.file_ext||'');
     const badge   = ext ? `<span class="ext-badge" style="${color}" onclick="filterByExt('${esc(f.file_ext)}')">${esc(ext)}</span>` : '—';
-    const gLink   = `<span class="g-link" onclick="filterByGroup(${f.group_id})">${esc(f.group_name||'')}</span>`;
+    // Strip emojis / formatting glue from anything that came out of a
+    // Telegram message (channel display name, file name, message body)
+    // so cells render as plain text regardless of how the source was decorated.
+    const gName   = cleanText(f.group_name || '');
+    const fName   = cleanText(f.file_name || '') || '—';
+    const ctxRaw  = cleanText(f.context || '');
+    const gLink   = `<span class="g-link" onclick="filterByGroup(${f.group_id})">${esc(gName)}</span>`;
     const tg      = tgLink(f);
-    const ctx     = f.context || '';
     const selRow  = f.id === _selectedFileId ? ' class="row-selected"' : '';
     // Same file (name + size) re-posted across multiple messages collapses
     // into one row; surface the underlying count.
@@ -1331,12 +1336,12 @@ function renderFiles(files, gFilter) {
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
-      <td title="${esc(f.file_name||'')}"><div class="fname-cell"><span class="fname-trunc">${esc(f.file_name||'—')}</span>${tg}${dupBadge}</div></td>
+      <td title="${esc(fName)}"><div class="fname-cell"><span class="fname-trunc">${esc(fName)}</span>${tg}${dupBadge}</div></td>
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
       <td>${dlState(f)}</td>
-      <td class="ctx-cell"${ctx ? ` data-ctx="${esc(ctx)}"` : ''} title="${esc(ctx)}">${ctx ? esc(ctx.substring(0,50)) : '—'}</td>
+      <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''} title="${esc(ctxRaw)}">${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
     </tr>`;
   }).join('');
   // Direct per-checkbox listeners — gives us a real DOM event with shiftKey.
@@ -1826,11 +1831,11 @@ function _linkFilesCell(l) {
   // separate lines inside the native title attribute.
   const lines = files.slice(0, 20).map(f => {
     const sz = f.size ? ' (' + fmtSize(f.size) + ')' : '';
-    return (f.name || '?') + sz;
+    return (cleanText(f.name) || '?') + sz;
   });
   if (files.length > 20) lines.push(`+${files.length - 20} daha`);
   const tip = lines.join('\n');
-  const headline = files[0]?.name || '';
+  const headline = cleanText(files[0]?.name || '');
   const visible = files.length === 1
     ? `${esc(headline.substring(0, 28))}`
     : `${files.length} dosya${sizeStr}`;
@@ -1855,15 +1860,19 @@ function renderLinks(links) {
     const dupBadge = (l.appearances && l.appearances > 1)
       ? ` <span class="link-dup-badge" title="${l.appearances} mesajda paylaşılmış">×${l.appearances}</span>`
       : '';
+    // URL'ler zaten ASCII; group_name ve context Telegram'dan geldiği için
+    // emoji/biçim temizliği uygulanır.
+    const gName  = cleanText(l.group_name || '');
+    const ctxRaw = cleanText(l.context || '');
     return `<tr>
       <td class="chk-cell"><input type="checkbox" class="link-chk" data-lid="${l.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td title="${esc(l.url)}"><a href="${esc(l.url)}" target="_blank" rel="noopener" style="color:#2563eb">${esc(shortUrl)}</a>${dupBadge}</td>
       <td>${platBadge(l.platform)}</td>
       <td class="link-files-cell">${_linkFilesCell(l)}</td>
-      <td>${esc(l.group_name||'')}</td>
+      <td>${esc(gName)}</td>
       <td>${fmtDate(l.date)}</td>
-      <td class="ctx-cell" title="${esc(l.context||'')}">${esc((l.context||'').substring(0,40))}</td>
+      <td class="ctx-cell" title="${esc(ctxRaw)}">${esc(ctxRaw.substring(0,40))}</td>
     </tr>`;
   }).join('');
   // Direct per-checkbox click listeners — gives us a real DOM event with shiftKey.
@@ -2065,6 +2074,26 @@ function tgGroupHref(g) {
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// Strip emoji + decorative codepoints from text that came from Telegram
+// message bodies / channel names / file names so grid cells render as
+// plain text. Removes:
+//   • Extended_Pictographic (emoji, symbols, dingbats, transport, etc.)
+//   • Regional Indicator pairs (flag emoji)
+//   • Skin-tone modifiers (U+1F3FB–U+1F3FF)
+//   • Variation selectors + ZWJ + bidi/format controls (invisible glue)
+// Then collapses any whitespace runs the removals left behind. Used by
+// the Files and Links grids; the underlying DB values stay intact.
+function cleanText(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
+    .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '')
+    .replace(/[​-‏‪-‮⁠-⁤︀-️]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 // Show a single-row spinner inside any tbody while its data fetch is in flight.
 // Replaced by the next innerHTML write in the corresponding render*() function.
