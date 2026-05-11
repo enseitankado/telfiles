@@ -152,12 +152,29 @@ function applySavedTheme() {
 function show(id) { document.getElementById(id).style.display = 'flex'; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
 
+// Kullanıcı greeter'da "Şimdi geç" dediyse, sonraki yenilemelerde aynı
+// formu tekrar göstermek için bir localStorage flag'i kullanıyoruz.
+// Kimlik bilgileri girilince temizleniyor.
+function _credsSkipped() {
+  try { return localStorage.getItem('tf_creds_skipped') === '1'; } catch (e) { return false; }
+}
+function _setCredsSkipped(v) {
+  try {
+    if (v) localStorage.setItem('tf_creds_skipped', '1');
+    else   localStorage.removeItem('tf_creds_skipped');
+  } catch (e) {}
+}
+
 async function checkAuth() {
   const r = await api('/api/auth/status');
   hide('loading-screen');
-  if (r.authorized) showApp();
-  else startLoginForAccount(1, null);   // creds eksikse "creds" adımı,
-                                        // varsa "phone" adımı gösterilir.
+  if (r.authorized) { showApp(); return; }
+  // Kullanıcı daha önce credentials adımını bilinçli olarak geçtiyse,
+  // her yenilemede aynı engelle karşılaşmasın — doğrudan uygulamaya bırak.
+  // İstedikleri zaman Ayarlar → Hesap üzerinden ekleyebilirler.
+  if (_credsSkipped()) { showApp(); return; }
+  startLoginForAccount(1, null);   // creds eksikse "creds" adımı,
+                                   // varsa "phone" adımı gösterilir.
 }
 
 async function showApp() {
@@ -334,6 +351,7 @@ async function authSaveCreds() {
       api_id: apiId, api_hash: hashStr, account_id: _loginAccountId || 1
     }});
   } catch (e) { loginMsg('Kaydedilemedi: ' + e.message); return; }
+  _setCredsSkipped(false);   // Kimlik girildi: skip flag'i artık geçerli değil.
   loginMsg('');
   showStep('phone');
   setTimeout(() => document.getElementById('inp-phone')?.focus(), 30);
@@ -342,8 +360,10 @@ async function authSaveCreds() {
 // "Şimdi geç" — kullanıcı credentials adımını atlayıp uygulamaya doğrudan
 // girmek isterse. Hesap henüz tanımlı olmadığı için Telegram bağlantısı
 // gerektiren her özellik boş çalışır; kullanıcı Ayarlar → Hesap üzerinden
-// API bilgilerini girip sonra giriş akışını oradan başlatır.
+// API bilgilerini girip sonra giriş akışını oradan başlatır. localStorage
+// flag'i sayesinde sonraki yenilemelerde aynı form tekrar açılmaz.
 function authSkipCreds() {
+  _setCredsSkipped(true);
   loginMsg('');
   hide('login-screen');
   show('app-shell');
@@ -429,6 +449,7 @@ async function saveCredentials() {
     showToast('Kaydedilemedi: ' + esc(e.message));
     return;
   }
+  _setCredsSkipped(false);   // Açık kararla creds girildi; skip flag'ini temizle.
   document.getElementById('creds-api-id').value = '';
   document.getElementById('creds-api-hash').value = '';
   showToast('Kimlik bilgileri kaydedildi. Giriş ekranı açılıyor…', 2500);
@@ -2489,6 +2510,7 @@ async function submitAddAccount() {
   }
   try {
     const r = await api('/api/accounts', { method:'POST', json:{ name, api_id: apiId, api_hash: apiHash } });
+    _setCredsSkipped(false);   // Hesap eklendi; "Şimdi geç" hafızası geçersiz.
     closeAddAccount();
     await loadAccountsList();
     // Immediately offer login for the new account
