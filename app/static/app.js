@@ -2772,6 +2772,40 @@ function renderHunterMonitor(s) {
       if (wasAtBottom) evtEl.scrollTop = evtEl.scrollHeight;
     }
   }
+  // Detailed log panel below "Tarama Geçmişi" — always visible, paints from
+  // the same status.events list. Keeps the user informed even after a run ends
+  // (events are no longer wiped between runs).
+  _renderHunterLog(s.events || []);
+}
+
+function _renderHunterLog(events) {
+  const el = document.getElementById('hunter-log-list');
+  if (!el) return;
+  if (!events.length) {
+    el.innerHTML = `<div class="hl-empty">${esc(t('hunter.logEmpty'))}</div>`;
+    return;
+  }
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  el.innerHTML = events.map(e => {
+    const ts = (e.ts || '').substring(11, 19);
+    const cls = (e.msg || '').startsWith('───') ? 'sep' : (e.level || 'info');
+    return `<div class="hl-event ${esc(cls)}">
+      <span class="hl-time">${esc(ts)}</span>
+      <span class="hl-stage">${esc(e.stage || '')}</span>
+      <span class="hl-msg">${esc(e.msg || '')}</span>
+    </div>`;
+  }).join('');
+  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+}
+
+function hunterToggleRuns() {
+  const list  = document.getElementById('hunter-runs-list');
+  const arrow = document.getElementById('hc-runs-arrow');
+  if (!list) return;
+  const wasCollapsed = list.classList.contains('collapsed');
+  list.classList.toggle('collapsed');
+  if (arrow) arrow.classList.toggle('open', wasCollapsed);
+  if (wasCollapsed) loadHunterRuns();  // refresh on open
 }
 
 async function hunterCancelRun() {

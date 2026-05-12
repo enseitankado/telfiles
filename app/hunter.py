@@ -56,14 +56,14 @@ status: dict = {
 
 
 def _emit_event(stage: str, msg: str, level: str = "info"):
-    """Append to rolling event log; keep only the last 80."""
+    """Append to rolling event log; cap at 500 across runs."""
     try:
         status["events"].append({
             "ts": datetime.utcnow().isoformat(),
             "stage": stage, "level": level, "msg": msg[:240],
         })
-        if len(status["events"]) > 80:
-            status["events"] = status["events"][-80:]
+        if len(status["events"]) > 500:
+            status["events"] = status["events"][-500:]
     except Exception:
         pass
 
@@ -1051,11 +1051,14 @@ async def run_hunter_once():
             "seeds_found": 0, "enriched": 0, "failed": 0,
             "current": None, "error": None,
             "started_at": datetime.utcnow().isoformat(), "finished_at": None,
-            "stage_detail": {}, "events": [],
+            "stage_detail": {},
+            # NOTE: events are deliberately NOT cleared between runs so the user
+            # can read what the last run did after it finishes. The cap inside
+            # _emit_event keeps memory bounded.
             "cancel_requested": False, "skip_stage_requested": False,
             "stage_started_at": None,
         })
-        _emit_event("run", "Hunter run started")
+        _emit_event("run", "─── Yeni av turu başladı ───")
 
     settings = await database.get_hunter_settings()
     run_id = await database.start_hunter_run(note="manual")

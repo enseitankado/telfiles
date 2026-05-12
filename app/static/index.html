@@ -767,7 +767,23 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 
 #hunter-runs-card{flex-shrink:0}
 #hunter-runs-list{display:flex;flex-direction:column;gap:4px;font-size:.74rem;max-height:180px;overflow-y:auto;padding-right:4px}
+#hunter-runs-list.collapsed{display:none}
+.hunter-collapsible-head{cursor:pointer;user-select:none;display:flex;gap:7px;align-items:center}
+.hunter-collapsible-head:hover{color:var(--accent)}
+.hc-arrow{font-size:.7rem;color:var(--text-3);transition:transform .15s ease}
+.hc-arrow.open{transform:rotate(90deg);color:var(--accent)}
 .hunter-run-row{display:flex;gap:12px;padding:5px 8px;background:var(--bg-3);border-radius:6px;color:var(--text-2)}
+
+#hunter-log-card{flex-shrink:0}
+#hunter-log-list{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.73rem;line-height:1.55;max-height:360px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:8px 12px;color:var(--text-2)}
+.hl-event{display:flex;gap:9px;padding:1px 0;align-items:flex-start}
+.hl-event.warn{color:#b45309}
+.hl-event.error{color:#dc2626;font-weight:600}
+.hl-event.sep{color:var(--accent);font-weight:700;padding-top:4px}
+.hl-time{color:var(--text-4);min-width:62px;flex-shrink:0}
+.hl-stage{color:var(--accent);font-weight:600;min-width:58px;text-transform:uppercase;font-size:.65rem;flex-shrink:0;padding-top:1px}
+.hl-msg{flex:1;word-break:break-word;white-space:pre-wrap}
+.hl-empty{color:var(--text-4);text-align:center;padding:14px 0;font-family:inherit}
 
 .hunter-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:120;display:none;align-items:center;justify-content:center;padding:20px}
 .hunter-overlay.open{display:flex}
@@ -1496,8 +1512,16 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         </div>
 
         <div id="hunter-runs-card" class="hunter-card">
-          <h3 data-i18n="hunter.runs">Tarama Geçmişi</h3>
-          <div id="hunter-runs-list"></div>
+          <h3 class="hunter-collapsible-head" onclick="hunterToggleRuns()">
+            <span class="hc-arrow" id="hc-runs-arrow">▶</span>
+            <span data-i18n="hunter.runs">Tarama Geçmişi</span>
+          </h3>
+          <div id="hunter-runs-list" class="collapsed"></div>
+        </div>
+
+        <div id="hunter-log-card" class="hunter-card">
+          <h3 data-i18n="hunter.log">📋 Avlama Detay Logu</h3>
+          <div id="hunter-log-list"></div>
         </div>
 
         <div id="hunter-detail-overlay" class="hunter-overlay" onclick="hunterDetailOverlayClick(event)">
