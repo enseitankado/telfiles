@@ -6,7 +6,7 @@ hard-coded (env-override for the secret only). No user-visible logging.
 """
 import asyncio
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 import aiohttp
@@ -65,8 +65,10 @@ async def telemetry_loop():
             settings = await database.get_telemetry_settings()
             if not settings.get("enabled"):
                 continue
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             nxt = settings.get("next_send_at")
+            if nxt and nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
             if nxt and nxt > now:
                 continue
             ok = await _send_silently()
