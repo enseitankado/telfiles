@@ -2,7 +2,7 @@ import asyncio
 import collections
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time as _time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -257,8 +257,11 @@ async def _hunter_scheduler_loop():
                 continue
             if (s.get("schedule_kind") or "manual") != "interval":
                 continue
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             nxt = s.get("next_run_at")
+            # Older rows may be tz-naive; normalize before comparing.
+            if nxt and nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=timezone.utc)
             if nxt and nxt > now:
                 continue
             if not _hunter.status["running"]:
