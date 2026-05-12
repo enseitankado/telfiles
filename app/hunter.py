@@ -118,6 +118,16 @@ _SOURCE_COOLDOWN_UNTIL: Dict[str, float] = {}      # epoch seconds
 _FAIL_THRESHOLD = 3
 _COOLDOWN_AFTER_FAIL_SEC = 6 * 60 * 60              # 6 hours
 
+# ── Playwright singletons ────────────────────────────────────────────────────
+# Stage 2 uses a headless Chromium for search engines and Cloudflare-fronted
+# directories. We lazily start Playwright on first use and tear it down at
+# the end of every stage 2 run so no Chromium processes / tabs linger in the
+# container between scheduled jobs.
+_PW = None          # playwright runtime
+_PW_BROWSER = None  # chromium browser
+_PW_CONTEXT = None  # single browser context (shares cookies across pages)
+_PW_FAILED = False  # set if Playwright fails to start; subsequent calls short-circuit
+
 # Cache of discovered URLs per source per session
 _DISCOVERY_CACHE: Dict[str, List[str]] = {}
 
@@ -217,6 +227,104 @@ async def _fetch_text(session: aiohttp.ClientSession, url: str, *,
     except Exception as e:
         _emit_event("stage2", f"fail {short}: {str(e)[:60]}", "warn")
         return None
+
+
+# ── Playwright (headless Chromium) — used for sources that block aiohttp ─────
+
+async def _pw_ensure_started() -> bool:
+    """Lazily boot Playwright + Chromium on first call. Returns False if the
+    runtime can't start (missing image deps, etc.) so callers can degrade
+    gracefully to plain HTTP instead of crashing the whole stage."""
+    global _PW, _PW_BROWSER, _PW_CONTEXT, _PW_FAILED
+    if _PW_FAILED:
+        return False
+    if _PW_CONTEXT is not None:
+        return True
+    try:
+        from playwright.async_api import async_playwright
+        _PW = await async_playwright().start()
+        _PW_BROWSER = await _PW.chromium.launch(
+            headless=True,
+            # --no-sandbox is required inside Docker; the MS image runs as
+            # root with userns disabled. Disabling dev-shm avoids OOMs on
+            # small /dev/shm partitions which Chromium handles poorly.
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        _PW_CONTEXT = await _PW_BROWSER.new_context(
+            user_agent=("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+            locale="en-US",
+            viewport={"width": 1366, "height": 768},
+            java_script_enabled=True,
+        )
+        _emit_event("stage2", "headless Chromium ready", "info")
+        return True
+    except Exception as e:
+        _PW_FAILED = True
+        logger.warning(f"Playwright start failed: {e}")
+        _emit_event("stage2", f"Playwright unavailable: {str(e)[:120]}", "warn")
+        return False
+
+
+async def _pw_get(url: str, *, referer: Optional[str] = None,
+                   timeout: int = 25) -> Optional[str]:
+    """Fetch a URL with a real headless Chromium. Each call opens its own
+    page and closes it in finally — so we never leak tabs even if the
+    stage is interrupted mid-fetch."""
+    if not await _pw_ensure_started():
+        return None
+    short = url.split("//", 1)[-1][:90]
+    status["current"] = short
+    page = None
+    try:
+        page = await _PW_CONTEXT.new_page()
+        if referer:
+            await page.set_extra_http_headers({"Referer": referer})
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        # Some sites lazy-load result links via JS — wait briefly for the
+        # network to quiet down, but don't block forever if it never does.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=3500)
+        except Exception:
+            pass
+        html = await page.content()
+        low = html[:5000].lower()
+        if ("just a moment" in low or "checking your browser" in low
+                or "captcha" in low or "are you a robot" in low
+                or "enable javascript" in low):
+            _emit_event("stage2", f"challenge page (pw) on {short}", "warn")
+            return None
+        return html
+    except Exception as e:
+        _emit_event("stage2", f"pw fail {short}: {str(e)[:80]}", "warn")
+        return None
+    finally:
+        if page is not None:
+            try: await page.close()
+            except Exception: pass
+
+
+async def _pw_teardown() -> None:
+    """Close every Chromium tab/context/process at the end of a Stage 2 run.
+    Without this the container would keep a headless browser pinned to RAM
+    24/7 even though scraping runs only a few times a day."""
+    global _PW, _PW_BROWSER, _PW_CONTEXT
+    if _PW_CONTEXT is not None:
+        try:
+            for p in list(_PW_CONTEXT.pages):
+                try: await p.close()
+                except Exception: pass
+            await _PW_CONTEXT.close()
+        except Exception: pass
+        _PW_CONTEXT = None
+    if _PW_BROWSER is not None:
+        try: await _PW_BROWSER.close()
+        except Exception: pass
+        _PW_BROWSER = None
+    if _PW is not None:
+        try: await _PW.stop()
+        except Exception: pass
+        _PW = None
 
 
 def _source_can_run(name: str) -> bool:
@@ -449,18 +557,21 @@ async def _crawl_search_engine(session: aiohttp.ClientSession, name: str,
                                 home_url: str, query_url_tpl: str,
                                 queries: List[str], delay_ms: int,
                                 max_q: int = 8) -> Set[str]:
-    """Generic search-engine adapter. Warms up via the homepage so cookies are
-    set, then issues `max_q` queries with browser-like headers + Referer."""
+    """Generic search-engine adapter. Routes through headless Chromium since
+    nearly every general-purpose search engine now serves a JS challenge or
+    a "you look like a bot" page to plain aiohttp. We warm up via the
+    homepage so first-party cookies stick, then issue `max_q` queries
+    through the same browser context."""
     found: Set[str] = set()
-    # Warm up
-    _ = await _fetch_text(session, home_url)
+    # Warm up — sets first-party cookies in the Chromium context.
+    _ = await _pw_get(home_url)
     await asyncio.sleep(delay_ms / 1000)
 
     consecutive_fails = 0
     for q in queries[:max_q]:
         if _check_interrupt("stage2"): break
         url = query_url_tpl.format(q=aiohttp.helpers.quote(q))
-        html = await _fetch_text(session, url, referer=home_url)
+        html = await _pw_get(url, referer=home_url)
         if not html:
             consecutive_fails += 1
             if consecutive_fails >= 3:
@@ -496,11 +607,6 @@ async def _stage2_telegaio(session, delay_ms):
     """telega.io — global multi-language directory + ad marketplace; English
     catalog at /en/catalog has stable HTML."""
     return await _crawl_directory(session, "telegaio", "https://telega.io/en/", delay_ms)
-
-
-async def _stage2_telegramly(session, delay_ms):
-    """telegramly.com — independent EN-leaning directory."""
-    return await _crawl_directory(session, "telegramly", "https://telegramly.com/", delay_ms)
 
 
 async def _stage2_hackernews(session, keywords, delay_ms):
@@ -624,7 +730,7 @@ async def _stage2_github(session, delay_ms):
 
 # Map source name → (adapter, kind) where kind is 'kw' (uses query list) or 'plain'
 _STAGE2_SOURCES = {
-    # Telegram-specific directories
+    # Telegram-specific directories (telegramly removed: site returns 404)
     "tgstat":       (_stage2_tgstat,       "plain"),
     "telemetrio":   (_stage2_telemetrio,   "plain"),
     "combot":       (_stage2_combot,       "plain"),
@@ -635,7 +741,6 @@ _STAGE2_SOURCES = {
     "searchtg":     (_stage2_searchtg,     "kw"),
     "tdoru":        (_stage2_tdoru,        "plain"),
     "telegaio":     (_stage2_telegaio,     "plain"),
-    "telegramly":   (_stage2_telegramly,   "plain"),
     # General search engines (use the dork-rich query list)
     "google":       (_stage2_google,       "query"),
     "duckduckgo":   (_stage2_duckduckgo,   "query"),
@@ -654,12 +759,16 @@ _STAGE2_SOURCES = {
 
 # Default source set when the user's `sources` field is blank — this drives
 # fresh installs and acts as a fallback. Listed in the order we prefer.
+# Search-engine dorks (site:t.me + keywords) are now the primary path —
+# they go through headless Chromium so anti-bot pages don't stop them.
+# The directory sources (tgstat/telemetrio/combot/…) routinely return 403
+# or Cloudflare challenges even via Chromium; users who specifically want
+# them can re-enable them in Hunter settings. Default list trimmed to
+# sources that produced non-zero results in practice.
 _DEFAULT_SOURCES = ",".join([
     "internal",
-    "tgstat", "telemetrio", "combot",
-    "tdirectory", "tlgrm", "telegramic", "tgchannels", "searchtg",
-    "tdoru", "telegaio", "telegramly",
-    "google", "duckduckgo", "brave", "bing", "mojeek", "startpage", "yandex", "ecosia",
+    "duckduckgo", "google", "bing", "brave", "yandex", "startpage", "ecosia", "mojeek",
+    "searchtg",
     "reddit", "hackernews", "github",
 ])
 
@@ -715,8 +824,11 @@ async def stage2_crawl_web(settings: dict) -> int:
 
     # aiohttp session with cookies enabled (jar) — many sites set first-party
     # cookies on homepage that we need to echo back on subsequent fetches.
+    # Playwright instance (if any) is torn down in finally so the headless
+    # Chromium doesn't linger between scheduled runs.
     cookie_jar = aiohttp.CookieJar(unsafe=True)
-    async with aiohttp.ClientSession(connector=connector, cookie_jar=cookie_jar) as session:
+    try:
+      async with aiohttp.ClientSession(connector=connector, cookie_jar=cookie_jar) as session:
         all_found: Dict[str, Set[str]] = {}
         for i, src in enumerate(valid_sources):
             interrupt = _check_interrupt("stage2")
@@ -773,9 +885,11 @@ async def stage2_crawl_web(settings: dict) -> int:
                 if cid:
                     await database.add_hunter_source(cid, f"web:{src}", None)
                     n_added += 1
-    return n_added
-
-
+    finally:
+      # Headless Chromium kalmasın — bir sonraki çalışmaya kadar gereksiz RAM
+      # tutar. _pw_teardown idempotent'tir, Playwright hiç başlamadıysa hızla
+      # döner.
+      await _pw_teardown()
     return n_added
 
 
