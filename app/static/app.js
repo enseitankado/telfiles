@@ -2762,11 +2762,12 @@ function renderHunterMonitor(s) {
     } else {
       const wasAtBottom = evtEl.scrollHeight - evtEl.scrollTop - evtEl.clientHeight < 30;
       evtEl.innerHTML = events.map(e => {
-        const t = e.ts ? e.ts.substring(11,19) : '';
+        const ts = e.ts ? e.ts.substring(11,19) : '';
+        const text = _eventText(e);
         return `<div class="hm-event ${esc(e.level||'info')}">
-          <span class="hm-evt-time">${esc(t)}</span>
+          <span class="hm-evt-time">${esc(ts)}</span>
           <span class="hm-evt-stage">${esc(e.stage||'')}</span>
-          <span class="hm-evt-msg" title="${esc(e.msg||'')}">${esc(e.msg||'')}</span>
+          <span class="hm-evt-msg" title="${esc(text)}">${esc(text)}</span>
         </div>`;
       }).join('');
       if (wasAtBottom) evtEl.scrollTop = evtEl.scrollHeight;
@@ -2776,6 +2777,14 @@ function renderHunterMonitor(s) {
   // the same status.events list. Keeps the user informed even after a run ends
   // (events are no longer wiped between runs).
   _renderHunterLog(s.events || []);
+}
+
+function _eventText(e) {
+  // Server may send a stable i18n key + params; fall back to the English msg
+  // when the key isn't present (older event rows, or _emit_event call without
+  // a key= argument).
+  if (e && e.key) return t(e.key, e.params || {});
+  return e ? (e.msg || '') : '';
 }
 
 function _renderHunterLog(events) {
@@ -2788,11 +2797,12 @@ function _renderHunterLog(events) {
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   el.innerHTML = events.map(e => {
     const ts = (e.ts || '').substring(11, 19);
-    const cls = (e.msg || '').startsWith('───') ? 'sep' : (e.level || 'info');
+    const text = _eventText(e);
+    const cls = text.startsWith('───') ? 'sep' : (e.level || 'info');
     return `<div class="hl-event ${esc(cls)}">
       <span class="hl-time">${esc(ts)}</span>
       <span class="hl-stage">${esc(e.stage || '')}</span>
-      <span class="hl-msg">${esc(e.msg || '')}</span>
+      <span class="hl-msg">${esc(text)}</span>
     </div>`;
   }).join('');
   if (wasAtBottom) el.scrollTop = el.scrollHeight;

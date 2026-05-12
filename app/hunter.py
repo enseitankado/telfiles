@@ -55,13 +55,21 @@ status: dict = {
 }
 
 
-def _emit_event(stage: str, msg: str, level: str = "info"):
-    """Append to rolling event log; cap at 500 across runs."""
+def _emit_event(stage: str, msg: str, level: str = "info", *, key: str = None, params: dict = None):
+    """Append to rolling event log; cap at 500 across runs.
+
+    `key` + `params` let the frontend render a localized message via i18n.js.
+    `msg` is kept as a fallback (and for backend logs / debugging)."""
     try:
-        status["events"].append({
+        ev = {
             "ts": datetime.utcnow().isoformat(),
             "stage": stage, "level": level, "msg": msg[:240],
-        })
+        }
+        if key:
+            ev["key"] = key
+            if params:
+                ev["params"] = params
+        status["events"].append(ev)
         if len(status["events"]) > 500:
             status["events"] = status["events"][-500:]
     except Exception:
@@ -215,17 +223,17 @@ async def _fetch_text(session: aiohttp.ClientSession, url: str, *,
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout),
                                 headers=headers, allow_redirects=True) as r:
             if r.status >= 400:
-                _emit_event("stage2", f"HTTP {r.status} {short}", "warn")
+                _emit_event("stage2", f"HTTP {r.status} {short}", "warn", key="hl.stage2.httpFail", params={"status": r.status, "url": short})
                 return None
             text = await r.text(errors="ignore")
             # Some sites return 200 with a Cloudflare/JS challenge page.
             low = text[:5000].lower()
             if ("cloudflare" in low and ("challenge" in low or "checking your browser" in low))                or "captcha" in low or "are you a robot" in low:
-                _emit_event("stage2", f"challenge page on {short}", "warn")
+                _emit_event("stage2", f"challenge page on {short}", "warn", key="hl.stage2.challenge", params={"url": short})
                 return None
             return text
     except Exception as e:
-        _emit_event("stage2", f"fail {short}: {str(e)[:60]}", "warn")
+        _emit_event("stage2", f"fail {short}: {str(e)[:60]}", "warn", key="hl.stage2.fail", params={"url": short, "err": str(e)[:60]})
         return None
 
 
@@ -257,12 +265,12 @@ async def _pw_ensure_started() -> bool:
             viewport={"width": 1366, "height": 768},
             java_script_enabled=True,
         )
-        _emit_event("stage2", "headless Chromium ready", "info")
+        _emit_event("stage2", "headless Chromium ready", "info", key="hl.stage2.pwReady")
         return True
     except Exception as e:
         _PW_FAILED = True
         logger.warning(f"Playwright start failed: {e}")
-        _emit_event("stage2", f"Playwright unavailable: {str(e)[:120]}", "warn")
+        _emit_event("stage2", f"Playwright unavailable: {str(e)[:120]}", "warn", key="hl.stage2.pwUnavailable", params={"err": str(e)[:120]})
         return False
 
 
@@ -292,11 +300,11 @@ async def _pw_get(url: str, *, referer: Optional[str] = None,
         if ("just a moment" in low or "checking your browser" in low
                 or "captcha" in low or "are you a robot" in low
                 or "enable javascript" in low):
-            _emit_event("stage2", f"challenge page (pw) on {short}", "warn")
+            _emit_event("stage2", f"challenge page (pw) on {short}", "warn", key="hl.stage2.pwChallenge", params={"url": short})
             return None
         return html
     except Exception as e:
-        _emit_event("stage2", f"pw fail {short}: {str(e)[:80]}", "warn")
+        _emit_event("stage2", f"pw fail {short}: {str(e)[:80]}", "warn", key="hl.stage2.pwFail", params={"url": short, "err": str(e)[:80]})
         return None
     finally:
         if page is not None:
@@ -339,7 +347,7 @@ def _source_record_failure(name: str):
     _SOURCE_FAIL_STREAKS[name] = n
     if n >= _FAIL_THRESHOLD:
         _SOURCE_COOLDOWN_UNTIL[name] = time.time() + _COOLDOWN_AFTER_FAIL_SEC
-        _emit_event("stage2", f"{name}: {n} consecutive failures → cool-down 6h", "warn")
+        _emit_event("stage2", f"{name}: {n} consecutive failures → cool-down 6h", "warn", key="hl.stage2.consecFails", params={"src": name, "n": n})
 
 
 def _source_record_success(name: str):
@@ -513,7 +521,7 @@ async def _crawl_directory(session: aiohttp.ClientSession, name: str,
         if not sub_html:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                _emit_event("stage2", f"{name}: 3 fails in a row, stopping site early", "warn")
+                _emit_event("stage2", f"{name}: 3 fails in a row, stopping site early", "warn", key="hl.stage2.threeFailsSite", params={"src": name})
                 break
             continue
         consecutive_fails = 0
@@ -575,7 +583,7 @@ async def _crawl_search_engine(session: aiohttp.ClientSession, name: str,
         if not html:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                _emit_event("stage2", f"{name}: 3 fails — backing off this run", "warn")
+                _emit_event("stage2", f"{name}: 3 fails — backing off this run", "warn", key="hl.stage2.threeFailsRun", params={"src": name})
                 break
             await _interruptible_sleep(delay_ms / 1000 * 2)
             continue
@@ -808,7 +816,9 @@ async def stage2_crawl_web(settings: dict) -> int:
     status["stage_detail"] = detail
     _emit_event("stage2",
                 f"Web crawl starting: {len(valid_sources)} source(s) "
-                f"(of {len(_STAGE2_SOURCES)} registered)")
+                f"(of {len(_STAGE2_SOURCES)} registered)",
+                key="hl.stage2.crawlStart",
+                params={"n": len(valid_sources), "total": len(_STAGE2_SOURCES)})
     if known_skipped:
         # Surface the skip so the user notices when their saved list is stale
         # against newly-registered adapters.
@@ -816,11 +826,15 @@ async def stage2_crawl_web(settings: dict) -> int:
                     f"Skipped {len(known_skipped)} registered source(s): "
                     f"{', '.join(known_skipped)} — clear the Sources field "
                     f"in Hunter settings to enable them.",
-                    "warn")
+                    "warn",
+                    key="hl.stage2.skippedSources",
+                    params={"n": len(known_skipped), "list": ", ".join(known_skipped)})
     if unknown:
         _emit_event("stage2",
                     f"Unknown source(s) in config: {', '.join(unknown)}",
-                    "warn")
+                    "warn",
+                    key="hl.stage2.unknownSources",
+                    params={"list": ", ".join(unknown)})
 
     # aiohttp session with cookies enabled (jar) — many sites set first-party
     # cookies on homepage that we need to echo back on subsequent fetches.
@@ -833,23 +847,23 @@ async def stage2_crawl_web(settings: dict) -> int:
         for i, src in enumerate(valid_sources):
             interrupt = _check_interrupt("stage2")
             if interrupt == "cancel":
-                _emit_event("stage2", "Cancelled by user", "warn"); break
+                _emit_event("stage2", "Cancelled by user", "warn", key="hl.stage2.cancelled"); break
             if interrupt == "skip":
                 status["skip_stage_requested"] = False
-                _emit_event("stage2", "Stage skipped by user", "warn"); break
+                _emit_event("stage2", "Stage skipped by user", "warn", key="hl.stage2.userSkipped"); break
 
             # Skip sources still in cool-down from previous runs/today
             if not _source_can_run(src):
                 cd_ts = _SOURCE_COOLDOWN_UNTIL.get(src, 0)
                 cd_str = datetime.fromtimestamp(cd_ts).isoformat(timespec="minutes")
-                _emit_event("stage2", f"{src}: in cool-down until {cd_str}", "warn")
+                _emit_event("stage2", f"{src}: in cool-down until {cd_str}", "warn", key="hl.stage2.coolDownActive", params={"src": src, "when": cd_str})
                 status["stage_detail"]["sources_done"] = i + 1
                 continue
 
             status["stage_detail"]["current_source"] = src
             status["stage_detail"]["sources_done"] = i
             status["stage_detail"]["per_source"][src] = {"state": "running", "found": 0}
-            _emit_event("stage2", f"Source {src} starting…")
+            _emit_event("stage2", f"Source {src} starting…", key="hl.stage2.sourceStart", params={"src": src})
 
             adapter, kind = _STAGE2_SOURCES[src]
             try:
@@ -862,7 +876,7 @@ async def stage2_crawl_web(settings: dict) -> int:
                 all_found[src] = res
                 status["stage_detail"]["per_source"][src] = {"state": "done", "found": len(res)}
                 logger.info(f"hunter[{src}]: {len(res)} candidates")
-                _emit_event("stage2", f"{src}: {len(res)} candidates found")
+                _emit_event("stage2", f"{src}: {len(res)} candidates found", key="hl.stage2.sourceFound", params={"src": src, "n": len(res)})
                 if len(res) > 0:
                     _source_record_success(src)
                 else:
@@ -870,7 +884,7 @@ async def stage2_crawl_web(settings: dict) -> int:
                     _source_record_failure(src)
             except Exception as e:
                 status["stage_detail"]["per_source"][src] = {"state": "error", "found": 0, "error": str(e)[:60]}
-                _emit_event("stage2", f"{src} failed: {str(e)[:80]}", "warn")
+                _emit_event("stage2", f"{src} failed: {str(e)[:80]}", "warn", key="hl.stage2.sourceFailed", params={"src": src, "err": str(e)[:80]})
                 logger.warning(f"hunter[{src}] failed: {e}")
                 _source_record_failure(src)
         status["stage_detail"]["sources_done"] = len(valid_sources)
@@ -1062,7 +1076,7 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
     if not client.is_connected():
         await client.connect()
     if not await client.is_user_authorized():
-        _emit_event("stage3", "Telegram hesabı yetkisiz; stage 3 atlanıyor", "warn")
+        _emit_event("stage3", "Telegram hesabı yetkisiz; stage 3 atlanıyor", "warn", key="hl.stage3.tgUnauth")
         return 0, 0
 
     rows, _ = await database.list_hunter_candidates(status="discovered", limit=budget, offset=0, sort="discovered_at")
@@ -1072,25 +1086,25 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
     skipped_no_cache = 0
 
     if not rows:
-        _emit_event("stage3", "Zenginleştirilecek aday yok — hepsi zaten enriched/joined/rejected", "info")
+        _emit_event("stage3", "Zenginleştirilecek aday yok — hepsi zaten enriched/joined/rejected", "info", key="hl.stage3.noPending")
         return 0, 0
 
     # Sort to put cached-peer candidates FIRST so we make progress even if
     # we eventually hit ResolveUsername limits.
     rows = sorted(rows, key=lambda r: 0 if (r.get("peer_id") and r.get("access_hash") is not None) else 1)
     cached_count = sum(1 for r in rows if r.get("peer_id") and r.get("access_hash") is not None)
-    _emit_event("stage3", f"{len(rows)} aday zenginleştirilecek ({cached_count} cache\'li, {len(rows)-cached_count} resolve gerekli)")
+    _emit_event("stage3", f"{len(rows)} aday zenginleştirilecek ({cached_count} cache\'li, {len(rows)-cached_count} resolve gerekli)", key="hl.stage3.processing", params={"n": len(rows), "cached": cached_count, "uncached": len(rows)-cached_count})
     status["total"] = len(rows)
     status["progress"] = 0
 
     for r in rows:
         interrupt = _check_interrupt("stage3")
         if interrupt == "cancel":
-            _emit_event("stage3", "Cancelled by user", "warn")
+            _emit_event("stage3", "Cancelled by user", "warn", key="hl.stage3.cancelled")
             break
         if interrupt == "skip":
             status["skip_stage_requested"] = False
-            _emit_event("stage3", "Stage skipped by user", "warn")
+            _emit_event("stage3", "Stage skipped by user", "warn", key="hl.stage3.userSkipped")
             break
         # In cached-only mode skip non-cached candidates without contacting Telegram
         if cached_only_mode and not (r.get("peer_id") and r.get("access_hash") is not None):
@@ -1104,10 +1118,10 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
             ok = await _enrich_one(client, r["id"], username, sample_limit, cand=dict(r))
             if ok:
                 enriched += 1
-                _emit_event("stage3", f"@{username}: enriched ✓")
+                _emit_event("stage3", f"@{username}: enriched ✓", key="hl.stage3.enriched", params={"username": username})
             else:
                 failed += 1
-                _emit_event("stage3", f"@{username}: failed", "warn")
+                _emit_event("stage3", f"@{username}: failed", "warn", key="hl.stage3.failed", params={"username": username})
         except FloodWaitError as e:
             backoff = int(getattr(e, "seconds", 60))
             # A long FloodWait on ResolveUsernameRequest means the per-account
@@ -1138,7 +1152,7 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
                 skipped_no_cache += 1
                 continue
             logger.warning(f"Hunter FloodWait — sleeping {backoff}s")
-            _emit_event("stage3", f"FloodWait {backoff}s, bekleniyor…", "warn")
+            _emit_event("stage3", f"FloodWait {backoff}s, bekleniyor…", "warn", key="hl.stage3.floodWait", params={"seconds": backoff})
             await _interruptible_sleep(max(60, backoff))
         except asyncio.CancelledError:
             raise
@@ -1148,7 +1162,7 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
         await asyncio.sleep(delay_ms / 1000)
 
     if skipped_no_cache > 0:
-        _emit_event("stage3", f"{skipped_no_cache} aday cache yokluğundan atlandı; ResolveUsername limiti yenilenince işlenecek", "warn")
+        _emit_event("stage3", f"{skipped_no_cache} aday cache yokluğundan atlandı; ResolveUsername limiti yenilenince işlenecek", "warn", key="hl.stage3.cacheSkip", params={"n": skipped_no_cache})
     return enriched, failed
 
 
@@ -1172,24 +1186,24 @@ async def run_hunter_once():
             "cancel_requested": False, "skip_stage_requested": False,
             "stage_started_at": None,
         })
-        _emit_event("run", "─── Yeni av turu başladı ───")
+        _emit_event("run", "─── Yeni av turu başladı ───", key="hl.run.started")
 
     settings = await database.get_hunter_settings()
     run_id = await database.start_hunter_run(note="manual")
     seeds_found = enriched = failed = 0
     try:
         if status.get("cancel_requested"):
-            _emit_event("run", "Cancelled before stage 1", "warn"); raise asyncio.CancelledError
+            _emit_event("run", "Cancelled before stage 1", "warn", key="hl.run.cancelledStage1"); raise asyncio.CancelledError
         if settings.get("stage1_enabled"):
             status["stage"] = "stage1"
             status["stage_started_at"] = datetime.utcnow().isoformat()
             status["stage_detail"] = {}
-            _emit_event("stage1", "Stage 1: scanning internal links & mentions")
+            _emit_event("stage1", "Stage 1: scanning internal links & mentions", key="hl.stage1.start")
             seeds_found += await stage1_mine_internal()
             status["seeds_found"] = seeds_found
-            _emit_event("stage1", f"Stage 1 done: {seeds_found} seeds total")
+            _emit_event("stage1", f"Stage 1 done: {seeds_found} seeds total", key="hl.stage1.done", params={"n": seeds_found})
         if status.get("cancel_requested"):
-            _emit_event("run", "Cancelled before stage 2", "warn"); raise asyncio.CancelledError
+            _emit_event("run", "Cancelled before stage 2", "warn", key="hl.run.cancelledStage2"); raise asyncio.CancelledError
         # skip flag at stage boundary: clear and proceed to next stage
         if status.get("skip_stage_requested"):
             status["skip_stage_requested"] = False
@@ -1198,20 +1212,20 @@ async def run_hunter_once():
             status["stage_started_at"] = datetime.utcnow().isoformat()
             seeds_found += await stage2_crawl_web(settings)
             status["seeds_found"] = seeds_found
-            _emit_event("stage2", f"Stage 2 done: {seeds_found} seeds total")
+            _emit_event("stage2", f"Stage 2 done: {seeds_found} seeds total", key="hl.stage2.done", params={"n": seeds_found})
         if status.get("cancel_requested"):
-            _emit_event("run", "Cancelled before stage 3", "warn"); raise asyncio.CancelledError
+            _emit_event("run", "Cancelled before stage 3", "warn", key="hl.run.cancelledStage3"); raise asyncio.CancelledError
         if status.get("skip_stage_requested"):
             status["skip_stage_requested"] = False
         status["stage"] = "stage3"
         status["stage_started_at"] = datetime.utcnow().isoformat()
         status["stage_detail"] = {}
-        _emit_event("stage3", "Stage 3: enriching candidates via Telegram")
+        _emit_event("stage3", "Stage 3: enriching candidates via Telegram", key="hl.stage3.start")
         e, f = await stage3_enrich_pending(settings)
         enriched, failed = e, f
         status["enriched"] = enriched
         status["failed"] = failed
-        _emit_event("stage3", f"Stage 3 done: {enriched} enriched, {failed} failed")
+        _emit_event("stage3", f"Stage 3 done: {enriched} enriched, {failed} failed", key="hl.stage3.done", params={"enriched": enriched, "failed": failed})
         await database.update_hunter_settings({"last_run_at": datetime.utcnow()})
     except Exception as e:
         status["error"] = str(e)
@@ -1232,7 +1246,7 @@ def request_cancel() -> bool:
     if not status.get("running"):
         return False
     status["cancel_requested"] = True
-    _emit_event("run", "Cancel requested by user", "warn")
+    _emit_event("run", "Cancel requested by user", "warn", key="hl.run.cancelRequested")
     # Also cancel the asyncio task to break out of any in-flight await
     try:
         if _run_task and not _run_task.done():
@@ -1246,7 +1260,7 @@ def request_skip_stage() -> bool:
     if not status.get("running"):
         return False
     status["skip_stage_requested"] = True
-    _emit_event(status.get("stage") or "run", "Skip stage requested by user", "warn")
+    _emit_event(status.get("stage") or "run", "Skip stage requested by user", "warn", key="hl.run.skipRequested")
     return True
 
 
