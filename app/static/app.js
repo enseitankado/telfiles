@@ -2814,11 +2814,14 @@ async function loadHunterSettings() {
 
 function hunterToggleSettings() {
   const card = document.getElementById('hunter-settings-card');
+  const btn  = document.getElementById('hunter-settings-btn');
   if (card.style.display === 'none') {
     loadHunterSettings();
     card.style.display = '';
+    btn && btn.classList.add('active');
   } else {
     card.style.display = 'none';
+    btn && btn.classList.remove('active');
   }
 }
 
