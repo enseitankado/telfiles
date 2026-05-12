@@ -5,7 +5,7 @@ const I18N = {
     // Common
     'common.cancel': 'İptal',
     'telemetry.title': '📊 Kullanıcı istatistiklerini gönder',
-    'telemetry.enabledLabel': 'Bu kuruluma ait kanal istatistiklerini gönder',
+    'telemetry.enabledLabel': 'Bu kuruluma ait kanal istatistiklerini ilet',
     'telemetry.endpointLabel': 'Endpoint URL',
     'telemetry.intervalLabel': 'Aralık (saniye, en az 3600)',
     'telemetry.installId': 'Install ID',
