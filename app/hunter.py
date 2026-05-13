@@ -820,13 +820,16 @@ async def stage2_crawl_web(settings: dict) -> int:
                 key="hl.stage2.crawlStart",
                 params={"n": len(valid_sources), "total": len(_STAGE2_SOURCES)})
     if known_skipped:
-        # Surface the skip so the user notices when their saved list is stale
-        # against newly-registered adapters.
+        # These adapters exist in code but aren't in the active source list.
+        # Most of them are the Cloudflare-fronted directories we removed from
+        # the default after they consistently returned 0 results — listed
+        # here just for transparency so the user knows about them.
         _emit_event("stage2",
-                    f"Skipped {len(known_skipped)} registered source(s): "
-                    f"{', '.join(known_skipped)} — clear the Sources field "
-                    f"in Hunter settings to enable them.",
-                    "warn",
+                    f"Skipped {len(known_skipped)} registered source(s) "
+                    f"not in your config: {', '.join(known_skipped)} — "
+                    f"add them by name to the Sources field if you want "
+                    f"to try them anyway.",
+                    "info",
                     key="hl.stage2.skippedSources",
                     params={"n": len(known_skipped), "list": ", ".join(known_skipped)})
     if unknown:
