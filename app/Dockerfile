@@ -1,9 +1,9 @@
-# Microsoft's official Playwright Python image: includes a base Chromium
-# plus every shared lib (libnss, libatk, fonts, …) we need at runtime. We
-# don't actually use the stock Chromium for scraping — CloakBrowser ships
-# its own patched build — but the system libraries that come with this
-# image are exactly what that patched binary needs to run, so it's still
-# the cleanest base.
+# Base image kept as Microsoft's mcr.microsoft.com/playwright/python only
+# for the Chromium runtime libraries it ships (libnss, libatk, libgbm,
+# fonts, X libs …). We do NOT use the bundled stock Chromium — Stage 2
+# scraping runs on CloakBrowser's patched Chromium build, downloaded into
+# this image during the next RUN. Using this base just avoids a 200-line
+# apt-get install for Chromium's runtime dependencies.
 FROM mcr.microsoft.com/playwright/python:v1.49.1-jammy
 
 WORKDIR /app
