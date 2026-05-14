@@ -767,6 +767,11 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 
 #hunter-log-card{flex-shrink:0}
 #hunter-log-list{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.73rem;line-height:1.55;max-height:360px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:8px 12px;color:var(--text-2)}
+#hunter-log-list.collapsed{display:none}
+.hunter-collapsible-head{cursor:pointer;user-select:none;display:flex;gap:7px;align-items:center}
+.hunter-collapsible-head:hover{color:var(--accent)}
+.hc-arrow{font-size:.7rem;color:var(--text-3);transition:transform .15s ease;display:inline-block}
+.hc-arrow.open{transform:rotate(90deg);color:var(--accent)}
 .hl-event{display:flex;gap:9px;padding:1px 0;align-items:flex-start}
 .hl-event.warn{color:#b45309}
 .hl-event.error{color:#dc2626;font-weight:600}
@@ -1503,7 +1508,10 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         </div>
 
         <div id="hunter-log-card" class="hunter-card">
-          <h3 data-i18n="hunter.log">📋 Avlama Detay Logu</h3>
+          <h3 class="hunter-collapsible-head" onclick="hunterToggleLog()">
+            <span class="hc-arrow open" id="hc-log-arrow">▶</span>
+            <span data-i18n="hunter.log">📋 Avlama Detay Logu</span>
+          </h3>
           <div id="hunter-log-list"></div>
         </div>
 

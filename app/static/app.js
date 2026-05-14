@@ -2650,6 +2650,13 @@ function startHunterPoll() {
   loadHunterSettings();
   pollHunterStatus();
   _hunterPollTimer = setInterval(() => { pollHunterStatus(); hunterReloadCandidates(true); }, 1500);
+  // Kullanıcının önceki "log paneli kapalı" tercihini geri yükle.
+  try {
+    if (localStorage.getItem('tf_hunter_log_collapsed') === '1') {
+      document.getElementById('hunter-log-list')?.classList.add('collapsed');
+      document.getElementById('hc-log-arrow')?.classList.remove('open');
+    }
+  } catch (e) {}
 }
 
 // "Kanal Avcısı nedir?" — opens the static info card as a modal.
@@ -2793,8 +2800,13 @@ function _renderHunterLog(events) {
     el.innerHTML = `<div class="hl-empty">${esc(t('hunter.logEmpty'))}</div>`;
     return;
   }
-  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  el.innerHTML = events.map(e => {
+  // En yeni satır en üstte: array'i ters çevirip render et. Kullanıcı en
+  // üstteyse (yeni gelenleri takip ediyor) scroll'u 0'da tutuyoruz; daha
+  // aşağıdaysa (eski olayı okuyor) scroll pozisyonunu bozmadan içeriği
+  // yeniliyoruz.
+  const wasAtTop = el.scrollTop < 30;
+  const prevTop = el.scrollTop;
+  el.innerHTML = events.slice().reverse().map(e => {
     const ts = (e.ts || '').substring(0, 19).replace('T', ' ');
     const text = _eventText(e);
     const cls = text.startsWith('───') ? 'sep' : (e.level || 'info');
@@ -2804,7 +2816,17 @@ function _renderHunterLog(events) {
       <span class="hl-msg">${esc(text)}</span>
     </div>`;
   }).join('');
-  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+  el.scrollTop = wasAtTop ? 0 : prevTop;
+}
+
+function hunterToggleLog() {
+  const list  = document.getElementById('hunter-log-list');
+  const arrow = document.getElementById('hc-log-arrow');
+  if (!list) return;
+  const collapsed = list.classList.toggle('collapsed');
+  if (arrow) arrow.classList.toggle('open', !collapsed);
+  // Tercihi sayfa yenilemelerinde de hatırla.
+  try { localStorage.setItem('tf_hunter_log_collapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
 
 async function hunterCancelRun() {
