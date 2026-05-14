@@ -2650,7 +2650,6 @@ function startHunterPoll() {
   loadHunterSettings();
   pollHunterStatus();
   _hunterPollTimer = setInterval(() => { pollHunterStatus(); hunterReloadCandidates(true); }, 1500);
-  loadHunterRuns();
 }
 
 // "Kanal Avcısı nedir?" — opens the static info card as a modal.
@@ -2806,16 +2805,6 @@ function _renderHunterLog(events) {
     </div>`;
   }).join('');
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
-}
-
-function hunterToggleRuns() {
-  const list  = document.getElementById('hunter-runs-list');
-  const arrow = document.getElementById('hc-runs-arrow');
-  if (!list) return;
-  const wasCollapsed = list.classList.contains('collapsed');
-  list.classList.toggle('collapsed');
-  if (arrow) arrow.classList.toggle('open', wasCollapsed);
-  if (wasCollapsed) loadHunterRuns();  // refresh on open
 }
 
 async function hunterCancelRun() {
@@ -3464,29 +3453,6 @@ async function hunterBlacklist(cid, ev) {
   hunterReloadCandidates();
   showToast(`✓ @${esc(c.username)} kara listeye eklendi.`, 3000);
 }
-
-async function loadHunterRuns() {
-  try {
-    const runs = await api('/api/hunter/runs');
-    const el = document.getElementById('hunter-runs-list');
-    if (!el) return;
-    if (!runs.length) { el.innerHTML = `<span style="color:var(--text-4);font-size:.74rem">—</span>`; return; }
-    el.innerHTML = runs.map(r => {
-      const dur = r.finished_at && r.started_at
-        ? Math.round((Date.parse(r.finished_at) - Date.parse(r.started_at))/1000) + 's'
-        : '—';
-      return `<div class="hunter-run-row">
-        <span style="min-width:140px">${esc(fmtDate(r.started_at))}</span>
-        <span>seeds: <b>${r.seeds_found||0}</b></span>
-        <span>enriched: <b>${r.enriched||0}</b></span>
-        <span>failed: <b>${r.failed||0}</b></span>
-        <span>${dur}</span>
-        ${r.error ? `<span style="color:#dc2626">⚠ ${esc(r.error)}</span>` : ''}
-      </div>`;
-    }).join('');
-  } catch(e) {}
-}
-
 
 // ── Hunter: clear list ──────────────────────────────────────────────────────
 async function hunterClearList() {
