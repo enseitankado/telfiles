@@ -780,7 +780,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hl-event.warn{color:#b45309}
 .hl-event.error{color:#dc2626;font-weight:600}
 .hl-event.sep{color:var(--accent);font-weight:700;padding-top:4px}
-.hl-time{color:var(--text-4);min-width:62px;flex-shrink:0}
+.hl-time{color:var(--text-4);min-width:138px;flex-shrink:0;white-space:nowrap}
 .hl-stage{color:var(--accent);font-weight:600;min-width:58px;text-transform:uppercase;font-size:.65rem;flex-shrink:0;padding-top:1px}
 .hl-msg{flex:1;word-break:break-word;white-space:pre-wrap}
 .hl-empty{color:var(--text-4);text-align:center;padding:14px 0;font-family:inherit}
@@ -1509,14 +1509,6 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           </table>
           <div id="hunter-grid-empty" style="display:none;text-align:center;padding:30px;color:var(--text-4);font-size:.86rem"></div>
           <div id="hunter-pager"></div>
-        </div>
-
-        <div id="hunter-runs-card" class="hunter-card">
-          <h3 class="hunter-collapsible-head" onclick="hunterToggleRuns()">
-            <span class="hc-arrow" id="hc-runs-arrow">▶</span>
-            <span data-i18n="hunter.runs">Tarama Geçmişi</span>
-          </h3>
-          <div id="hunter-runs-list" class="collapsed"></div>
         </div>
 
         <div id="hunter-log-card" class="hunter-card">

@@ -2762,7 +2762,7 @@ function renderHunterMonitor(s) {
     } else {
       const wasAtBottom = evtEl.scrollHeight - evtEl.scrollTop - evtEl.clientHeight < 30;
       evtEl.innerHTML = events.map(e => {
-        const ts = e.ts ? e.ts.substring(11,19) : '';
+        const ts = e.ts ? e.ts.substring(0,19).replace('T',' ') : '';
         const text = _eventText(e);
         return `<div class="hm-event ${esc(e.level||'info')}">
           <span class="hm-evt-time">${esc(ts)}</span>
@@ -2796,7 +2796,7 @@ function _renderHunterLog(events) {
   }
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   el.innerHTML = events.map(e => {
-    const ts = (e.ts || '').substring(11, 19);
+    const ts = (e.ts || '').substring(0, 19).replace('T', ' ');
     const text = _eventText(e);
     const cls = text.startsWith('───') ? 'sep' : (e.level || 'info');
     return `<div class="hl-event ${esc(cls)}">
