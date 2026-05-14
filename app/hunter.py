@@ -126,15 +126,20 @@ _SOURCE_COOLDOWN_UNTIL: Dict[str, float] = {}      # epoch seconds
 _FAIL_THRESHOLD = 3
 _COOLDOWN_AFTER_FAIL_SEC = 6 * 60 * 60              # 6 hours
 
-# ── Playwright singletons ────────────────────────────────────────────────────
+# ── CloakBrowser (stealth Chromium) singletons ───────────────────────────────
 # Stage 2 uses a headless Chromium for search engines and Cloudflare-fronted
-# directories. We lazily start Playwright on first use and tear it down at
-# the end of every stage 2 run so no Chromium processes / tabs linger in the
-# container between scheduled jobs.
-_PW = None          # playwright runtime
-_PW_BROWSER = None  # chromium browser
+# directories. We swapped vanilla Playwright Chromium for CloakBrowser — a
+# C++ source-level patched Chromium that defeats the bot-detection layers
+# (Cloudflare Turnstile, FingerprintJS, reCAPTCHA v3) that were blocking
+# our search-engine adapters. The Python API still returns Playwright
+# browser/page objects, so all of our existing _pw_get / context / page
+# code keeps working unchanged.
+#
+# Lazily start on first use, tear down at the end of every Stage 2 run so
+# no Chromium processes / tabs linger between scheduled jobs.
+_PW_BROWSER = None  # cloakbrowser-launched chromium (Playwright Browser)
 _PW_CONTEXT = None  # single browser context (shares cookies across pages)
-_PW_FAILED = False  # set if Playwright fails to start; subsequent calls short-circuit
+_PW_FAILED = False  # set if launch fails; subsequent calls short-circuit
 
 # Cache of discovered URLs per source per session
 _DISCOVERY_CACHE: Dict[str, List[str]] = {}
@@ -237,30 +242,38 @@ async def _fetch_text(session: aiohttp.ClientSession, url: str, *,
         return None
 
 
-# ── Playwright (headless Chromium) — used for sources that block aiohttp ─────
+# ── CloakBrowser (stealth Chromium) — used for sources that block aiohttp ────
 
 async def _pw_ensure_started() -> bool:
-    """Lazily boot Playwright + Chromium on first call. Returns False if the
-    runtime can't start (missing image deps, etc.) so callers can degrade
-    gracefully to plain HTTP instead of crashing the whole stage."""
-    global _PW, _PW_BROWSER, _PW_CONTEXT, _PW_FAILED
+    """Lazily boot CloakBrowser (patched Chromium) on first call. Returns
+    False if the runtime can't start (missing image deps, etc.) so callers
+    can degrade gracefully to plain HTTP instead of crashing the whole stage.
+
+    CloakBrowser returns a vanilla Playwright Browser object that has its
+    .close() patched to also stop the underlying Playwright instance — so
+    teardown stays simple."""
+    global _PW_BROWSER, _PW_CONTEXT, _PW_FAILED
     if _PW_FAILED:
         return False
     if _PW_CONTEXT is not None:
         return True
     try:
-        from playwright.async_api import async_playwright
-        _PW = await async_playwright().start()
-        _PW_BROWSER = await _PW.chromium.launch(
+        from cloakbrowser import launch_async
+        _PW_BROWSER = await launch_async(
             headless=True,
-            # --no-sandbox is required inside Docker; the MS image runs as
-            # root with userns disabled. Disabling dev-shm avoids OOMs on
-            # small /dev/shm partitions which Chromium handles poorly.
+            # humanize patches the browser's mouse / keyboard / scroll with
+            # Bézier curves + realistic timing — defeats behavioural bot
+            # detection on top of the C++ fingerprint patches.
+            humanize=True,
+            # --no-sandbox is required inside Docker (root user, no userns);
+            # disabling dev-shm avoids OOMs on small /dev/shm partitions.
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
+        # CloakBrowser already sets a realistic UA + fingerprints at the
+        # binary level, so we deliberately do NOT override user_agent here —
+        # letting it use the patched value keeps the JA3/JA4/UA stack
+        # consistent. Locale + viewport are still useful nudges.
         _PW_CONTEXT = await _PW_BROWSER.new_context(
-            user_agent=("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
             locale="en-US",
             viewport={"width": 1366, "height": 768},
             java_script_enabled=True,
@@ -269,7 +282,7 @@ async def _pw_ensure_started() -> bool:
         return True
     except Exception as e:
         _PW_FAILED = True
-        logger.warning(f"Playwright start failed: {e}")
+        logger.warning(f"CloakBrowser start failed: {e}")
         _emit_event("stage2", f"Playwright unavailable: {str(e)[:120]}", "warn", key="hl.stage2.pwUnavailable", params={"err": str(e)[:120]})
         return False
 
@@ -315,8 +328,12 @@ async def _pw_get(url: str, *, referer: Optional[str] = None,
 async def _pw_teardown() -> None:
     """Close every Chromium tab/context/process at the end of a Stage 2 run.
     Without this the container would keep a headless browser pinned to RAM
-    24/7 even though scraping runs only a few times a day."""
-    global _PW, _PW_BROWSER, _PW_CONTEXT
+    24/7 even though scraping runs only a few times a day.
+
+    CloakBrowser monkey-patches browser.close() so it also stops the
+    underlying Playwright runtime — closing the browser is enough; no
+    separate playwright.stop() call needed."""
+    global _PW_BROWSER, _PW_CONTEXT
     if _PW_CONTEXT is not None:
         try:
             for p in list(_PW_CONTEXT.pages):
@@ -329,10 +346,6 @@ async def _pw_teardown() -> None:
         try: await _PW_BROWSER.close()
         except Exception: pass
         _PW_BROWSER = None
-    if _PW is not None:
-        try: await _PW.stop()
-        except Exception: pass
-        _PW = None
 
 
 def _source_can_run(name: str) -> bool:
