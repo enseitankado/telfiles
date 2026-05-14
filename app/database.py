@@ -233,6 +233,11 @@ ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_total INTEGER D
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_at TIMESTAMPTZ;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_error TEXT;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS tg_temp_join_enabled BOOLEAN DEFAULT TRUE;
+-- Otomatik anahtar-kelime havuzu: Stage 3 başarılı zenginleştirmeden sonra
+-- kanal açıklamasından / başlığından çıkarılan anlamlı kelimeler buraya
+-- birikiyor. Stage 2 bir sonraki koşuda user keywords + bunları birleştiriyor
+-- → her keşif sistemin sorgu yüzeyini büyütüyor (#3).
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS learned_keywords TEXT DEFAULT '';
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS peer_id BIGINT;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS access_hash BIGINT;
 
@@ -1384,6 +1389,10 @@ DEFAULT_HUNTER_SETTINGS = {
     "keywords": "", "min_subscribers": 0, "languages": "",
     "sources": "",  # empty = run every adapter registered in hunter._STAGE2_SOURCES
     "tg_temp_join_enabled": True,
+    # Auto-learned keyword pool, comma-separated. Grown by Stage 3 after
+    # each successful enrichment; merged into the Stage 2 keyword list on
+    # the next run.
+    "learned_keywords": "",
     # Timestamps written by the scheduler / runner. Kept here so
     # update_hunter_settings() will actually persist them — without these
     # entries the scheduler's next_run_at write was silently dropped and the

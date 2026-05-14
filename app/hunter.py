@@ -22,7 +22,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import aiohttp
 from telethon.errors import FloodWaitError, ChannelPrivateError, UsernameInvalidError, UsernameNotOccupiedError
@@ -430,7 +430,109 @@ def _smart_keywords(user_kw: str) -> List[str]:
     return base
 
 
-def _build_search_queries(keywords: List[str], max_q: int = 24) -> List[str]:
+# ── Auto-learned keyword pool (#3) + Trend injection (#5) ───────────────────
+
+# English + Turkish stopwords plus genre/role tokens that are too generic to
+# be useful as search seeds. Kept short on purpose — only the words that
+# would otherwise dominate frequency counts.
+_KEYWORD_STOPWORDS: Set[str] = set("""
+the a an and or of to in for is are this that with from but be as by on at was were
+what when where why how all any our your his her its them their not no yes
+ben biz sen siz bir ile için olarak olan olur bu şu ki de da çok daha en
+new old last year years season episode movies movie series tv show shows
+channel channels group groups telegram dosya dosyalar kanal kanallar link links
+official premium free download free indir indirme yeni eski son
+""".split())
+
+# Build a small per-channel keyword list from its title + description.
+# Used in Stage 3 right after enrichment succeeds (#3).
+def _extract_learned_keywords(title: Optional[str], description: Optional[str],
+                                max_kw: int = 4) -> List[str]:
+    text = " ".join(filter(None, [title or "", description or ""]))
+    if not text:
+        return []
+    from collections import Counter
+    toks = re.findall(r"[A-Za-zĞÜŞİÖÇğüşıöç][A-Za-zĞÜŞİÖÇğüşıöç0-9'-]{3,19}", text)
+    cnt: Counter = Counter()
+    for t in toks:
+        low = t.lower()
+        if low in _KEYWORD_STOPWORDS: continue
+        if low.startswith(("http", "www", "t.me")): continue
+        cnt[low] += 1
+    # Top-N by frequency; ties broken by insertion order (Counter behaviour)
+    return [w for w, _ in cnt.most_common(max_kw)]
+
+
+async def remember_learned_keywords(words: List[str], cap: int = 60) -> None:
+    """Merge a few extracted keywords into the persisted learned pool.
+    Capped so the pool can't grow unbounded — oldest entries fall off
+    when the cap is hit."""
+    words = [w for w in (words or []) if w and len(w) >= 4]
+    if not words:
+        return
+    try:
+        settings = await database.get_hunter_settings()
+        current = [k.strip().lower() for k in (settings.get("learned_keywords") or "").split(",") if k.strip()]
+        # Prepend new tokens, dedup preserving order, then cap
+        merged: List[str] = []
+        seen = set()
+        for w in words + current:
+            lw = w.lower()
+            if lw in seen: continue
+            seen.add(lw); merged.append(lw)
+            if len(merged) >= cap: break
+        if merged != current:
+            await database.update_hunter_settings({"learned_keywords": ",".join(merged)})
+    except Exception as e:
+        logger.debug(f"remember_learned_keywords failed: {e}")
+
+
+# Process-memory cache for trend keywords. Reddit feeds rate-limit so we
+# refresh at most once an hour; a stale list is fine.
+_TREND_CACHE: Dict[str, Any] = {"at": 0.0, "terms": []}
+_TREND_TTL_SEC = 3600
+_TREND_SUBREDDITS = "movies+television+gaming+books+anime+piratedgames+softwaregore+technology"
+
+
+async def _fetch_trend_keywords(max_terms: int = 8) -> List[str]:
+    """Pull a few currently-trending topical terms from public Reddit feeds
+    (no auth required). Restricted to subreddits whose topics map to
+    file-sharing themes, so the injected keywords have a reasonable
+    chance of surfacing relevant Telegram channels. (#5)"""
+    now = time.time()
+    if _TREND_CACHE["terms"] and now - _TREND_CACHE["at"] < _TREND_TTL_SEC:
+        return _TREND_CACHE["terms"]
+    url = f"https://www.reddit.com/r/{_TREND_SUBREDDITS}/hot.json?limit=25"
+    headers = {"User-Agent": "telfiles/0.4 (channel-hunter trend probe)"}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as r:
+                if r.status != 200:
+                    return _TREND_CACHE["terms"] or []
+                data = await r.json()
+        titles: List[str] = []
+        for c in (data.get("data") or {}).get("children", []):
+            t = (c.get("data") or {}).get("title") or ""
+            if t: titles.append(t)
+        # Frequency over the title corpus, filtered by the same stopword
+        # logic used by _extract_learned_keywords above.
+        from collections import Counter
+        cnt: Counter = Counter()
+        for t in titles:
+            for tok in re.findall(r"[A-Za-z][A-Za-z0-9'-]{4,19}", t):
+                low = tok.lower()
+                if low in _KEYWORD_STOPWORDS: continue
+                cnt[low] += 1
+        terms = [w for w, _ in cnt.most_common(max_terms)]
+        _TREND_CACHE["at"] = now
+        _TREND_CACHE["terms"] = terms
+        return terms
+    except Exception as e:
+        logger.debug(f"trend fetch failed: {e}")
+        return _TREND_CACHE["terms"] or []
+
+
+def _build_search_queries(keywords: List[str], max_q: int = 30) -> List[str]:
     """Turn base keywords into a diversified set of Google-dork-style queries.
 
     Each engine adapter slices into its own limit (see queries[:N] inside the
@@ -473,6 +575,21 @@ def _build_search_queries(keywords: List[str], max_q: int = 24) -> List[str]:
     for kw in keywords[:4]:
         if push(f'"telegram channel" {kw}'): return out
         if push(f'"View in Telegram" {kw}'): return out
+
+    # Pattern G: time-window dorks — yıl/ay markörleri ile son aylarda
+    # yayımlanan/güncellenen sayfalara öncelik verir. Tek başına engine
+    # freshness parametrelerinden ('&qdr=m' vb.) daha taşınabilir; sorgu
+    # metnine yazıldığı için tüm motorlarda çalışır. (#4)
+    now = datetime.now()
+    year = now.year
+    last_year = year - 1
+    month_name = now.strftime("%B").lower()
+    for kw in keywords[:5]:
+        if push(f'site:t.me {kw} {year}'): return out
+        if push(f'site:t.me {kw} {month_name} {year}'): return out
+    for kw in keywords[:3]:
+        if push(f'site:t.me {kw} "new"'): return out
+        if push(f'site:t.me {kw} {last_year} OR {year}'): return out
 
     return out
 
@@ -577,12 +694,20 @@ async def _crawl_directory(session: aiohttp.ClientSession, name: str,
 async def _crawl_search_engine(session: aiohttp.ClientSession, name: str,
                                 home_url: str, query_url_tpl: str,
                                 queries: List[str], delay_ms: int,
-                                max_q: int = 8) -> Set[str]:
+                                max_q: int = 8,
+                                page_offsets: Optional[List[str]] = None) -> Set[str]:
     """Generic search-engine adapter. Routes through headless Chromium since
     nearly every general-purpose search engine now serves a JS challenge or
     a "you look like a bot" page to plain aiohttp. We warm up via the
     homepage so first-party cookies stick, then issue `max_q` queries
-    through the same browser context."""
+    through the same browser context.
+
+    page_offsets — list of suffix strings appended to the query URL to
+    request subsequent result pages. Defaults to ["",] (page 1 only).
+    Engines pass things like ["", "&start=10"] for Google,
+    ["", "&first=11"] for Bing, etc. — broadens result diversity by
+    surfacing the tail of the result list. (#2)"""
+    page_offsets = page_offsets or [""]
     found: Set[str] = set()
     # Warm up — sets first-party cookies in the Chromium context.
     _ = await _pw_get(home_url)
@@ -591,20 +716,23 @@ async def _crawl_search_engine(session: aiohttp.ClientSession, name: str,
     consecutive_fails = 0
     for q in queries[:max_q]:
         if _check_interrupt("stage2"): break
-        url = query_url_tpl.format(q=aiohttp.helpers.quote(q))
-        html = await _pw_get(url, referer=home_url)
-        if not html:
-            consecutive_fails += 1
-            if consecutive_fails >= 3:
-                _emit_event("stage2", f"{name}: 3 fails — backing off this run", "warn", key="hl.stage2.threeFailsRun", params={"src": name})
-                break
-            await _interruptible_sleep(delay_ms / 1000 * 2)
-            continue
-        consecutive_fails = 0
-        for m in _TME_RE.finditer(html):
-            u = _normalize_username(m.group(1))
-            if u: found.add(u)
-        await asyncio.sleep(delay_ms / 1000)
+        base_url = query_url_tpl.format(q=aiohttp.helpers.quote(q))
+        for off in page_offsets:
+            if _check_interrupt("stage2"): break
+            url = base_url + off
+            html = await _pw_get(url, referer=home_url)
+            if not html:
+                consecutive_fails += 1
+                if consecutive_fails >= 3:
+                    _emit_event("stage2", f"{name}: 3 fails — backing off this run", "warn", key="hl.stage2.threeFailsRun", params={"src": name})
+                    return found
+                await _interruptible_sleep(delay_ms / 1000 * 2)
+                continue
+            consecutive_fails = 0
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u: found.add(u)
+            await asyncio.sleep(delay_ms / 1000)
     return found
 
 
@@ -661,6 +789,7 @@ async def _stage2_ecosia(session, queries, delay_ms):
         "https://www.ecosia.org/",
         "https://www.ecosia.org/search?q={q}",
         queries, delay_ms,
+        page_offsets=["", "&p=1"],
     )
 
 
@@ -681,50 +810,65 @@ async def _stage2_searchtg(session, keywords, delay_ms):
                                     keywords=keywords or _DEFAULT_FILE_CATEGORIES[:6])
 
 async def _stage2_duckduckgo(session, queries, delay_ms):
+    # DDG /html/ doesn't support deterministic pagination via GET params
+    # (uses POST + s=N in the body); page 1 only.
     return await _crawl_search_engine(session, "duckduckgo",
         "https://duckduckgo.com/",
         "https://duckduckgo.com/html/?q={q}",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=[""])
 
 async def _stage2_yandex(session, queries, delay_ms):
+    # Yandex pagination: &p=0 first, &p=1 second (0-indexed).
     return await _crawl_search_engine(session, "yandex",
         "https://yandex.com/",
         "https://yandex.com/search/?text={q}",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=["", "&p=1"])
 
 async def _stage2_brave(session, queries, delay_ms):
+    # Brave pagination: &offset=0 first, &offset=1 second.
     return await _crawl_search_engine(session, "brave",
         "https://search.brave.com/",
         "https://search.brave.com/search?q={q}&source=web",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=["", "&offset=1"])
 
 async def _stage2_bing(session, queries, delay_ms):
+    # Bing pagination: omit param for page 1, &first=11 for page 2.
     return await _crawl_search_engine(session, "bing",
         "https://www.bing.com/",
         "https://www.bing.com/search?q={q}",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=["", "&first=11"])
 
 async def _stage2_mojeek(session, queries, delay_ms):
+    # Mojeek pagination: &s=11 for page 2.
     return await _crawl_search_engine(session, "mojeek",
         "https://www.mojeek.com/",
         "https://www.mojeek.com/search?q={q}",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=["", "&s=11"])
 
 async def _stage2_startpage(session, queries, delay_ms):
     return await _crawl_search_engine(session, "startpage",
         "https://www.startpage.com/",
         "https://www.startpage.com/do/search?q={q}",
-        queries, delay_ms)
+        queries, delay_ms,
+        page_offsets=["", "&page=2"])
 
 async def _stage2_google(session, queries, delay_ms):
     """Google web search with dork queries (site:t.me ...).
     Google is aggressive about CAPTCHA; the cool-down logic in stage2 will
     park this source for 6h after 3 consecutive zero/error responses."""
     # Use the simpler /search endpoint that more often serves HTML directly.
+    # `num=30` already pulls 30 results, so just one page is usually enough;
+    # the second page (&start=30) bumps it to 60 for marginal diversity.
     return await _crawl_search_engine(session, "google",
         "https://www.google.com/",
         "https://www.google.com/search?q={q}&hl=en&num=30",
-        queries, delay_ms, max_q=6)
+        queries, delay_ms, max_q=6,
+        page_offsets=["", "&start=30"])
 
 
 async def _stage2_reddit(session, keywords, delay_ms):
@@ -802,8 +946,28 @@ async def stage2_crawl_web(settings: dict) -> int:
         raw = _DEFAULT_SOURCES
     sources = [s.strip().lower() for s in raw.split(",") if s.strip() and s.strip().lower() != "internal"]
     delay_ms = int(settings.get("web_request_delay_ms") or 2500)
-    keywords = _smart_keywords(settings.get("keywords") or "")
-    queries = _build_search_queries(keywords)
+    # Anahtar kelime havuzu = kullanıcı/varsayılan + öğrenilmiş (#3) + güncel
+    # trend (#5). Tekdüzeleşmeyi kırmak için her koşuda farklı bir karışım
+    # gelir; ilk N entry sırayı (kullanıcı önce → trend → öğrenilmiş)
+    # koruyarak Pattern A şablonuna giriyor.
+    base_kw = _smart_keywords(settings.get("keywords") or "")
+    learned_kw = [k.strip().lower() for k in (settings.get("learned_keywords") or "").split(",") if k.strip()]
+    trend_kw = await _fetch_trend_keywords()
+    if trend_kw:
+        _emit_event("stage2", f"trend keywords: {', '.join(trend_kw)}", "info",
+                    key="hl.stage2.trendKeywords", params={"list": ", ".join(trend_kw)})
+    if learned_kw:
+        _emit_event("stage2", f"learned keywords ({len(learned_kw)}): {', '.join(learned_kw[:8])}{'…' if len(learned_kw) > 8 else ''}", "info",
+                    key="hl.stage2.learnedKeywords",
+                    params={"n": len(learned_kw), "sample": ", ".join(learned_kw[:8]) + ('…' if len(learned_kw) > 8 else '')})
+    # Dedup koruyarak birleştir
+    merged_kw: List[str] = []
+    seen_kw: Set[str] = set()
+    for k in base_kw + trend_kw + learned_kw:
+        lk = k.lower()
+        if lk in seen_kw: continue
+        seen_kw.add(lk); merged_kw.append(k)
+    queries = _build_search_queries(merged_kw)
     n_added = 0
 
     connector = aiohttp.TCPConnector(limit=int(settings.get("web_concurrency") or 2),
@@ -1067,6 +1231,16 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
         "peer_id": pid,
         "access_hash": ahash,
     })
+    # Auto-keyword expansion (#3): her başarılı zenginleştirmeden sonra
+    # kanalın başlığı + açıklamasından birkaç anlamlı terim çıkar, kalıcı
+    # learned_keywords havuzuna ekle. Bir sonraki Stage 2 koşusunda Pattern
+    # A-G şablonları bu yeni terimlerle de sorgu üretir.
+    try:
+        learned = _extract_learned_keywords(title, description, max_kw=4)
+        if learned:
+            await remember_learned_keywords(learned)
+    except Exception as _kw_e:
+        logger.debug(f"learn keywords failed for {username}: {_kw_e}")
     return True
 
 
