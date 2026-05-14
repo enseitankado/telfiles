@@ -127,17 +127,17 @@ _FAIL_THRESHOLD = 3
 _COOLDOWN_AFTER_FAIL_SEC = 6 * 60 * 60              # 6 hours
 
 # ── CloakBrowser (stealth Chromium) singletons ───────────────────────────────
-# Stage 2 uses a headless Chromium for search engines and Cloudflare-fronted
-# directories. We swapped vanilla Playwright Chromium for CloakBrowser — a
-# C++ source-level patched Chromium that defeats the bot-detection layers
+# Stage 2 uses a patched headless Chromium (CloakBrowser) for search engines
+# and Cloudflare-fronted directories — defeats the bot-detection layers
 # (Cloudflare Turnstile, FingerprintJS, reCAPTCHA v3) that were blocking
-# our search-engine adapters. The Python API still returns Playwright
-# browser/page objects, so all of our existing _pw_get / context / page
-# code keeps working unchanged.
+# our adapters. CloakBrowser exposes Playwright-style Browser / Context /
+# Page objects, so the rest of this file uses the standard async browser
+# API; the only swap is the launch entrypoint.
 #
 # Lazily start on first use, tear down at the end of every Stage 2 run so
-# no Chromium processes / tabs linger between scheduled jobs.
-_PW_BROWSER = None  # cloakbrowser-launched chromium (Playwright Browser)
+# no Chromium processes / tabs linger between scheduled jobs. (`_PW` prefix
+# stays for historical reasons — these are "patched web" browser handles.)
+_PW_BROWSER = None  # CloakBrowser-launched stealth Chromium
 _PW_CONTEXT = None  # single browser context (shares cookies across pages)
 _PW_FAILED = False  # set if launch fails; subsequent calls short-circuit
 
@@ -245,13 +245,13 @@ async def _fetch_text(session: aiohttp.ClientSession, url: str, *,
 # ── CloakBrowser (stealth Chromium) — used for sources that block aiohttp ────
 
 async def _pw_ensure_started() -> bool:
-    """Lazily boot CloakBrowser (patched Chromium) on first call. Returns
-    False if the runtime can't start (missing image deps, etc.) so callers
-    can degrade gracefully to plain HTTP instead of crashing the whole stage.
+    """Lazily boot CloakBrowser (patched stealth Chromium) on first call.
+    Returns False if the runtime can't start (missing image deps, etc.)
+    so callers can degrade gracefully to plain HTTP instead of crashing
+    the whole stage.
 
-    CloakBrowser returns a vanilla Playwright Browser object that has its
-    .close() patched to also stop the underlying Playwright instance — so
-    teardown stays simple."""
+    `browser.close()` is monkey-patched by CloakBrowser to also stop the
+    underlying browser driver, so teardown is just `await browser.close()`."""
     global _PW_BROWSER, _PW_CONTEXT, _PW_FAILED
     if _PW_FAILED:
         return False
@@ -283,7 +283,7 @@ async def _pw_ensure_started() -> bool:
     except Exception as e:
         _PW_FAILED = True
         logger.warning(f"CloakBrowser start failed: {e}")
-        _emit_event("stage2", f"Playwright unavailable: {str(e)[:120]}", "warn", key="hl.stage2.pwUnavailable", params={"err": str(e)[:120]})
+        _emit_event("stage2", f"Stealth browser unavailable: {str(e)[:120]}", "warn", key="hl.stage2.pwUnavailable", params={"err": str(e)[:120]})
         return False
 
 
@@ -331,8 +331,7 @@ async def _pw_teardown() -> None:
     24/7 even though scraping runs only a few times a day.
 
     CloakBrowser monkey-patches browser.close() so it also stops the
-    underlying Playwright runtime — closing the browser is enough; no
-    separate playwright.stop() call needed."""
+    underlying browser driver — closing the browser is enough."""
     global _PW_BROWSER, _PW_CONTEXT
     if _PW_CONTEXT is not None:
         try:
@@ -1018,8 +1017,8 @@ async def stage2_crawl_web(settings: dict) -> int:
 
     # aiohttp session with cookies enabled (jar) — many sites set first-party
     # cookies on homepage that we need to echo back on subsequent fetches.
-    # Playwright instance (if any) is torn down in finally so the headless
-    # Chromium doesn't linger between scheduled runs.
+    # The CloakBrowser instance (if any) is torn down in finally so the
+    # headless Chromium doesn't linger between scheduled runs.
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     try:
       async with aiohttp.ClientSession(connector=connector, cookie_jar=cookie_jar) as session:
@@ -1081,7 +1080,7 @@ async def stage2_crawl_web(settings: dict) -> int:
                     n_added += 1
     finally:
       # Headless Chromium kalmasın — bir sonraki çalışmaya kadar gereksiz RAM
-      # tutar. _pw_teardown idempotent'tir, Playwright hiç başlamadıysa hızla
+      # tutar. _pw_teardown idempotent'tir, browser hiç başlamadıysa hızla
       # döner.
       await _pw_teardown()
     return n_added
