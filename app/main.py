@@ -1346,6 +1346,77 @@ async def hunter_candidate_files(
             "limit": limit, "offset": offset}
 
 
+# ── Per-file download from the candidate detail lightbox ─────────────────────
+# Flow:
+#  1. UI POSTs /download (no confirm). If the channel is public, we download
+#     without joining and return state="done"/"downloading".
+#  2. If the channel requires membership we set state="needs_temp_join". The
+#     UI shows a confirm modal and re-POSTs with ?confirm_temp_join=1.
+#  3. Polling /status drives progress UI. /blob streams the saved file once
+#     state="done".
+
+@app.post("/api/hunter/candidates/{cid}/files/{msg_id}/download")
+async def hunter_file_download(
+    cid: int, msg_id: int,
+    confirm_temp_join: int = Query(0),
+):
+    import hunter as _hunter
+    state = await _hunter.download_candidate_file(
+        cid, msg_id, allow_temp_join=bool(confirm_temp_join),
+    )
+    return state
+
+
+@app.get("/api/hunter/candidates/{cid}/files/{msg_id}/status")
+async def hunter_file_download_status(cid: int, msg_id: int):
+    import hunter as _hunter
+    key = (int(cid), int(msg_id))
+    state = _hunter.file_dl_status.get(key)
+    if state:
+        return state
+    # Nothing in-memory — fall back to whatever is persisted on the row so a
+    # reopened lightbox can still distinguish "already downloaded" from "never".
+    cfile = await database.get_candidate_file(cid, msg_id)
+    if cfile and cfile.get("local_path") and os.path.exists(cfile["local_path"]):
+        return {"state": "done", "progress": 1.0,
+                "local_path": cfile["local_path"]}
+    return {"state": "idle"}
+
+
+@app.post("/api/hunter/candidates/{cid}/files/{msg_id}/download/cancel")
+async def hunter_file_download_cancel(cid: int, msg_id: int):
+    import hunter as _hunter
+    ok = await _hunter.cancel_candidate_file_download(cid, msg_id)
+    return {"ok": bool(ok)}
+
+
+@app.get("/api/hunter/candidates/{cid}/files/{msg_id}/blob")
+async def hunter_file_blob(cid: int, msg_id: int):
+    cfile = await database.get_candidate_file(cid, msg_id)
+    if not cfile or not cfile.get("local_path"):
+        raise HTTPException(404, "Henüz indirilmedi")
+    p = cfile["local_path"]
+    if not os.path.exists(p):
+        await database.clear_candidate_file_local_path(cid, msg_id)
+        raise HTTPException(404, "Dosya diskten silinmiş")
+    return FileResponse(p, filename=cfile.get("file_name") or os.path.basename(p))
+
+
+@app.delete("/api/hunter/candidates/{cid}/files/{msg_id}/blob")
+async def hunter_file_blob_delete(cid: int, msg_id: int):
+    cfile = await database.get_candidate_file(cid, msg_id)
+    if not cfile:
+        raise HTTPException(404, "Dosya bulunamadı")
+    p = cfile.get("local_path")
+    if p and os.path.exists(p):
+        try: os.remove(p)
+        except OSError: pass
+    await database.clear_candidate_file_local_path(cid, msg_id)
+    import hunter as _hunter
+    _hunter.file_dl_status.pop((int(cid), int(msg_id)), None)
+    return {"ok": True}
+
+
 # ── Static (must be last) ─────────────────────────────────────────────────────
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
