@@ -2404,12 +2404,34 @@ function showNotifMatches(notifId) {
   const n = _findNotif(notifId);
   if (!n) return;
   // Filter the files grid to ONLY the file_ids that triggered this notification.
+  // ÖNCE her potansiyel olarak çelişen filtreyi temizle — yoksa kullanıcının
+  // önceki seçtiği ext/group/size/date filtresi file_ids ile AND'lenip 0
+  // sonuç döndürebiliyor ve grid boş geliyor.
+  S.typeGroup = '';
+  S.extChip = '';
+  S.activeGroupId = null;
+  S.colGroupIds.clear();
+  S.sizeMinMB = null;
+  S.sizeMaxMB = null;
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  setVal('col-name', '');
+  setVal('ext-input', '');
+  setVal('col-ext', '');
+  setVal('col-size-min', '');
+  setVal('col-size-max', '');
+  setVal('date-from', '');
+  setVal('date-to', '');
+  // Size slider'ı sıfırla
+  const sMin = document.getElementById('sl-min'); if (sMin) sMin.value = 0;
+  const sMax = document.getElementById('sl-max'); if (sMax) sMax.value = 1000;
+  if (typeof updateSliderFill === 'function') updateSliderFill();
+  // "Tüm Tipler" butonunu aktif yap, diğerlerini pasif
+  document.querySelectorAll('.type-btn').forEach(b =>
+    b.classList.toggle('active', (b.dataset.group || '') === ''));
+  if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
+  // Sonra notification filtresini uygula
   S.fileIdsFilter = new Set((n.file_ids || []).map(x => parseInt(x, 10)));
   S.fileIdsFilterLabel = n.keywords;
-  // Clear potentially-conflicting filters so the chip-only filter is honored
-  const cn = document.getElementById('col-name'); if (cn) cn.value = '';
-  S.colGroupIds.clear();
-  if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
   S.offset = 0;
   renderChips();
   switchTab('files');
