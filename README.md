@@ -2,6 +2,14 @@
   <img src="docs/banner.png" alt="TelFiles — Telegram dosya ve link indeksleyici" width="100%">
 </p>
 
+<p align="center">
+  <a href="README.md">🇹🇷 Türkçe</a> &nbsp;|&nbsp;
+  <a href="README.en.md">🇬🇧 English</a> &nbsp;|&nbsp;
+  <a href="README.de.md">🇩🇪 Deutsch</a> &nbsp;|&nbsp;
+  <a href="README.ru.md">🇷🇺 Русский</a> &nbsp;|&nbsp;
+  <a href="README.zh.md">🇨🇳 中文</a>
+</p>
+
 # TelFiles
 
 **Kendi Telegram hesabınızla** üye olduğunuz grup ve kanalları arka planda gezer; karşılaştığı her dosyayı ve her bağlantıyı yerel bir PostgreSQL veritabanında indeksler. Tarayıcıdan açtığınız tek bir arayüzden arar, sıralar, filtreler ve istediğinizi tek tıkla bilgisayarınıza indirirsiniz.
@@ -34,15 +42,15 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/02-files.png"><img src="docs/screenshots/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı.</td>
-<td width="50%"><a href="docs/screenshots/03-hunter.png"><img src="docs/screenshots/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, kolon başına sıralama, satır tıklayınca açılan detay lightbox'ında dosya önizleme.</td>
+<td width="50%"><a href="docs/screenshots/tr/02-files.png"><img src="docs/screenshots/tr/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı.</td>
+<td width="50%"><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, kolon başına sıralama, satır tıklayınca açılan detay lightbox'ında dosya önizleme.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/04-links.png"><img src="docs/screenshots/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, erişilebilirlik kontrolü.</td>
-<td><a href="docs/screenshots/06-status.png"><img src="docs/screenshots/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, RAM / disk kullanımı.</td>
+<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, erişilebilirlik kontrolü.</td>
+<td><a href="docs/screenshots/tr/06-status.png"><img src="docs/screenshots/tr/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, RAM / disk kullanımı.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/05-settings.png"><img src="docs/screenshots/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, izleme kelimeleri, dil & tema, parola.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/tr/05-settings.png"><img src="docs/screenshots/tr/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, izleme kelimeleri, dil & tema, parola.</td>
 </tr>
 </table>
 
@@ -136,7 +144,7 @@ app/
 
 docs/
 ├── banner.png           # README başlığı
-├── screenshots/         # UI ekran görüntüleri
+├── screenshots/         # UI ekran görüntüleri (dil klasörleri: tr/en/de/ru/zh)
 └── OPERATOR.md          # DB sorguları, sorun giderme, hunter kaynakları
 ```
 
