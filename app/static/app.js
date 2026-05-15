@@ -3164,7 +3164,17 @@ function renderHunterCandidates() {
     const status = c.status || 'discovered';
     const title = _stripEmojiAndFormat(c.title || c.username) || c.username;
     const members = c.members ? c.members.toLocaleString() : '—';
-    const files = c.estimated_files != null ? c.estimated_files.toLocaleString() : '—';
+    // "Tam Tara" yapılmışsa deep_scan_total (gerçek toplam, ✓), aksi
+    // halde estimated_files (200 mesaj örnekleminden, ~). Tooltip ile
+    // hangi olduğu netleştiriliyor.
+    let files;
+    if (c.deep_scan_status === 'done' && (c.deep_scan_total || 0) > 0) {
+      files = `${c.deep_scan_total.toLocaleString()} <span title="Tam tarama yapıldı — kanalın tüm geçmişindeki gerçek dosya sayısı." style="color:#16a34a;font-size:.85em">✓</span>`;
+    } else if (c.estimated_files != null) {
+      files = `${c.estimated_files.toLocaleString()} <span title="Stage 3 örnekleminden tahmin (varsayılan: son 200 mesaj). Gerçek toplam için Tam Tara'ya basın." style="color:var(--text-4);font-size:.85em">~</span>`;
+    } else {
+      files = '—';
+    }
     const last = c.last_message_at ? fmtDate(c.last_message_at).substring(0,16) : '—';
     const disc = c.discovered_at ? fmtDate(c.discovered_at).substring(0,16) : '—';
     const sources = (c.sources || []).map(s => s.replace('internal:', '')).join(', ');
@@ -3281,10 +3291,12 @@ async function hunterShowDetail(cid) {
     _bindHdActions();
     refreshHdFiles();
     pollDeepScan();
-    // Auto-kick a deep scan on open unless one is already running or has
-    // already completed for this candidate. The user no longer has to
-    // remember to click "Tam Tara" to see the file list.
-    _autoStartDeepScan(c.id);
+    // NOT auto-kicking a deep scan on open. Stage 3 enrichment now writes
+    // the files it sees in its 200-msg sample to hunter_candidate_files,
+    // so the lightbox is already populated for the typical case. The
+    // "Tam Tara" button is the explicit gesture for fetching the rest of
+    // the channel history; we don't burn FloodWait budget just because
+    // the user clicked a row to look at it.
   } catch (e) {
     alert(e.message);
   }
