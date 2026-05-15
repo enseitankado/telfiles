@@ -1173,6 +1173,65 @@ _FILE_GROUPS = {
 }
 
 
+def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool]:
+    """Best-effort filename + extension from a Telethon document.
+
+    Telegram does NOT require a filename attribute. Voice messages,
+    camera-uploaded videos, forwarded audio, stickers, animations all
+    routinely arrive with no DocumentAttributeFilename, so the obvious
+    `attr.file_name` path returns None and we used to write NULL into
+    hunter_candidate_files — showing up in the UI as `—`.
+
+    Fallback chain:
+      1. DocumentAttributeFilename.file_name              (primary)
+      2. DocumentAttributeAudio.title (+ performer)       (tagged audio)
+      3. f"<group>_<msg_id>.<ext>"                        (synthetic)
+
+    Returns (fname, ext, is_video, is_audio). `fname` is never None when
+    the document had any usable metadata at all.
+    """
+    fname = None
+    is_video = is_audio = False
+    audio_title = audio_performer = None
+    for attr in (getattr(doc, "attributes", None) or []):
+        cname = type(attr).__name__
+        if cname == "DocumentAttributeFilename":
+            fname = getattr(attr, "file_name", None)
+        elif cname == "DocumentAttributeVideo":
+            is_video = True
+        elif cname == "DocumentAttributeAudio":
+            is_audio = True
+            audio_title = getattr(attr, "title", None)
+            audio_performer = getattr(attr, "performer", None)
+
+    ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
+    if not ext:
+        mime = getattr(doc, "mime_type", "") or ""
+        if "/" in mime:
+            ext = mime.rsplit("/", 1)[-1]
+        elif is_video:
+            ext = "mp4"
+        elif is_audio:
+            ext = "mp3"
+    ext = ext.lower()
+
+    if not fname:
+        if audio_title:
+            base = (f"{audio_performer} - {audio_title}" if audio_performer
+                    else audio_title).strip()
+            fname = (f"{base}.{ext}" if ext and not base.lower().endswith("." + ext)
+                     else base)
+        elif is_video:
+            fname = f"video_{msg_id}.{ext or 'mp4'}"
+        elif is_audio:
+            fname = f"audio_{msg_id}.{ext or 'mp3'}"
+        else:
+            grp_for_ext = _file_group(ext)
+            fname = (f"{grp_for_ext}_{msg_id}.{ext}" if ext
+                     else f"file_{msg_id}")
+    return fname, ext, is_video, is_audio
+
+
 def _file_group(ext: str) -> str:
     e = (ext or "").lower().lstrip(".")
     for g, exts in _FILE_GROUPS.items():
@@ -1266,27 +1325,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                 file_count += 1
                 size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
-                # Prefer the filename attribute; fall back to mime-derived
-                # extension for video/audio documents that ship without a
-                # filename (common when channels re-encode uploads).
-                fname = None
-                is_video = is_audio = False
-                for attr in (doc.attributes or []):
-                    if isinstance(attr, DocumentAttributeFilename):
-                        fname = attr.file_name
-                    elif isinstance(attr, DocumentAttributeVideo):
-                        is_video = True
-                    elif isinstance(attr, DocumentAttributeAudio):
-                        is_audio = True
-                ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
-                if not ext:
-                    mime = getattr(doc, "mime_type", "") or ""
-                    if "/" in mime:
-                        ext = mime.rsplit("/", 1)[-1]
-                    elif is_video:
-                        ext = "mp4"
-                    elif is_audio:
-                        ext = "mp3"
+                fname, ext, _is_video, _is_audio = _doc_filename(doc, msg.id)
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 # Stage 3 örnekleminde gördüğümüz dosyaları DB'ye yaz —
@@ -1299,7 +1338,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                     msg_date = msg_date.replace(tzinfo=timezone.utc)
                 try:
                     await database.insert_candidate_file(
-                        candidate_id, msg.id, fname, ext.lower(), size, grp, msg_date,
+                        candidate_id, msg.id, fname, ext, size, grp, msg_date,
                     )
                 except Exception:
                     pass
@@ -1715,6 +1754,12 @@ async def blacklist_candidate(candidate_id: int, reason: Optional[str] = None) -
 deep_scan_status: Dict[int, dict] = {}        # {candidate_id: {state, processed, total, error}}
 _deep_scan_tasks: Dict[int, asyncio.Task] = {}
 
+# Per-file download state for the candidate-detail lightbox 📥 button.
+# Keyed by (candidate_id, message_id).
+#   state ∈ {"downloading","done","error","needs_temp_join"}
+file_dl_status: Dict[tuple, dict] = {}
+_file_dl_tasks: Dict[tuple, asyncio.Task] = {}
+
 
 def _file_group_for_ext(ext: str) -> str:
     return _file_group(ext)
@@ -1744,24 +1789,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                 n += 1
                 size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
-                fname = None
-                is_video = is_audio = False
-                for attr in (doc.attributes or []):
-                    if isinstance(attr, DocumentAttributeFilename):
-                        fname = attr.file_name
-                    elif isinstance(attr, DocumentAttributeVideo):
-                        is_video = True
-                    elif isinstance(attr, DocumentAttributeAudio):
-                        is_audio = True
-                ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
-                if not ext:
-                    mime = getattr(doc, "mime_type", "") or ""
-                    if "/" in mime:
-                        ext = mime.rsplit("/", 1)[-1]
-                    elif is_video:
-                        ext = "mp4"
-                    elif is_audio:
-                        ext = "mp3"
+                fname, ext, _is_video, _is_audio = _doc_filename(doc, msg.id)
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 date = msg.date
@@ -1770,7 +1798,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                 if date and (last_at is None or date > last_at):
                     last_at = date
                 await database.insert_candidate_file(
-                    candidate_id, msg.id, fname, ext.lower(), size, grp, date,
+                    candidate_id, msg.id, fname, ext, size, grp, date,
                 )
                 if n % 25 == 0:
                     deep_scan_status[candidate_id] = {
@@ -1984,5 +2012,189 @@ def cancel_deep_scan(candidate_id: int) -> bool:
     task = _deep_scan_tasks.get(candidate_id)
     if task and not task.done():
         task.cancel()
+        return True
+    return False
+
+
+# ── Per-file download (from the candidate-detail lightbox 📥) ───────────────
+# Goal: let the user preview a specific document from a candidate channel WITHOUT
+# committing to join/reject/blacklist. For public channels Telegram lets us read
+# a message + download its document without joining. For private/restricted
+# channels we offer an explicit temp-join → download → leave flow, gated by a
+# query flag so the UI can show a confirmation modal first.
+
+_DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", "/app/downloads")
+
+
+def _safe_segment(s: str, fallback: str = "x") -> str:
+    s = "".join(c for c in (s or "") if c.isalnum() or c in " _-.").strip()
+    return s[:80] or fallback
+
+
+async def _try_fetch_message(client, entity, message_id: int):
+    """Fetch a single message. Returns the Message on success, None if it's
+    unreachable for permission reasons (caller decides whether to temp-join)."""
+    try:
+        msg = await client.get_messages(entity, ids=message_id)
+        return msg
+    except (ChannelPrivateError,) as e:
+        return None
+    except FloodWaitError:
+        raise
+    except Exception as e:
+        # The vast majority of "permission" errors surface as different
+        # subclasses depending on Telethon version. Treat any non-flood
+        # exception that mentions privacy/membership as a permission gate;
+        # everything else propagates so the caller can show a real error.
+        name = type(e).__name__.lower()
+        if "private" in name or "admin" in name or "forbidden" in name:
+            return None
+        raise
+
+
+async def _download_candidate_file_impl(cid: int, msg_id: int,
+                                        allow_temp_join: bool) -> str:
+    """Returns the local path on success. Raises on hard failures.
+    Sets status into file_dl_status[(cid, msg_id)] for the UI to poll."""
+    key = (int(cid), int(msg_id))
+    file_dl_status[key] = {"state": "downloading", "progress": 0.0,
+                            "bytes_done": 0, "bytes_total": 0, "error": None}
+
+    cand = await database.get_hunter_candidate(cid)
+    if not cand:
+        file_dl_status[key] = {"state": "error", "error": "candidate not found"}
+        raise ValueError("candidate not found")
+
+    cfile = await database.get_candidate_file(cid, msg_id)
+    if not cfile:
+        file_dl_status[key] = {"state": "error", "error": "file row not found"}
+        raise ValueError("file row not found")
+
+    # Short-circuit if we already have the file on disk.
+    if cfile.get("local_path") and os.path.exists(cfile["local_path"]):
+        file_dl_status[key] = {"state": "done", "progress": 1.0,
+                                "local_path": cfile["local_path"]}
+        return cfile["local_path"]
+
+    settings = await database.get_hunter_settings()
+    account_id = int(settings.get("tg_account_id") or 1)
+    client = await get_client(account_id)
+    if not client.is_connected():
+        await client.connect()
+
+    # Resolve entity from cached peer_id+access_hash so we never burn a
+    # ResolveUsername call here.
+    pid = cand.get("peer_id"); ah = cand.get("access_hash")
+    if not (pid and ah is not None):
+        file_dl_status[key] = {"state": "error",
+                                "error": "candidate has no cached peer; run Tam Tara önce"}
+        raise ValueError("no cached peer for candidate")
+    entity = await client.get_entity(InputPeerChannel(int(pid), int(ah)))
+
+    # Step 1 — try without joining.
+    msg = await _try_fetch_message(client, entity, msg_id)
+    temp_joined = False
+
+    if msg is None:
+        # Permission gate. If the user didn't confirm a temp-join, surface the
+        # need and stop here — the UI shows a modal and re-requests with
+        # confirm_temp_join=1.
+        if not allow_temp_join:
+            file_dl_status[key] = {"state": "needs_temp_join",
+                                    "username": cand.get("username")}
+            raise PermissionError("needs_temp_join")
+        try:
+            await client(JoinChannelRequest(entity))
+            temp_joined = True
+            logger.info(f"Hunter: temp-joined @{cand.get('username')} to download msg {msg_id}")
+            msg = await client.get_messages(entity, ids=msg_id)
+        except FloodWaitError as e:
+            file_dl_status[key] = {"state": "error",
+                                    "error": f"FloodWait {e.seconds}s on join"}
+            raise
+
+    try:
+        if not msg or not getattr(msg, "document", None):
+            file_dl_status[key] = {"state": "error",
+                                    "error": "message has no downloadable document"}
+            raise ValueError("no document on message")
+
+        username = cand.get("username") or f"cand_{cid}"
+        dest_dir = os.path.join(_DOWNLOADS_DIR, "_hunter", _safe_segment(username, str(cid)))
+        os.makedirs(dest_dir, exist_ok=True)
+
+        fname = cfile.get("file_name") or f"msg_{msg_id}"
+        # Strip dangerous path separators that may have leaked from Telegram
+        fname = fname.replace("/", "_").replace("\\", "_")
+        dest = os.path.join(dest_dir, fname)
+        if os.path.exists(dest):
+            base, ext = os.path.splitext(dest)
+            dest = f"{base}_{msg_id}{ext}"
+
+        async def _progress(current, total):
+            file_dl_status[key] = {
+                "state": "downloading",
+                "progress": (current / total) if total else 0.0,
+                "bytes_done": int(current), "bytes_total": int(total or 0),
+                "error": None,
+            }
+
+        await client.download_media(msg, dest, progress_callback=_progress)
+
+        # Persist for next time
+        await database.set_candidate_file_local_path(cid, msg_id, dest)
+        file_dl_status[key] = {"state": "done", "progress": 1.0,
+                                "local_path": dest, "bytes_done": os.path.getsize(dest),
+                                "bytes_total": os.path.getsize(dest)}
+        _emit_event("file", f"@{cand.get('username')}: downloaded {fname}",
+                    key="hl.file.downloaded",
+                    params={"username": cand.get("username"), "file": fname})
+        return dest
+    finally:
+        if temp_joined:
+            try:
+                await client(LeaveChannelRequest(entity))
+                logger.info(f"Hunter: left @{cand.get('username')} after file download")
+            except Exception as e:
+                logger.warning(f"Hunter: leave-after-file-download failed: {e}")
+
+
+async def download_candidate_file(cid: int, msg_id: int,
+                                   allow_temp_join: bool = False) -> dict:
+    """Kicks the download in the background and returns the current status
+    dict. The actual work is wrapped in a task we keep in _file_dl_tasks so a
+    second click while it's still going just returns the in-flight state."""
+    key = (int(cid), int(msg_id))
+    existing = _file_dl_tasks.get(key)
+    if existing and not existing.done():
+        return file_dl_status.get(key, {"state": "downloading"})
+
+    async def _runner():
+        try:
+            await _download_candidate_file_impl(cid, msg_id, allow_temp_join)
+        except PermissionError:
+            # needs_temp_join — already set in status
+            pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"download_candidate_file failed cid={cid} msg={msg_id}: {e}")
+            file_dl_status[key] = {"state": "error", "error": str(e)[:240]}
+        finally:
+            _file_dl_tasks.pop(key, None)
+
+    _file_dl_tasks[key] = asyncio.create_task(_runner())
+    # Wait briefly so the first poll already has a real state (downloading /
+    # needs_temp_join / error) — avoids a UI flash.
+    await asyncio.sleep(0.05)
+    return file_dl_status.get(key, {"state": "downloading"})
+
+
+async def cancel_candidate_file_download(cid: int, msg_id: int) -> bool:
+    key = (int(cid), int(msg_id))
+    task = _file_dl_tasks.get(key)
+    if task and not task.done():
+        task.cancel()
+        file_dl_status[key] = {"state": "error", "error": "cancelled"}
         return True
     return False
