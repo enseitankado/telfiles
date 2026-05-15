@@ -741,6 +741,15 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hd-file-list .hf-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
 .hd-file-list .hf-size{flex-shrink:0;width:80px;text-align:right;color:var(--text-3);font-variant-numeric:tabular-nums}
 .hd-file-list .hf-date{flex-shrink:0;width:115px;color:var(--text-4);font-size:.72rem;text-align:right}
+.hd-file-list .hf-actions{flex-shrink:0;display:flex;align-items:center;gap:4px;width:84px;justify-content:flex-end}
+.hd-file-list .hf-btn{background:none;border:1px solid var(--input-border);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:.78rem;color:var(--text-2);font-family:inherit}
+.hd-file-list .hf-btn:hover{background:var(--bg-hover);color:var(--accent)}
+.hd-file-list .hf-btn:disabled{opacity:.5;cursor:default}
+.hd-file-list .hf-btn-del:hover{color:#dc2626;border-color:#dc2626}
+.hd-file-list .hf-progress{font-variant-numeric:tabular-nums;font-size:.72rem;color:var(--accent);min-width:36px;text-align:right}
+.hd-file-list li.hf-downloading{background:rgba(59,130,246,.06)}
+.hd-file-list li.hf-error{background:rgba(220,38,38,.05)}
+.hd-file-list li.hf-error .hf-name{color:#dc2626}
 {display:flex;flex-direction:column;gap:6px}
 .hunter-cand{background:var(--bg-2);border:1px solid var(--border-2);border-radius:9px;padding:9px 12px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:all .12s}
 .hunter-cand:hover{border-color:var(--accent-soft);background:var(--bg-hover);transform:translateY(-1px);box-shadow:0 2px 5px rgba(0,0,0,.05)}

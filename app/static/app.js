@@ -3433,19 +3433,204 @@ async function refreshHdFiles() {
       body += `<div style="text-align:center;padding:20px;color:var(--text-4);font-size:.78rem">${esc(t('hd.noFiles'))}</div>`;
     }
   } else {
-    body += `<ul class="hd-file-list">${data.files.map(f => `<li>
-        <span class="hf-name" title="${esc(f.file_name||'')}">${esc(f.file_name || '—')}</span>
-        <span class="hf-size">${fmtSize(f.file_size||0)}</span>
-        <span class="hf-date">${f.date ? fmtDate(f.date).substring(0,16) : '—'}</span>
-      </li>`).join('')}</ul>`;
+    // Seed the per-row download state from f.local_path so reopening the
+    // lightbox after a successful download immediately renders 💾/🗑 instead
+    // of a stale 📥.
+    data.files.forEach(f => {
+      if (f.local_path && !_hdDlStatus[f.message_id]) {
+        _hdDlStatus[f.message_id] = { state: 'done', progress: 1.0, local_path: f.local_path };
+      }
+    });
+    body += `<ul class="hd-file-list" id="hd-file-ul">${data.files.map(f => _renderHdFileRow(f)).join('')}</ul>`;
   }
 
   area.innerHTML = body;
+  _resumeActiveFileDownloads();
+}
+
+// Renders a single <li> for one candidate file. State for an in-flight
+// download (if any) lives in _hdDlStatus[msg_id]; persisted "already
+// downloaded" state lives in f.local_path.
+function _renderHdFileRow(f) {
+  const msgId = f.message_id;
+  const dl    = _hdDlStatus[msgId];
+  const dlState = dl ? dl.state : (f.local_path ? 'done' : 'idle');
+
+  let actionsHtml = '';
+  let liExtraClass = '';
+  if (dlState === 'downloading') {
+    liExtraClass = ' hf-downloading';
+    const pct = dl && dl.progress != null ? Math.round(dl.progress * 100) : 0;
+    actionsHtml = `<span class="hf-progress">${pct}%</span>
+      <button class="hf-btn hf-btn-del" data-act="cancel" data-msg="${msgId}" title="${esc(t('hf.cancel'))}">✕</button>`;
+  } else if (dlState === 'done') {
+    actionsHtml = `<button class="hf-btn" data-act="open" data-msg="${msgId}" title="${esc(t('hf.open'))}">💾</button>
+      <button class="hf-btn hf-btn-del" data-act="delete" data-msg="${msgId}" title="${esc(t('hf.delete'))}">🗑</button>`;
+  } else if (dlState === 'error') {
+    liExtraClass = ' hf-error';
+    actionsHtml = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.retry'))}">↻</button>`;
+  } else if (dlState === 'needs_temp_join') {
+    actionsHtml = `<button class="hf-btn" data-act="downloadJoin" data-msg="${msgId}" title="${esc(t('hf.needsJoin'))}">🔒</button>`;
+  } else {
+    actionsHtml = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
+  }
+  return `<li class="hf-row${liExtraClass}" data-msg="${msgId}">
+    <span class="hf-name" title="${esc(f.file_name||'')}">${esc(f.file_name || '—')}</span>
+    <span class="hf-size">${fmtSize(f.file_size||0)}</span>
+    <span class="hf-date">${f.date ? fmtDate(f.date).substring(0,16) : '—'}</span>
+    <span class="hf-actions">${actionsHtml}</span>
+  </li>`;
+}
+
+// ── Per-file download state (candidate detail) ───────────────────────────────
+let _hdDlStatus = {};
+let _hdDlPollers = {};
+
+function _resumeActiveFileDownloads() {
+  Object.keys(_hdDlStatus).forEach(msgId => {
+    if (_hdDlStatus[msgId] && _hdDlStatus[msgId].state === 'downloading') {
+      _startFileDlPoller(parseInt(msgId, 10));
+    }
+  });
+  const ul = document.getElementById('hd-file-ul');
+  if (ul && !ul._wired) {
+    ul.addEventListener('click', _onHdFileAction);
+    ul._wired = true;
+  }
+}
+
+async function _onHdFileAction(ev) {
+  const btn = ev.target.closest('[data-act]');
+  if (!btn) return;
+  const act   = btn.dataset.act;
+  const msgId = parseInt(btn.dataset.msg, 10);
+  if (!Number.isFinite(msgId) || _currentDetailCid == null) return;
+  switch (act) {
+    case 'download':     hfStartDownload(msgId, false); break;
+    case 'downloadJoin': hfDownloadWithTempJoin(msgId); break;
+    case 'cancel':       hfCancelDownload(msgId); break;
+    case 'open':         hfOpenDownloaded(msgId); break;
+    case 'delete':       hfDeleteDownloaded(msgId); break;
+  }
+}
+
+async function hfStartDownload(msgId, withTempJoin) {
+  const cid = _currentDetailCid;
+  try {
+    const qs = withTempJoin ? '?confirm_temp_join=1' : '';
+    const res = await api(`/api/hunter/candidates/${cid}/files/${msgId}/download${qs}`, { method: 'POST' });
+    _hdDlStatus[msgId] = res;
+    _refreshHdFileRow(msgId);
+    if (res.state === 'downloading') {
+      _startFileDlPoller(msgId);
+    } else if (res.state === 'needs_temp_join') {
+      _showTempJoinConfirm(msgId, res.username || '');
+    }
+  } catch (e) {
+    _hdDlStatus[msgId] = { state: 'error', error: e.message || String(e) };
+    _refreshHdFileRow(msgId);
+    showToast(`✗ ${esc(e.message || e)}`, 4000);
+  }
+}
+
+function _startFileDlPoller(msgId) {
+  if (_hdDlPollers[msgId]) return;
+  const cid = _currentDetailCid;
+  _hdDlPollers[msgId] = setInterval(async () => {
+    if (_currentDetailCid !== cid) { _stopFileDlPoller(msgId); return; }
+    try {
+      const s = await api(`/api/hunter/candidates/${cid}/files/${msgId}/status`);
+      _hdDlStatus[msgId] = s;
+      _refreshHdFileRow(msgId);
+      if (s.state !== 'downloading') {
+        _stopFileDlPoller(msgId);
+        if (s.state === 'done') showToast(`✓ ${esc(t('hf.downloadDone'))}`, 1800);
+        if (s.state === 'error') showToast(`✗ ${esc(s.error || '')}`, 4500);
+      }
+    } catch(e) { _stopFileDlPoller(msgId); }
+  }, 1200);
+}
+
+function _stopFileDlPoller(msgId) {
+  if (_hdDlPollers[msgId]) {
+    clearInterval(_hdDlPollers[msgId]);
+    delete _hdDlPollers[msgId];
+  }
+}
+
+function _refreshHdFileRow(msgId) {
+  const li = document.querySelector(`#hd-file-ul li[data-msg="${msgId}"]`);
+  if (!li) return;
+  const actions = li.querySelector('.hf-actions');
+  if (!actions) return;
+  const dl = _hdDlStatus[msgId];
+  const dlState = dl ? dl.state : 'idle';
+  li.classList.remove('hf-downloading', 'hf-error');
+  if (dlState === 'downloading') {
+    li.classList.add('hf-downloading');
+    const pct = dl.progress != null ? Math.round(dl.progress * 100) : 0;
+    actions.innerHTML = `<span class="hf-progress">${pct}%</span>
+      <button class="hf-btn hf-btn-del" data-act="cancel" data-msg="${msgId}" title="${esc(t('hf.cancel'))}">✕</button>`;
+  } else if (dlState === 'done') {
+    actions.innerHTML = `<button class="hf-btn" data-act="open" data-msg="${msgId}" title="${esc(t('hf.open'))}">💾</button>
+      <button class="hf-btn hf-btn-del" data-act="delete" data-msg="${msgId}" title="${esc(t('hf.delete'))}">🗑</button>`;
+  } else if (dlState === 'error') {
+    li.classList.add('hf-error');
+    actions.innerHTML = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.retry'))}">↻</button>`;
+  } else if (dlState === 'needs_temp_join') {
+    actions.innerHTML = `<button class="hf-btn" data-act="downloadJoin" data-msg="${msgId}" title="${esc(t('hf.needsJoin'))}">🔒</button>`;
+  } else {
+    actions.innerHTML = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
+  }
+}
+
+function _showTempJoinConfirm(msgId, username) {
+  const msg = t('hf.tempJoinConfirm', {u: username || _currentDetailUsername || ''});
+  if (confirm(msg)) {
+    hfStartDownload(msgId, true);
+  } else {
+    _hdDlStatus[msgId] = { state: 'idle' };
+    _refreshHdFileRow(msgId);
+  }
+}
+
+function hfDownloadWithTempJoin(msgId) {
+  _showTempJoinConfirm(msgId, _currentDetailUsername || '');
+}
+
+async function hfCancelDownload(msgId) {
+  const cid = _currentDetailCid;
+  try { await api(`/api/hunter/candidates/${cid}/files/${msgId}/download/cancel`, { method: 'POST' }); }
+  catch(e) {}
+  _stopFileDlPoller(msgId);
+  _hdDlStatus[msgId] = { state: 'idle' };
+  _refreshHdFileRow(msgId);
+}
+
+function hfOpenDownloaded(msgId) {
+  const cid = _currentDetailCid;
+  const a = document.createElement('a');
+  a.href = `/api/hunter/candidates/${cid}/files/${msgId}/blob`;
+  a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+async function hfDeleteDownloaded(msgId) {
+  if (!confirm(t('hf.deleteConfirm'))) return;
+  const cid = _currentDetailCid;
+  try { await api(`/api/hunter/candidates/${cid}/files/${msgId}/blob`, { method: 'DELETE' }); }
+  catch(e) { showToast(`✗ ${esc(e.message || e)}`, 4000); return; }
+  _hdDlStatus[msgId] = { state: 'idle' };
+  _refreshHdFileRow(msgId);
 }
 
 function closeHunterDetail() {
   document.getElementById('hunter-detail-overlay').classList.remove('open');
   if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
+  // Drop any per-file download pollers so they don't keep ticking against a
+  // closed lightbox.
+  Object.keys(_hdDlPollers).forEach(k => _stopFileDlPoller(parseInt(k, 10)));
+  _hdDlStatus = {};
   _currentDetailCid = null;
   _hdScanState = null;
   _hdScanProcessed = 0;
