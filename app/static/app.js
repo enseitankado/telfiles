@@ -30,7 +30,7 @@ const S = {
   selectedGroups: new Set(),
   selectedDownloads: new Set(),
   hunterSelected: new Set(),
-  hunterLimit: 200,
+  hunterLimit: parseInt(localStorage.getItem('tf_hunter_limit') || '200', 10),
   hunterOffset: 0,
   hunterTotal: 0,
   dlSortBy: 'downloaded_at', dlSortDir: 'desc',
@@ -529,8 +529,8 @@ async function pollSync() {
     _syncStatusCache = s;
     applySyncStatusToUI();
     if (s.running) {
-      if (S.activeTab === 'files') loadFiles();
-      else if (S.activeTab === 'links') loadLinks();
+      if (S.activeTab === 'files') loadFiles(true);
+      else if (S.activeTab === 'links') loadLinks(true);
       _wasRunning = true;
     } else if (_wasRunning) {
       _wasRunning = false;
@@ -1292,7 +1292,7 @@ function debouncedLoad() {
   }, 280);
 }
 
-async function loadFiles() {
+async function loadFiles(silent = false) {
   const params = new URLSearchParams({
     q:         document.getElementById('col-name').value.trim(),
     ext:       S.extChip || document.getElementById('ext-input').value.trim() ||
@@ -1329,7 +1329,7 @@ async function loadFiles() {
   if (smin != null && !isNaN(smin)) params.set('size_min', Math.round(smin * 1048576));
   if (smax != null && !isNaN(smax)) params.set('size_max', Math.round(smax * 1048576));
 
-  _paintGridLoading('files-body', 9);
+  if (!silent) _paintGridLoading('files-body', 9);
   const data = await api('/api/files?'+params);
 
   if (S.sliderMax===0) {
@@ -1515,6 +1515,13 @@ function showToast(html, ms = 4000) {
   }, ms);
 }
 
+function _updateFileDlCell(fileId, fakef) {
+  const cb = document.querySelector(`#files-body .row-chk[data-fid="${fileId}"]`);
+  if (!cb) return;
+  const dlTd = cb.closest('tr')?.children[7];
+  if (dlTd) dlTd.innerHTML = dlState(fakef);
+}
+
 function pollDownload(fileId) {
   if (S.polls[fileId]) return;
   S.polls[fileId] = setInterval(async () => {
@@ -1530,13 +1537,13 @@ function pollDownload(fileId) {
       clearInterval(S.polls[fileId]); delete S.polls[fileId];
       if (entry) { entry.pct = 100; entry.status = 'done'; }
       if (S.activeTab === 'downloads') loadDownloadsList();
-      loadFiles();
+      _updateFileDlCell(fileId, { local_path: f.local_path });
     } else if (f.downloading) {
       const pct = Math.round(f.download_progress*100);
       S.dlQueue[fileId] = pct;
       if (entry) { entry.pct = pct; entry.status = 'downloading'; }
       if (S.activeTab === 'downloads') renderDownloadsTab();
-      loadFiles();
+      _updateFileDlCell(fileId, { downloading: true, download_progress: f.download_progress });
     }
   }, 2000);
 }
@@ -1817,7 +1824,7 @@ function debouncedLoadLinks() {
   _debounceLinksTimer = setTimeout(loadLinks, 280);
 }
 
-async function loadLinks() {
+async function loadLinks(silent = false) {
   const v  = (id) => (document.getElementById(id)?.value || '').trim();
   const p  = new URLSearchParams({
     q:        v('link-search'),
@@ -1837,7 +1844,7 @@ async function loadLinks() {
   const dfrom = v('lcol-date-from');   if (dfrom) p.set('date_from', dfrom);
   const dto   = v('lcol-date-to');     if (dto)   p.set('date_to',   dto);
 
-  _paintGridLoading('links-body', 8);
+  if (!silent) _paintGridLoading('links-body', 8);
   const data = await api('/api/links?' + p);
   renderLinks(data.links);
   const lc = document.getElementById('link-flt-count');
@@ -3032,6 +3039,7 @@ function hunterSetLimit(v) {
   if (!Number.isFinite(lim) || lim <= 0) return;
   S.hunterLimit = lim;
   S.hunterOffset = 0;
+  try { localStorage.setItem('tf_hunter_limit', lim); } catch (e) {}
   hunterReloadCandidates();
 }
 
