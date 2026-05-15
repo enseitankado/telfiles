@@ -246,6 +246,11 @@ ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS tg_temp_join_enabled BOOLEA
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS learned_keywords TEXT DEFAULT '';
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS peer_id BIGINT;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS access_hash BIGINT;
+-- "Adlı dosya" mı, "doğal Telegram medyası" mı (sesli mesaj, kamera
+-- videosu, sticker, animasyon vb.) — kullanıcı bunu kanal kalite
+-- değerlendirmesinde görmek istiyor. TRUE = DocumentAttributeFilename
+-- mevcuttu = gerçek dosya paylaşımı; FALSE = sentetik isim ürettik.
+ALTER TABLE hunter_candidate_files ADD COLUMN IF NOT EXISTS is_named BOOLEAN DEFAULT TRUE;
 
 -- Backfill: eski Stage 3 / deep-scan kayıtları DocumentAttributeFilename
 -- olmayan Telegram dokümanları için NULL file_name yazıyordu (kameradan
@@ -269,8 +274,17 @@ SET file_name = CASE
             COALESCE('.' || NULLIF(file_ext, ''), '')
         ELSE                              'file_' || message_id ||
             COALESCE('.' || NULLIF(file_ext, ''), '')
-    END
+    END,
+    is_named = FALSE
 WHERE file_name IS NULL OR file_name = '';
+
+-- Daha önce backfill koşmuş kurulumlar için: yapay isim formatına uyan
+-- ama is_named hâlâ TRUE olan satırları yakalayıp düzelt. Pattern:
+-- (video|audio|image|file|archive|document|app)_<sayı>(\.<ext>)?
+UPDATE hunter_candidate_files
+SET is_named = FALSE
+WHERE is_named = TRUE
+  AND file_name ~ '^(video|audio|image|file|archive|document|app)_[0-9]+(\.[A-Za-z0-9]+)?$';
 
 CREATE TABLE IF NOT EXISTS watch_terms (
     id SERIAL PRIMARY KEY,
@@ -1694,14 +1708,15 @@ async def hunter_lookups_today() -> int:
 
 async def insert_candidate_file(candidate_id: int, message_id: int, file_name: Optional[str],
                                  file_ext: Optional[str], file_size: int,
-                                 file_group: Optional[str], date) -> bool:
+                                 file_group: Optional[str], date,
+                                 is_named: bool = True) -> bool:
     try:
         await _exec(
             """INSERT INTO hunter_candidate_files
-               (candidate_id, message_id, file_name, file_ext, file_size, file_group, date)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)
+               (candidate_id, message_id, file_name, file_ext, file_size, file_group, date, is_named)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                ON CONFLICT (candidate_id, message_id) DO NOTHING""",
-            candidate_id, message_id, file_name, file_ext, file_size, file_group, date,
+            candidate_id, message_id, file_name, file_ext, file_size, file_group, date, is_named,
         )
         return True
     except Exception:
@@ -1755,7 +1770,7 @@ async def list_candidate_files(candidate_id: int, *, q: str = "", ext: str = "",
     args.extend([limit, offset])
     rows = await _q(
         f"""SELECT message_id, file_name, file_ext, file_size, file_group, date,
-                   local_path, downloaded_at
+                   local_path, downloaded_at, is_named
             FROM hunter_candidate_files
             WHERE {wsql}
             ORDER BY {col} {direction} NULLS LAST
@@ -1771,7 +1786,11 @@ async def candidate_file_summary(candidate_id: int) -> Dict:
                   COALESCE(SUM(file_size), 0) AS total_size,
                   COALESCE(AVG(file_size), 0) AS avg_size,
                   MAX(date) AS last_date,
-                  MIN(date) AS first_date
+                  MIN(date) AS first_date,
+                  COUNT(*) FILTER (WHERE is_named) AS named_count,
+                  COUNT(*) FILTER (WHERE NOT is_named) AS ephemeral_count,
+                  COALESCE(SUM(file_size) FILTER (WHERE is_named), 0) AS named_size,
+                  COALESCE(SUM(file_size) FILTER (WHERE NOT is_named), 0) AS ephemeral_size
            FROM hunter_candidate_files WHERE candidate_id = $1""",
         candidate_id,
     )

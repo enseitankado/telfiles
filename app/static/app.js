@@ -3415,8 +3415,25 @@ async function refreshHdFiles() {
 
   const arr = (col) => _hdFilesSortBy === col ? (_hdFilesSortDir==='asc' ? '▲' : '▼') : '▲▼';
 
+  // Adlı vs doğal-medya kırılımı: kullanıcı kanalı üye-olmadan-önce
+  // değerlendirirken bunu görmek istiyor. Çoğunluğu sesli mesaj/kamera
+  // videosu olan bir kanal genelde sohbet grubu; çoğunluğu adlı dosya
+  // olan bir kanal asıl dosya paylaşım kanalı.
+  const named     = +summary.named_count     || 0;
+  const ephemeral = +summary.ephemeral_count || 0;
+  const namedSz   = +summary.named_size      || 0;
+  const ephemSz   = +summary.ephemeral_size  || 0;
+  const namedPct  = total > 0 ? Math.round((named / total) * 100) : 0;
+  const ephemPct  = total > 0 ? (100 - namedPct) : 0;
+  const breakdownLine = total > 0
+    ? `<span class="hd-kind-bar" title="Adlı dosya: kullanıcı tarafından bilinçli yüklenmiş, gerçek isim taşıyor. Doğal medya: sesli mesaj, kamera videosu, sticker, animasyon vb. Telegram'ın native medya tipleri.">
+         <span class="hd-kind hd-kind-named"   title="Adlı (gerçek) dosya">📄 ${named.toLocaleString()} adlı (${namedPct}%) · ${fmtSize(namedSz)}</span>
+         <span class="hd-kind hd-kind-ephem" title="Doğal Telegram medyası">🎤 ${ephemeral.toLocaleString()} doğal (${ephemPct}%) · ${fmtSize(ephemSz)}</span>
+       </span>`
+    : '';
   let body = `<div class="hd-files-bar">
     <span class="hd-files-meta">${esc(t('hd.totalFiles', {n: total.toLocaleString(), size: fmtSize(totalSize)}))}</span>
+    ${breakdownLine}
     <span class="hd-files-meta" id="hd-deep-state"></span>
   </div>`;
 
@@ -3474,7 +3491,11 @@ function _renderHdFileRow(f) {
   } else {
     actionsHtml = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
   }
-  return `<li class="hf-row${liExtraClass}" data-msg="${msgId}">
+  const kindBadge = (f.is_named === false)
+    ? `<span class="hf-kind hf-kind-ephem" title="Doğal Telegram medyası — sesli mesaj, kamera videosu, sticker veya animasyon. Gerçek bir dosya değil; ismi mesaj id'sinden türetildi.">🎤</span>`
+    : `<span class="hf-kind hf-kind-named" title="Adlı dosya — kanal sahibi bilinçli olarak yükledi.">📄</span>`;
+  return `<li class="hf-row${liExtraClass}${f.is_named === false ? ' hf-ephem' : ''}" data-msg="${msgId}">
+    ${kindBadge}
     <span class="hf-name" title="${esc(f.file_name||'')}">${esc(f.file_name || '—')}</span>
     <span class="hf-size">${fmtSize(f.file_size||0)}</span>
     <span class="hf-date">${f.date ? fmtDate(f.date).substring(0,16) : '—'}</span>

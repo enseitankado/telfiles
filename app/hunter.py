@@ -1173,7 +1173,7 @@ _FILE_GROUPS = {
 }
 
 
-def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool]:
+def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool, bool]:
     """Best-effort filename + extension from a Telethon document.
 
     Telegram does NOT require a filename attribute. Voice messages,
@@ -1182,13 +1182,20 @@ def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool]:
     `attr.file_name` path returns None and we used to write NULL into
     hunter_candidate_files — showing up in the UI as `—`.
 
-    Fallback chain:
+    Fallback chain for the name:
       1. DocumentAttributeFilename.file_name              (primary)
       2. DocumentAttributeAudio.title (+ performer)       (tagged audio)
       3. f"<group>_<msg_id>.<ext>"                        (synthetic)
 
-    Returns (fname, ext, is_video, is_audio). `fname` is never None when
-    the document had any usable metadata at all.
+    Returns (fname, ext, is_video, is_audio, is_named).
+    `is_named` = TRUE when the doc carried real authoring metadata
+    (filename attr OR audio title) — i.e. someone explicitly uploaded
+    this as a file. FALSE means we had to synthesise the name from
+    the message id; the document is most likely Telegram-native
+    ephemeral media: a voice message, camera-uploaded video, sticker,
+    animated GIF, etc. The user wants this distinction surfaced so
+    that channels whose 'file' counts are mostly voice notes can be
+    spotted and rejected before joining.
     """
     fname = None
     is_video = is_audio = False
@@ -1203,6 +1210,9 @@ def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool]:
             is_audio = True
             audio_title = getattr(attr, "title", None)
             audio_performer = getattr(attr, "performer", None)
+
+    # Was this an authored file? (filename attr OR tagged audio with title)
+    is_named = bool(fname) or bool(audio_title)
 
     ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
     if not ext:
@@ -1229,7 +1239,7 @@ def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool]:
             grp_for_ext = _file_group(ext)
             fname = (f"{grp_for_ext}_{msg_id}.{ext}" if ext
                      else f"file_{msg_id}")
-    return fname, ext, is_video, is_audio
+    return fname, ext, is_video, is_audio, is_named
 
 
 def _file_group(ext: str) -> str:
@@ -1325,7 +1335,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                 file_count += 1
                 size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
-                fname, ext, _is_video, _is_audio = _doc_filename(doc, msg.id)
+                fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 # Stage 3 örnekleminde gördüğümüz dosyaları DB'ye yaz —
@@ -1339,6 +1349,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                 try:
                     await database.insert_candidate_file(
                         candidate_id, msg.id, fname, ext, size, grp, msg_date,
+                        is_named=is_named,
                     )
                 except Exception:
                     pass
@@ -1789,7 +1800,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                 n += 1
                 size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
-                fname, ext, _is_video, _is_audio = _doc_filename(doc, msg.id)
+                fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 date = msg.date
@@ -1799,6 +1810,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                     last_at = date
                 await database.insert_candidate_file(
                     candidate_id, msg.id, fname, ext, size, grp, date,
+                    is_named=is_named,
                 )
                 if n % 25 == 0:
                     deep_scan_status[candidate_id] = {

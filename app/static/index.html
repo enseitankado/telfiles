@@ -707,6 +707,17 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hd-files-bar input{padding:4px 8px;border:1px solid var(--input-border);border-radius:5px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none;flex:1;min-width:120px}
 .hd-files-bar input:focus{border-color:var(--accent)}
 .hd-files-meta{font-size:.72rem;color:var(--text-3);white-space:nowrap}
+/* Adlı dosya vs Doğal medya kırılımı — kullanıcı kanal kalitesine
+   buradan bakacak; net kontrast lazım. */
+.hd-kind-bar{display:inline-flex;gap:8px;align-items:center;cursor:help}
+.hd-kind{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:11px;font-size:.7rem;font-weight:600;white-space:nowrap}
+.hd-kind-named{background:#dcfce7;color:#166534}
+.hd-kind-ephem{background:#fef3c7;color:#92400e}
+[data-theme="dark"] .hd-kind-named{background:#14532d;color:#bbf7d0}
+[data-theme="dark"] .hd-kind-ephem{background:#451a03;color:#fed7aa}
+.hf-kind{flex-shrink:0;font-size:.85rem;width:18px;text-align:center;cursor:help}
+.hf-kind-ephem{opacity:.65}
+.hd-file-list li.hf-ephem .hf-name{color:var(--text-3);font-style:italic}
 .hd-files-progress{display:inline-flex;align-items:center;gap:8px}
 .hd-files-progress .hd-bar{flex:1;height:6px;background:var(--border-2);border-radius:3px;overflow:hidden}
 .hd-files-progress .hd-bar-fill{height:100%;background:var(--accent);transition:width .3s}
