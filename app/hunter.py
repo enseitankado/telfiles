@@ -17,6 +17,7 @@ All stages honor user-configurable concurrency, request delays, and
 daily caps. A FloodWait raises a backoff that is logged and respected.
 """
 import asyncio
+import os
 import json
 import logging
 import re
@@ -55,11 +56,62 @@ status: dict = {
 }
 
 
+# ── Event persistence ────────────────────────────────────────────────────────
+# Each accepted event is appended to a JSONL file on the data volume so the UI
+# can render history after a container restart. The in-memory list and the
+# file are both capped at the same MAX_EVENTS sliding window.
+_EVENTS_LOG_PATH = os.path.join(
+    os.environ.get("DATA_DIR", "/app/data"), "hunter_events.jsonl"
+)
+_MAX_EVENTS = 500
+_emit_writes = 0  # how many appends since last compaction
+
+
+def _load_persisted_events() -> None:
+    """Tail-read up to _MAX_EVENTS rows from the persisted log into the
+    in-memory status["events"] on process start. Best-effort: any IO/parse
+    error just leaves the list empty."""
+    try:
+        if not os.path.exists(_EVENTS_LOG_PATH):
+            return
+        with open(_EVENTS_LOG_PATH, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            # Read at most the last 512 KB; plenty for 500 short lines.
+            f.seek(max(0, size - 512 * 1024))
+            chunk = f.read().decode("utf-8", errors="ignore")
+        lines = [ln for ln in chunk.splitlines() if ln.strip()][-_MAX_EVENTS:]
+        out = []
+        for ln in lines:
+            try:
+                out.append(json.loads(ln))
+            except Exception:
+                continue
+        status["events"] = out
+    except Exception:
+        pass
+
+
+def _compact_events_file() -> None:
+    """Rewrite the JSONL file with just the current in-memory tail. Cheap
+    enough to run periodically (every _MAX_EVENTS appends)."""
+    try:
+        tmp = _EVENTS_LOG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for ev in status["events"][-_MAX_EVENTS:]:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        os.replace(tmp, _EVENTS_LOG_PATH)
+    except Exception:
+        pass
+
+
 def _emit_event(stage: str, msg: str, level: str = "info", *, key: str = None, params: dict = None):
     """Append to rolling event log; cap at 500 across runs.
 
-    `key` + `params` let the frontend render a localized message via i18n.js.
-    `msg` is kept as a fallback (and for backend logs / debugging)."""
+    Persists each event to a JSONL on disk so the UI keeps its history after
+    a container restart. `key` + `params` let the frontend render a localized
+    message via i18n.js; `msg` is kept as a fallback (and for backend logs)."""
+    global _emit_writes
     try:
         ev = {
             "ts": datetime.utcnow().isoformat(),
@@ -70,8 +122,22 @@ def _emit_event(stage: str, msg: str, level: str = "info", *, key: str = None, p
             if params:
                 ev["params"] = params
         status["events"].append(ev)
-        if len(status["events"]) > 500:
-            status["events"] = status["events"][-500:]
+        if len(status["events"]) > _MAX_EVENTS:
+            status["events"] = status["events"][-_MAX_EVENTS:]
+        # Append a single line to the persisted log.
+        try:
+            os.makedirs(os.path.dirname(_EVENTS_LOG_PATH), exist_ok=True)
+            with open(_EVENTS_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+            _emit_writes += 1
+            # Compact every MAX_EVENTS appends so the file doesn't grow
+            # without bound (the tail-reader can handle a large file, but
+            # compaction keeps cold-boot fast and disk usage tidy).
+            if _emit_writes >= _MAX_EVENTS:
+                _compact_events_file()
+                _emit_writes = 0
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -152,6 +218,11 @@ _NON_CHANNEL_USERNAMES: Set[str] = {
 
 _running_lock = asyncio.Lock()
 _run_task: Optional[asyncio.Task] = None
+
+# Restore the activity log from disk before any event arrives this session, so
+# a fresh UI refresh after a container restart still sees the previous run's
+# detail. Best-effort: failure leaves the list empty (same as today).
+_load_persisted_events()
 
 
 def _normalize_username(u: str) -> Optional[str]:
