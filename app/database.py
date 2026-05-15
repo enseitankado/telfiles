@@ -227,6 +227,12 @@ CREATE INDEX IF NOT EXISTS idx_hunter_files_cand ON hunter_candidate_files (cand
 CREATE INDEX IF NOT EXISTS idx_hunter_files_date ON hunter_candidate_files (date DESC);
 CREATE INDEX IF NOT EXISTS idx_hunter_files_ext  ON hunter_candidate_files (file_ext);
 
+-- Per-file local download metadata: when the user clicks 📥 on a row in the
+-- candidate detail lightbox, we save the file under DOWNLOADS_DIR/<username>/
+-- and store the absolute path here so subsequent UI loads can show "✓ Open".
+ALTER TABLE hunter_candidate_files ADD COLUMN IF NOT EXISTS local_path TEXT;
+ALTER TABLE hunter_candidate_files ADD COLUMN IF NOT EXISTS downloaded_at TIMESTAMPTZ;
+
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_status TEXT;          -- NULL | 'queued' | 'running' | 'done' | 'error'
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_progress INTEGER DEFAULT 0;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_total INTEGER DEFAULT 0;
@@ -240,6 +246,31 @@ ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS tg_temp_join_enabled BOOLEA
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS learned_keywords TEXT DEFAULT '';
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS peer_id BIGINT;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS access_hash BIGINT;
+
+-- Backfill: eski Stage 3 / deep-scan kayıtları DocumentAttributeFilename
+-- olmayan Telegram dokümanları için NULL file_name yazıyordu (kameradan
+-- yüklenen videolar, sesli mesajlar, taglı audio, animasyonlar). UI bu
+-- satırları "—" olarak gösteriyordu. Yeni ingestion artık sentetik isim
+-- yazıyor (video_{msg_id}.mp4 vb.) — geçmiş satırları aynı şablonla
+-- doldur.
+UPDATE hunter_candidate_files
+SET file_name = CASE
+        WHEN file_group = 'video'    THEN 'video_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '.mp4')
+        WHEN file_group = 'audio'    THEN 'audio_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '.mp3')
+        WHEN file_group = 'image'    THEN 'image_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '.jpg')
+        WHEN file_group = 'archive'  THEN 'archive_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '')
+        WHEN file_group = 'document' THEN 'document_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '')
+        WHEN file_group = 'software' THEN 'app_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '')
+        ELSE                              'file_' || message_id ||
+            COALESCE('.' || NULLIF(file_ext, ''), '')
+    END
+WHERE file_name IS NULL OR file_name = '';
 
 CREATE TABLE IF NOT EXISTS watch_terms (
     id SERIAL PRIMARY KEY,
@@ -1677,6 +1708,35 @@ async def insert_candidate_file(candidate_id: int, message_id: int, file_name: O
         return False
 
 
+async def get_candidate_file(candidate_id: int, message_id: int) -> Optional[Dict]:
+    row = await _qrow(
+        """SELECT candidate_id, message_id, file_name, file_ext, file_size,
+                  file_group, date, local_path, downloaded_at
+           FROM hunter_candidate_files
+           WHERE candidate_id = $1 AND message_id = $2""",
+        candidate_id, message_id,
+    )
+    return dict(row) if row else None
+
+
+async def set_candidate_file_local_path(candidate_id: int, message_id: int, path: str) -> None:
+    await _exec(
+        """UPDATE hunter_candidate_files
+           SET local_path = $3, downloaded_at = NOW()
+           WHERE candidate_id = $1 AND message_id = $2""",
+        candidate_id, message_id, path,
+    )
+
+
+async def clear_candidate_file_local_path(candidate_id: int, message_id: int) -> None:
+    await _exec(
+        """UPDATE hunter_candidate_files
+           SET local_path = NULL, downloaded_at = NULL
+           WHERE candidate_id = $1 AND message_id = $2""",
+        candidate_id, message_id,
+    )
+
+
 async def list_candidate_files(candidate_id: int, *, q: str = "", ext: str = "",
                                 sort_by: str = "date", sort_dir: str = "desc",
                                 limit: int = 200, offset: int = 0) -> Tuple[List[Dict], int]:
@@ -1694,7 +1754,8 @@ async def list_candidate_files(candidate_id: int, *, q: str = "", ext: str = "",
     total = await _qval(f"SELECT COUNT(*) FROM hunter_candidate_files WHERE {wsql}", *args) or 0
     args.extend([limit, offset])
     rows = await _q(
-        f"""SELECT message_id, file_name, file_ext, file_size, file_group, date
+        f"""SELECT message_id, file_name, file_ext, file_size, file_group, date,
+                   local_path, downloaded_at
             FROM hunter_candidate_files
             WHERE {wsql}
             ORDER BY {col} {direction} NULLS LAST
