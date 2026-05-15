@@ -2996,6 +2996,8 @@ function renderHunterPager() {
     <span style="flex:1"></span>
     <label style="display:inline-flex;align-items:center;gap:6px">Sayfa başı:
       <select onchange="hunterSetLimit(this.value)">
+        <option value="20"${limit===20?' selected':''}>20</option>
+        <option value="50"${limit===50?' selected':''}>50</option>
         <option value="100"${limit===100?' selected':''}>100</option>
         <option value="200"${limit===200?' selected':''}>200</option>
         <option value="500"${limit===500?' selected':''}>500</option>
