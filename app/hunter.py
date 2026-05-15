@@ -1264,7 +1264,8 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             if msg.document:
                 doc = msg.document
                 file_count += 1
-                total_size += int(getattr(doc, "size", 0) or 0)
+                size = int(getattr(doc, "size", 0) or 0)
+                total_size += size
                 # Prefer the filename attribute; fall back to mime-derived
                 # extension for video/audio documents that ship without a
                 # filename (common when channels re-encode uploads).
@@ -1286,7 +1287,22 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                         ext = "mp4"
                     elif is_audio:
                         ext = "mp3"
-                breakdown[_file_group(ext)] += 1
+                grp = _file_group(ext)
+                breakdown[grp] += 1
+                # Stage 3 örnekleminde gördüğümüz dosyaları DB'ye yaz —
+                # böylece kullanıcı adayın lightbox'ını açtığında dosya
+                # listesi anında dolu gelir, online tekrar çağrı gerekmez.
+                # Deep Scan daha sonra eksik geçmişi doldurur. ON CONFLICT
+                # DO NOTHING idempotent kılar.
+                msg_date = msg.date
+                if msg_date and msg_date.tzinfo is None:
+                    msg_date = msg_date.replace(tzinfo=timezone.utc)
+                try:
+                    await database.insert_candidate_file(
+                        candidate_id, msg.id, fname, ext.lower(), size, grp, msg_date,
+                    )
+                except Exception:
+                    pass
             elif isinstance(msg.media, MessageMediaPhoto):
                 file_count += 1
                 breakdown[_file_group("jpg")] += 1
