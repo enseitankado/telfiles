@@ -19,35 +19,54 @@ LANGS = [
 ]
 
 TABS = [
-    ("files",    "02-files"),
-    ("hunter",   "03-hunter"),
-    ("links",    "04-links"),
-    ("settings", "05-settings"),
-    ("status",   "06-status"),
+    ("files",    "02-files",    None),
+    ("hunter",   "03-hunter",   None),
+    ("links",    "04-links",    None),
+    ("settings", "05-settings", None),
+    ("status",   "06-status",   "#status-panel .st-cards"),
 ]
+
 
 def login(page):
     page.goto(BASE_URL, wait_until="networkidle")
-    # greeter may already be shown or need a moment
     try:
         page.wait_for_selector("#ug-pass", timeout=8000)
         page.fill("#ug-pass", PASSWORD)
         page.click("#ui-greeter button")
         page.wait_for_selector("#ui-greeter", state="hidden", timeout=8000)
     except PWTimeout:
-        pass  # already logged in (session cookie)
+        pass
+
+
+def dismiss_notifications(page):
+    """Close any toast/update notifications that may overlap content."""
+    try:
+        page.evaluate("""
+            document.querySelectorAll(
+                '.toast, .update-banner, [id*="update"], [class*="update-notice"]'
+            ).forEach(el => el.remove());
+        """)
+    except Exception:
+        pass
 
 
 def set_language(page, lang_code):
     page.evaluate(f"localStorage.setItem('lang', '{lang_code}')")
     page.reload(wait_until="networkidle")
-    # wait for a known translated element to appear
     page.wait_for_selector(".tab-btn", timeout=8000)
 
 
-def switch_tab(page, tab):
+def switch_tab(page, tab, ready_selector=None):
     page.evaluate(f"switchTab('{tab}')")
-    page.wait_for_timeout(900)  # let data load / animations settle
+    if ready_selector:
+        try:
+            page.wait_for_selector(ready_selector, timeout=12000)
+        except PWTimeout:
+            pass
+        page.wait_for_timeout(600)
+    else:
+        page.wait_for_timeout(900)
+    dismiss_notifications(page)
 
 
 def screenshot(page, path: Path):
@@ -65,7 +84,6 @@ def main():
         ctx = browser.new_context(viewport={"width": 1440, "height": 860})
         page = ctx.new_page()
 
-        # --- initial login (establishes session cookie) ---
         login(page)
 
         for lang_code, lang_name in LANGS:
@@ -75,8 +93,8 @@ def main():
 
             set_language(page, lang_code)
 
-            for tab_id, filename in TABS:
-                switch_tab(page, tab_id)
+            for tab_id, filename, ready_sel in TABS:
+                switch_tab(page, tab_id, ready_sel)
                 screenshot(page, lang_dir / f"{filename}.png")
 
         browser.close()
