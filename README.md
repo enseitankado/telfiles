@@ -1,31 +1,32 @@
+<p align="center">
+  <img src="docs/banner.png" alt="TelFiles — Telegram dosya ve link indeksleyici" width="100%">
+</p>
+
 # TelFiles
 
-TelFiles, **Telegram'daki grup ve kanallarda paylaşılan dosyaları ve bağlantıları sizin için tek bir yerde toplayan** bir programdır. Kendi bilgisayarınızda çalışır; topladığı bilgileri başka kimseyle paylaşmaz.
+**Kendi Telegram hesabınızla** üye olduğunuz grup ve kanalları arka planda gezer; karşılaştığı her dosyayı ve her bağlantıyı yerel bir PostgreSQL veritabanında indeksler. Tarayıcıdan açtığınız tek bir arayüzden arar, sıralar, filtreler ve istediğinizi tek tıkla bilgisayarınıza indirirsiniz.
 
-Telegram hesabınızla giriş yaptığınızda, üyesi olduğunuz tüm grup ve kanalları arka planda tek tek gezer. Karşılaştığı her dosyayı (adı, boyutu, türü) ve her bağlantıyı kendi listenize ekler. Sonra tarayıcınızdan bu listeyi açıp arama yapabilir, sıralayabilir ve istediğiniz dosyayı tek tıkla bilgisayarınıza indirebilirsiniz.
-
-İlgilendiğiniz kelimeleri önceden tanımlarsanız (örneğin "fatura 2025"), o kelimeler bir dosya adında geçtiğinde program size haber verir; siz kanalları tek tek takip etmek zorunda kalmazsınız.
-
-Ayrıca **Kanal Avcısı** adlı bir özellik, sizin için yeni ve dosya bakımından zengin kanallar arar: hâlihazırda üye olduğunuz kanallardaki ipuçlarından ve internetteki açık Telegram dizinlerinden hareketle aday kanal listesi çıkarır, her birini puanlar ve "katılayım mı?" diye size sunar.
+Bonus: **Kanal Avcısı** — dosya bakımından zengin yeni kanalları arar, puanlar ve önünüze getirir.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 ```
 
-> Debian/Ubuntu/Kali — tüm bağımlılıkları kurar, container'ları ayağa kaldırır, erişim URL'sini ve `admin` parolasını yazdırır. Ayrıntı için [Hızlı başlangıç](#-hızlı-başlangıç).
+> Debian / Ubuntu / Kali / Pardus / Mint. Tek satır; Docker yoksa kurar, container'ları ayağa kaldırır, erişim URL'sini yazdırır.
 
 ---
 
-## ✨ Özellikler
+## ✨ Öne çıkan özellikler
 
-- **Çoklu hesap** — birden fazla Telegram hesabı ekleyip aynı veritabanı altında birleştirilmiş bir görünüm elde edin.
-- **Dosya & bağlantı indeksleme** — geçmiş mesajlardan tüm dosya ve linkleri arka planda toplar; yeni gelenler gerçek zamanlı olarak yakalanır.
-- **Hızlı arama** — ad, tip, boyut, kanal, tarih bazlı filtre + sıralama.
-- **Kanal Avcısı** — TGStat, Telemetr.io, Combot, tdirectory, tlgrm, çeşitli search engine ve Telegram dizinleri üzerinden dosya bakımından zengin yeni kanalları otomatik keşfeder, skorlar ve "katıl" kuyruğuna ekler.
-- **İzleme kelimeleri** — dosya adlarında belirli kelime kombinasyonları görüldüğünde bildirim üretir (AND mantığı).
-- **İndirici** — UI'dan tek tıkla dosyaları yerel diske indirir; eş zamanlı indirme kuyruğu ve duraklat/devam et desteği.
-- **Çok dilli arayüz** — Türkçe, İngilizce, Almanca, Rusça, Çince.
-- **Tek dosya Docker Compose dağıtımı** — `up -d` yeter.
+- **Çok hesap** — birden fazla Telegram hesabını tek görünümde birleştirir.
+- **Tam arşiv erişimi** — geçmiş mesajları sayfa sayfa tarar, yeni gelenleri realtime yakalar.
+- **Dosyalar & Linkler için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma.
+- **Kanal Avcısı** — 3 aşamalı keşif: (1) iç linklerden mining, (2) 22 web kaynağı (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + 8 arama motoru + Reddit / HN / GitHub), (3) Telegram'dan örnek mesaj sample'ıyla zenginleştirme & skorlama.
+- **Önce dene, sonra karar ver** — aday kanalın belirli bir dosyasını **üye olmadan** önizleyip indirir; sadece gerekirse onay vererek "temp-join → indir → ayrıl" yapar.
+- **İzleme kelimeleri** — `fatura 2025` gibi terim setleri tanımlarsınız; eşleşen dosya geldiğinde bildirim oluşur (AND mantığı, dosya-adı bazlı).
+- **Anonim telemetri** — opsiyonel, sadece kanal username + üye sayısı + dosya sayısı; mesaj/IP/kimlik yok. Tek tık kapatılır.
+- **5 dil** — Türkçe, English, Deutsch, Русский, 中文.
+- **Tek `up -d`** — Docker Compose. Veriler host volume'unda; container'ı silseniz veriniz kalır.
 
 ---
 
@@ -33,166 +34,110 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/02-files.png"><img src="docs/screenshots/02-files.png" alt="Dosyalar sekmesi"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, çoklu filtre, tip kategorileri.</td>
-<td width="50%"><a href="docs/screenshots/03-hunter.png"><img src="docs/screenshots/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — yeni file-rich kanalların otomatik keşfi, skorlama, derin tarama.</td>
+<td width="50%"><a href="docs/screenshots/02-files.png"><img src="docs/screenshots/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı.</td>
+<td width="50%"><a href="docs/screenshots/03-hunter.png"><img src="docs/screenshots/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, kolon başına sıralama, satır tıklayınca açılan detay lightbox'ında dosya önizleme.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/04-links.png"><img src="docs/screenshots/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive, Mega, MediaFire ve onlarca platformdan parse edilmiş bağlantılar.</td>
-<td><a href="docs/screenshots/06-status.png"><img src="docs/screenshots/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform bazlı link istatistikleri.</td>
+<td><a href="docs/screenshots/04-links.png"><img src="docs/screenshots/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, erişilebilirlik kontrolü.</td>
+<td><a href="docs/screenshots/06-status.png"><img src="docs/screenshots/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, RAM / disk kullanımı.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/05-settings.png"><img src="docs/screenshots/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, hesap & tema, izleme kelimeleri, çok dil.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/05-settings.png"><img src="docs/screenshots/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, izleme kelimeleri, dil & tema, parola.</td>
 </tr>
 </table>
 
 ---
 
-## 🧱 Teknoloji yığını
-
-| Katman | Teknoloji |
-|---|---|
-| Backend | Python 3.12 · FastAPI · Uvicorn |
-| Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto client) |
-| DB | PostgreSQL 16 · asyncpg |
-| HTTP istemci | aiohttp (brotli destekli) |
-| Frontend | Vanilla JS · CSS · HTML (build adımı yok) |
-| Dağıtım | Docker Compose |
-
----
-
 ## 🚀 Hızlı başlangıç
 
-### Önkoşullar
-
-- Debian tabanlı Linux dağıtımı (Debian, Ubuntu, Kali, Mint, …)
-- [my.telegram.org](https://my.telegram.org) üzerinden alınmış bir `API_ID` + `API_HASH`
-
-### Tek satırlık kurulum
+**Gereken:** Debian tabanlı Linux + [my.telegram.org](https://my.telegram.org) üzerinden alınmış `API_ID` & `API_HASH`.
 
 ```bash
+# 1) Tek satırlık kurulum
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
-```
 
-Bu betik şunları yapar:
+# 2) Scripted (CI / hazır env)
+TELEGRAM_API_ID=12345 TELEGRAM_API_HASH=abcdef… NONINTERACTIVE=1 \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh)"
 
-- Docker Engine + Compose plugin'i (yoksa) yükler
-- Depoyu `./telfiles/` altına klonlar
-- Telegram `API_ID` / `API_HASH` değerlerini interaktif sorar (boş bırakabilirsiniz)
-- Container'ları inşa edip ayağa kaldırır
-- 8765 portu doluysa otomatik olarak bir sonraki boş porta geçer
-- Sonunda erişim URL'sini ve giriş parolasını ekrana basar
-
-**İlk giriş — iki aşamalı**:
-
-1. **Arabirim parolası**: İlk açılışta `admin` parolasıyla giriş yapın. Ayarlar → Hesap → Arabirim Parolası ekranından değiştirin (zorunlu).
-2. **Telegram hesabı**: Giriş yaptıktan sonra karşınıza telefon numarası soran bir form çıkar. Bu, programın kendi paneline değil — TelFiles'ın **sizin Telegram hesabınızla** Telegram'a bağlanması içindir. Bu adım olmadan grup ve kanallarınızdaki dosyalar görüntülenemez.
-   - Telefon numaranızı uluslararası formatta girin (örn. `+9055xxxxxxxx`)
-   - **Kod gönder** → Telegram resmi uygulamasına bir doğrulama kodu gelir (SMS değil, uygulama içi mesaj)
-   - Kodu girip onaylayın; iki adımlı doğrulama (2FA) tanımlıysa parolanız da sorulur
-   - Bağlantı kurulunca arka planda dosya taraması otomatik başlar
-
-> **Önemli**: Telegram bağlantısı için `.env` dosyasında `TELEGRAM_API_ID` ve `TELEGRAM_API_HASH` değerlerinin **dolu olması** gerekir. Kurulum sırasında boş bıraktıysanız "Kod gönder" hata verir veya **No credentials configured for account 1** mesajı gösterilir. Çözüm: [my.telegram.org](https://my.telegram.org) → API Development Tools'dan kimlik bilgilerini alın, projenin kök dizininde `.env` dosyasını düzenleyin, sonra `sudo docker compose restart telfiles-app` çalıştırın.
-
-**Güncelleme**: Program her açılışta GitHub'daki en yeni sürümü kontrol eder; yeni sürüm varsa sağ alt köşede küçük bir bilgi kutusu çıkar. Güncellemek için aynı kurulum komutunu yeniden çalıştırmanız yeterlidir — betik mevcut kurulumu algılar, kodu çeker, container'ı yeniden inşa eder ve verilerinizi olduğu gibi korur.
-
-### Sessiz / scripted kurulum
-
-```bash
-TELEGRAM_API_ID=12345 \
-TELEGRAM_API_HASH=abcdef... \
-NONINTERACTIVE=1 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh)"
-```
-
-### Manuel kurulum
-
-```bash
-git clone https://github.com/enseitankado/telfiles.git
-cd telfiles
-cp .env.example .env && $EDITOR .env       # API_ID + API_HASH gir
+# 3) Manuel
+git clone https://github.com/enseitankado/telfiles.git && cd telfiles
+cp .env.example .env && $EDITOR .env       # API_ID + API_HASH
 docker compose up -d --build
 ```
 
-Web arayüzü: <http://localhost:8765>
+Açılış adresi terminale basılır (varsayılan: `http://<host>:8765`). Port doluysa installer otomatik olarak boş bir sonrakine geçer.
 
-### Telegram hesabı ekleme
+### İlk giriş — iki aşamalı
 
-1. Ayarlar → Hesap → ➕ Hesap Ekle
-2. Telefon numarası → SMS kodu → (varsa) 2FA parolası
-3. Sync otomatik başlar; ilk tam tarama hesap büyüklüğüne göre dakikalar sürebilir.
+1. **Arabirim parolası** — `admin` ile gir, **Ayarlar → Hesap → Arabirim Parolası**'ndan değiştir.
+2. **Telegram hesabı** — Ayarlar → Hesap → ➕ Hesap Ekle → telefon → Telegram'a düşen kod → (varsa) 2FA. Bağlantı kurulunca tarama otomatik başlar.
+
+> `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` boşsa "Kod gönder" çalışmaz. `.env` dosyasını doldurup `docker compose restart telfiles-app` yeter.
+
+### Güncelleme
+
+Aynı kurulum komutunu tekrar çalıştırın. Installer kendi kendini günceller, kodu çeker, container'ı yeniden inşa eder; **`data/` ve `pgdata/` korunur**.
+
+Program açılışta GitHub'daki HEAD'i kontrol eder, yeni sürüm varsa UI'da bildirir.
 
 ---
 
 ## ⚙️ Yapılandırma
 
-Tüm runtime durumu host'taki `data/` ve `pgdata/` dizinlerinde tutulur — container'ı silseniz veriniz korunur.
+| Konum | İçerik | Sıfırlama |
+|---|---|---|
+| `data/ui_auth.json` | UI parola hash'i + oturum token'ları | sil → `admin` döner |
+| `data/credentials.json` | Telegram API kimlikleri (env'den önce gelir) | sil → `.env`'e düşer |
+| `data/settings.json` | `sync_interval_seconds` (clamp `[900, 86400]`) | sil → 7200s |
+| `data/accounts/{id}/telfiles.session` | Telethon hesap oturumu | sil → o hesap için yeniden giriş |
+| `data/hunter_events.jsonl` | Avcı detay log'u (restart'a dayanıklı) | sil → log temizlenir |
+| `downloads/` | İndirilen dosyalar (`<grup>/...` ve `_hunter/<kanal>/...`) | her dosya bağımsız silinebilir |
+| `pgdata/` | PostgreSQL ana veritabanı | silmeyin |
 
 ### Ortam değişkenleri (`.env`)
 
-| Değişken | Zorunlu | Açıklama |
+| Değişken | Zorunlu | Not |
 |---|---|---|
-| `TELEGRAM_API_ID` | ✅ | my.telegram.org API ID |
-| `TELEGRAM_API_HASH` | ✅ | my.telegram.org API Hash |
-| `TELEMETRY_SECRET` | hayır | Anonim istatistik gönderimi için paylaşılan secret (bkz. [Mahremiyet](#-mahremiyet--telemetri)) |
-
-### Volume'lar
-
-| Host dizini | Container yolu | İçerik |
-|---|---|---|
-| `./data/` | `/app/data` | Telegram session'ları, UI parolası, ayarlar |
-| `./downloads/` | `/app/downloads` | İndirilen dosyalar |
-| `./pgdata/` | `/var/lib/postgresql/data` | PostgreSQL ana veritabanı |
-
-### Önemli ayar dosyaları (`data/` altında)
-
-| Dosya | İçerik | Sıfırlama |
-|---|---|---|
-| `ui_auth.json` | Arabirim parolası hash'i + aktif token'lar | sil → `admin` döner |
-| `credentials.json` | Telegram API kimlikleri (env'den önce gelir) | sil → `.env`'e geri düşer |
-| `settings.json` | Sync periyodu vb. | sil → varsayılan |
-| `accounts/{id}/telfiles.session` | Telethon oturumu | sil → o hesap için yeniden giriş |
-
-### Tarama sıklığı
-
-UI'dan **Ayarlar → Tarama Sıklığı**. Backend `[900s, 86400s]` aralığına clamp eder. Realtime handler yeni mesajları anında yakaladığı için periyodik tarama "backfill" rolündedir; pratikte **1–2 saat üstü** ideal.
+| `TELEGRAM_API_ID` | ✅ | my.telegram.org → API Development Tools |
+| `TELEGRAM_API_HASH` | ✅ | aynı yer |
+| `TELEMETRY_SECRET` | ❌ | Sadece kendi telemetri sunucunuzu kuruyorsanız |
 
 ---
 
-## 🖥️ Kullanım — Sekmeler
+## 🧱 Yığın
 
-| Sekme | İşlev |
+| Katman | Teknoloji |
 |---|---|
-| **📁 Dosyalar** | Tüm hesaplardaki tüm grupların tüm dosyaları, çoklu filtreyle |
-| **🔗 Bağlantılar** | Mesajlardan parse edilmiş linkler + erişilebilirlik durumu |
-| **📡 Kanal Avcısı** | Yeni kanal keşfi pipeline'ı + skor/sırala/derin tarama |
-| **⬇️ İndirilenler** | İndirme kuyruğu ve geçmişi |
-| **📊 Durum** | Sync durumu, son log satırları, hesap istatistikleri |
-| **⚙️ Ayarlar** | Hesaplar, gruplar, izleme kelimeleri, dil, parola |
+| Backend | Python 3.12 · FastAPI · Uvicorn · asyncio |
+| Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
+| Veri | PostgreSQL 16 · asyncpg |
+| Web scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (stealth Chromium, Stage 2 için) |
+| Frontend | Vanilla JS · CSS · HTML (build adımı yok) |
+| Dağıtım | Docker Compose |
 
-Detaylı operatör notları (DB sorguları, sorun giderme, kanal avcısı kaynakları) için: [docs/OPERATOR.md](docs/OPERATOR.md)
+Konteyner imajı **~302 MB**. Tüm runtime state host volume'larında.
 
 ---
 
 ## 🗂️ Proje yapısı
 
 ```
-telfiles/
-├── app/
-│   ├── main.py              # FastAPI uygulaması + tüm API endpoint'leri
-│   ├── database.py          # asyncpg veri katmanı + şema
-│   ├── telegram_client.py   # Çoklu hesap Telethon yönetimi
-│   ├── sync.py              # Geçmiş mesaj tarayıcısı
-│   ├── hunter.py            # Kanal avcısı pipeline'ı
-│   ├── link_prober.py       # Bağlantı erişilebilirlik kontrolcüsü
-│   ├── telemetry.py         # Anonim istatistik gönderici (sessiz)
-│   ├── ui_auth.py           # Web arayüzü parolası + oturum
-│   ├── static/              # index.html, app.js, i18n.js
-│   └── Dockerfile
-├── docs/
-│   └── OPERATOR.md          # Operasyonel rehber (DB sorguları, sorun giderme)
-├── docker-compose.yml
-├── .env.example
-└── README.md
+app/
+├── main.py              # FastAPI + endpoint'ler + 4 background loop
+├── database.py          # asyncpg veri katmanı + şema migrasyonları
+├── telegram_client.py   # Çok-hesap Telethon yönetimi
+├── sync.py              # Geçmiş + realtime mesaj tarayıcısı
+├── hunter.py            # Kanal Avcısı pipeline + per-dosya indirme
+├── link_prober.py       # Bağlantı erişilebilirlik kontrolcüsü
+├── telemetry.py         # Anonim istatistik gönderici
+├── ui_auth.py           # Web parolası + oturum
+└── static/              # index.html, app.js, i18n.js — single-page UI
+
+docs/
+├── banner.png           # README başlığı
+├── screenshots/         # UI ekran görüntüleri
+└── OPERATOR.md          # DB sorguları, sorun giderme, hunter kaynakları
 ```
 
 ---
@@ -200,48 +145,49 @@ telfiles/
 ## 🛠️ Geliştirme
 
 ```bash
-# Source'ta değişiklik sonrası container'ı yeniden inşa:
+# Backend (Python) değişikliği → rebuild gerekir
 docker compose up -d --build telfiles-app
 
-# Logları izle:
-docker logs -f telfiles-app
+# Frontend (HTML/JS/CSS) → bind-mount; sadece tarayıcıyı yenile
+# app/static/* host'tan canlı serve edilir
 
-# Postgres'e direkt eriş:
+# Loglar / DB
+docker logs -f telfiles-app
 docker exec -it telfiles-postgres psql -U telfiles -d telfiles
 ```
 
-`app/static/` altındaki HTML/CSS/JS bind-mount edildiği için frontend değişiklikleri rebuild gerektirmez — sayfa yenilemesi yeterlidir.
+Daha fazlası: [docs/OPERATOR.md](docs/OPERATOR.md) — DB sorguları, kanal avcısı kaynak listesi, yaygın sorun → çözüm tablosu.
 
 ---
 
 ## 🔒 Mahremiyet & Telemetri
 
-TelFiles **opsiyonel ve anonim** kullanım istatistiği gönderir. Etkin olduğunda, **24 saatte bir** şu üç alanı gönderir:
+Etkinleştirildiğinde **24 saatte bir**, sadece şu üç alan gönderilir:
 
-- Takip ettiğiniz kanalların **username**'i (zaten herkese açık bir Telegram bilgisi)
+- Üye olduğunuz kanalların **username**'i (zaten herkese açık Telegram bilgisi)
 - Her kanalın **üye sayısı** (yine herkese açık)
 - O kanaldan indekslediğiniz **dosya sayısı**
 
-**Gönderilmeyenler:** mesajlar, dosya adları, dosya içerikleri, hesap bilgisi, telefon numarası, IP. Tek tanımlayıcı, kurulumda yerel olarak üretilen rastgele bir UUID'dir (sizinle ilişkilendirilemez).
+**Gönderilmez:** mesajlar, dosya adları, dosya içerikleri, telefon numarası, hesap bilgisi, IP.
 
-Kapatmak için: **Ayarlar → Hesap → Kullanıcı istatistiklerini gönder** checkbox'ını işaretsiz bırakın.
+Tanımlayıcı: kurulumda yerel üretilen rastgele bir UUID. Kapatmak: Ayarlar → Hesap → "Kullanıcı istatistiklerini gönder" checkbox'ı.
 
-Alıcı endpoint sabiti `app/telemetry.py` içinde tanımlıdır; kendi alıcı sunucunuzu kullanmak için bu değeri değiştirebilirsiniz.
+Kendi alıcı endpoint'inizi kullanmak için `app/telemetry.py` içindeki `ENDPOINT_URL`'i değiştirin.
 
 ---
 
-## 🤝 Sorun bildirimi
+## 🤝 Sorun bildirimi & katkı
 
-Bir hata bulduysanız ya da geliştirme önerisi varsa GitHub Issues üzerinden bildirin.
+[GitHub Issues](https://github.com/enseitankado/telfiles/issues) üzerinden.
 
 ---
 
 ## ⚖️ Lisans
 
-Henüz lisans atanmadı. Bu projeyi çatallamak, değiştirmek veya yeniden dağıtmak isterseniz lütfen iletişime geçin.
+Bu proje açık kaynaktır; lisans dosyası ekleninceye kadar tüm hakları yazara aittir. Fork / değişiklik / yeniden dağıtım için lütfen iletişime geçin.
 
 ---
 
 ## ⚠️ Sorumluluk reddi
 
-Bu araç **kendi Telegram hesabınızla** zaten erişimi olduğunuz içeriği yerel olarak indekslemenizi sağlar. Telegram'ın [Hizmet Şartları](https://telegram.org/tos)'na uygun şekilde kullanılması kullanıcının sorumluluğundadır. Yazar(lar), aracın kötüye kullanımından doğacak sonuçlardan sorumlu değildir.
+TelFiles yalnızca **sizin Telegram hesabınızla zaten erişebildiğiniz** içeriği yerel olarak indeksler. Telegram [Hizmet Şartları](https://telegram.org/tos)'na uygun kullanım kullanıcının sorumluluğundadır. Yazar(lar), aracın kötüye kullanımından doğacak sonuçlardan sorumlu değildir.
