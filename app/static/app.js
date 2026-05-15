@@ -2980,8 +2980,13 @@ function renderHunterPager() {
   const offset = S.hunterOffset;
 
   if (!total) {
-    el.innerHTML = '';
-    el.classList.remove('has-rows');
+    // Empty grid — drop pager content. Memoize so we don't keep wiping
+    // an already-empty node and stomping any unrelated focus.
+    if (el._lastPagerHtml !== '') {
+      el.innerHTML = '';
+      el._lastPagerHtml = '';
+      el.classList.remove('has-rows');
+    }
     return;
   }
   el.classList.add('has-rows');
@@ -3012,6 +3017,13 @@ function renderHunterPager() {
     html += `<button class="pg-btn${p===current?' active':''}" onclick="hunterGotoPage(${p})">${p+1}</button>`;
   });
   html += `<button class="pg-btn" onclick="hunterGotoPage(${current+1})" ${current>=totalPages-1?'disabled':''}>›</button>`;
+  // Hunter status polling redraws this element every 1.5s. If we rewrite
+  // innerHTML unconditionally, an open <select> dropdown ("sayfa başı")
+  // disappears with its DOM node and the browser auto-closes the menu
+  // 1-2 sec after the user clicked it. Skip the write when nothing
+  // changed.
+  if (el._lastPagerHtml === html) return;
+  el._lastPagerHtml = html;
   el.innerHTML = html;
 }
 
