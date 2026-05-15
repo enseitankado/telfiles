@@ -28,7 +28,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import aiohttp
 from telethon.errors import FloodWaitError, ChannelPrivateError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest, LeaveChannelRequest
-from telethon.tl.types import Channel, InputMessagesFilterDocument, DocumentAttributeFilename, InputPeerChannel
+from telethon.tl.types import (
+    Channel, InputMessagesFilterDocument, DocumentAttributeFilename,
+    DocumentAttributeVideo, DocumentAttributeAudio, InputPeerChannel,
+    MessageMediaPhoto,
+)
 
 import database
 from telegram_client import get_client
@@ -1241,28 +1245,51 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
     except Exception:
         pass
 
-    # sample recent messages (documents only, limit N)
+    # Sample recent messages of any media kind. We deliberately do NOT pass
+    # filter=InputMessagesFilterDocument here: that filter is server-side and
+    # excludes documents tagged as video or audio. So a "movies channel" with
+    # 200 mp4 documents returns zero rows under the Document filter. Instead
+    # we walk all recent messages and classify each piece of media.
     file_count = 0
     breakdown: Dict[str, int] = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
     last_message_at = None
     sampled = 0
     total_size = 0
     try:
-        async for msg in client.iter_messages(entity, limit=sample_limit, filter=InputMessagesFilterDocument):
+        async for msg in client.iter_messages(entity, limit=sample_limit):
             sampled += 1
-            if msg.document:
-                file_count += 1
-                total_size += int(getattr(msg.document, "size", 0) or 0)
-                # extract extension from filename attribute
-                fname = None
-                for attr in (msg.document.attributes or []):
-                    if isinstance(attr, DocumentAttributeFilename):
-                        fname = attr.file_name
-                        break
-                ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
-                breakdown[_file_group(ext)] += 1
             if msg.date and (last_message_at is None or msg.date > last_message_at):
                 last_message_at = msg.date
+
+            if msg.document:
+                doc = msg.document
+                file_count += 1
+                total_size += int(getattr(doc, "size", 0) or 0)
+                # Prefer the filename attribute; fall back to mime-derived
+                # extension for video/audio documents that ship without a
+                # filename (common when channels re-encode uploads).
+                fname = None
+                is_video = is_audio = False
+                for attr in (doc.attributes or []):
+                    if isinstance(attr, DocumentAttributeFilename):
+                        fname = attr.file_name
+                    elif isinstance(attr, DocumentAttributeVideo):
+                        is_video = True
+                    elif isinstance(attr, DocumentAttributeAudio):
+                        is_audio = True
+                ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
+                if not ext:
+                    mime = getattr(doc, "mime_type", "") or ""
+                    if "/" in mime:
+                        ext = mime.rsplit("/", 1)[-1]
+                    elif is_video:
+                        ext = "mp4"
+                    elif is_audio:
+                        ext = "mp3"
+                breakdown[_file_group(ext)] += 1
+            elif isinstance(msg.media, MessageMediaPhoto):
+                file_count += 1
+                breakdown[_file_group("jpg")] += 1
     except FloodWaitError:
         raise
     except Exception as e:
@@ -1690,21 +1717,35 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
     consecutive_floodwaits = 0
     while True:
         try:
-            async for msg in client.iter_messages(entity, offset_id=offset_id,
-                                                   filter=InputMessagesFilterDocument):
-                if not msg.document:
-                    offset_id = msg.id
-                    continue
-                n += 1
+            # No server-side filter: FilterDocument excludes mp4/mp3 documents
+            # (those go to FilterVideo/FilterAudio buckets server-side), so a
+            # "movies channel" would scan 0 files under the document filter.
+            async for msg in client.iter_messages(entity, offset_id=offset_id):
                 offset_id = msg.id
-                size = int(getattr(msg.document, "size", 0) or 0)
+                if not msg.document:
+                    continue
+                doc = msg.document
+                n += 1
+                size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
                 fname = None
-                for attr in (msg.document.attributes or []):
+                is_video = is_audio = False
+                for attr in (doc.attributes or []):
                     if isinstance(attr, DocumentAttributeFilename):
                         fname = attr.file_name
-                        break
+                    elif isinstance(attr, DocumentAttributeVideo):
+                        is_video = True
+                    elif isinstance(attr, DocumentAttributeAudio):
+                        is_audio = True
                 ext = (fname.rsplit(".", 1)[-1] if fname and "." in fname else "")
+                if not ext:
+                    mime = getattr(doc, "mime_type", "") or ""
+                    if "/" in mime:
+                        ext = mime.rsplit("/", 1)[-1]
+                    elif is_video:
+                        ext = "mp4"
+                    elif is_audio:
+                        ext = "mp3"
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 date = msg.date
