@@ -1343,6 +1343,9 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           </span>
           <button onclick="loadDownloadsList()" data-i18n="downloads.refresh" style="margin-left:auto;font-size:.72rem;padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;color:var(--text-3)">Yenile</button>
         </div>
+        <div id="dl-space-notice" style="display:none;margin:8px 12px 0;padding:7px 12px;font-size:.74rem;color:var(--text-2);background:var(--bg-info);border:1px solid var(--accent-soft);border-radius:6px">
+          ⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span>
+        </div>
         <div id="dl-hist-body-wrap">
           <table class="dlt-table">
             <thead>
@@ -1443,7 +1446,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             </label>
             <label class="hunter-row"><span data-i18n="hunter.scheduleInterval">Aralık (saniye)</span><span class="hf-help" data-i18n-help="hunter.helpScheduleInt">?</span><input type="number" min="3600" id="h-schedule-int"></label>
             <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.keywords">Anahtar kelimeler (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpKeywords">?</span><input type="text" id="h-keywords"></label>
-            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.sources">Kaynaklar</span><span class="hf-help" data-i18n-help="hunter.helpSources">?</span><input type="text" id="h-sources" placeholder="boş bırak = tümü; ya da: internal,tgstat,telemetrio,combot,tdirectory,tlgrm,telegramic,tgchannels,searchtg,tdoru,telegaio,telegramly,google,duckduckgo,brave,bing,mojeek,startpage,yandex,ecosia,reddit,hackernews,github"></label>
+            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.sources">Kaynaklar</span><span class="hf-help" data-i18n-help="hunter.helpSources">?</span><input type="text" id="h-sources" placeholder="boş bırak = tümü; ya da: internal,tgstat,telemetrio,combot,tdirectory,tlgrm,telegramic,tgchannels,searchtg,tdoru,telegaio,google,duckduckgo,brave,bing,mojeek,startpage,yandex,ecosia,reddit,hackernews,github,pastesites,wayback,urlscan,commoncrawl,llm"></label>
+            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.anthropicKey">Anthropic API Anahtarı <small style="color:var(--text-3)">(LLM kaynağı için)</small></span><input type="password" id="h-anthropic-key" placeholder="sk-ant-…" autocomplete="off"></label>
             <label class="hunter-row"><span data-i18n="hunter.minSubs">Min. üye</span><span class="hf-help" data-i18n-help="hunter.helpMinSubs">?</span><input type="number" min="0" id="h-min-subs"></label>
             <label class="hunter-row"><span data-i18n="hunter.languages">Diller (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpLanguages">?</span><input type="text" id="h-languages" placeholder="tr,en"></label>
           </div>
@@ -1556,17 +1560,18 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
               <th class="num-cell" style="font-size:.72rem">#</th>
               <th class="col-ext" data-i18n="table.ext">Uzantı</th>
               <th class="sortable" onclick="sortBy('name')"><span data-i18n="table.fileName">Dosya Adı</span> <span class="sort-arrow" id="arr-name"></span></th>
+              <th class="col-ctx" data-i18n="table.context">İçerik</th>
               <th class="sortable col-size" onclick="sortBy('size')"><span data-i18n="table.size">Boyut</span> <span class="sort-arrow" id="arr-size"></span></th>
               <th class="sortable col-group" onclick="sortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="arr-group"></span></th>
               <th class="sortable col-date" onclick="sortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="arr-date"></span></th>
               <th class="col-dl" data-i18n="table.download">İndir</th>
-              <th class="col-ctx" data-i18n="table.context">İçerik</th>
             </tr>
             <tr class="flt-row">
               <th class="chk-cell"></th>
               <th></th>
               <th><input id="col-ext"   type="text" placeholder="ext…"  data-i18n-ph="filter.colExt" oninput="debouncedLoad()"></th>
               <th><input id="col-name"  type="text" placeholder="ad…"   data-i18n-ph="filter.colName" oninput="debouncedLoad()"></th>
+              <th></th>
               <th>
                 <div class="range-input-wrap">
                   <input id="col-size-min" type="text" placeholder="min" data-i18n-ph="filter.min" title="MB" oninput="debouncedLoad()">
@@ -1588,7 +1593,6 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
                   </div>
                 </div>
               </th>
-              <th></th>
               <th></th>
               <th></th>
             </tr>

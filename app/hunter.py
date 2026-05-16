@@ -1490,6 +1490,27 @@ _FILE_GROUPS = {
 }
 
 
+def _photo_size(photo) -> int:
+    """Approximate byte size of the largest available photo resolution.
+    Telethon photos expose either ``PhotoSize.size`` (single int) or
+    ``PhotoSizeProgressive.sizes`` (list of byte offsets, last = total).
+    Both forms are tolerated; missing/unknown shapes return 0."""
+    best = 0
+    try:
+        for s in getattr(photo, "sizes", None) or []:
+            sz = getattr(s, "size", None)
+            if isinstance(sz, int) and sz > best:
+                best = sz
+            psz = getattr(s, "sizes", None)
+            if isinstance(psz, (list, tuple)) and psz:
+                last = psz[-1]
+                if isinstance(last, int) and last > best:
+                    best = last
+    except Exception:
+        return 0
+    return best
+
+
 def _doc_filename(doc, msg_id: int) -> Tuple[Optional[str], str, bool, bool, bool]:
     """Best-effort filename + extension from a Telethon document.
 
@@ -1673,6 +1694,20 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             elif isinstance(msg.media, MessageMediaPhoto):
                 file_count += 1
                 breakdown[_file_group("jpg")] += 1
+                photo = getattr(msg, "photo", None)
+                size = _photo_size(photo) if photo else 0
+                total_size += size
+                fname = f"photo_{msg.id}.jpg"
+                msg_date = msg.date
+                if msg_date and msg_date.tzinfo is None:
+                    msg_date = msg_date.replace(tzinfo=timezone.utc)
+                try:
+                    await database.insert_candidate_file(
+                        candidate_id, msg.id, fname, "jpg", size, "image", msg_date,
+                        is_named=False,
+                    )
+                except Exception:
+                    pass
     except FloodWaitError:
         raise
     except Exception as e:
@@ -2126,14 +2161,22 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
             # "movies channel" would scan 0 files under the document filter.
             async for msg in client.iter_messages(entity, offset_id=offset_id):
                 offset_id = msg.id
-                if not msg.document:
+                if msg.document:
+                    doc = msg.document
+                    size = int(getattr(doc, "size", 0) or 0)
+                    fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
+                    grp = _file_group(ext)
+                elif isinstance(msg.media, MessageMediaPhoto):
+                    photo = getattr(msg, "photo", None)
+                    size = _photo_size(photo) if photo else 0
+                    fname = f"photo_{msg.id}.jpg"
+                    ext = "jpg"
+                    grp = "image"
+                    is_named = False
+                else:
                     continue
-                doc = msg.document
                 n += 1
-                size = int(getattr(doc, "size", 0) or 0)
                 total_size += size
-                fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
-                grp = _file_group(ext)
                 breakdown[grp] += 1
                 date = msg.date
                 if date and date.tzinfo is None:
@@ -2458,10 +2501,10 @@ async def _download_candidate_file_impl(cid: int, msg_id: int,
             raise
 
     try:
-        if not msg or not getattr(msg, "document", None):
+        if not msg or not getattr(msg, "media", None):
             file_dl_status[key] = {"state": "error",
-                                    "error": "message has no downloadable document"}
-            raise ValueError("no document on message")
+                                    "error": "message has no downloadable media"}
+            raise ValueError("no media on message")
 
         username = cand.get("username") or f"cand_{cid}"
         dest_dir = os.path.join(_DOWNLOADS_DIR, "_hunter", _safe_segment(username, str(cid)))
