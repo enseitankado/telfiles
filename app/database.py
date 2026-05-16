@@ -1000,6 +1000,33 @@ async def list_downloaded_files() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+async def list_downloading_files() -> List[Dict]:
+    rows = await _q(
+        """SELECT f.id, f.group_id, f.message_id, f.file_name, f.file_ext,
+                  f.mime_type, f.file_size, f.date, f.download_progress,
+                  COALESCE(g.display_name, g.name) AS group_name,
+                  g.username AS group_username
+           FROM files f
+           JOIN groups g ON g.id = f.group_id
+           WHERE f.downloading = TRUE AND f.local_path IS NULL
+           ORDER BY f.id"""
+    )
+    return [dict(r) for r in rows]
+
+
+async def reset_stale_downloads() -> int:
+    """Clear downloading flag for files left in-progress after a dirty shutdown."""
+    result = await _exec(
+        "UPDATE files SET downloading=FALSE, download_progress=0.0 WHERE downloading=TRUE AND local_path IS NULL"
+    )
+    # asyncpg returns 'UPDATE N' as a string
+    try:
+        count = int(str(result).split()[-1])
+    except Exception:
+        count = 0
+    return count
+
+
 async def set_file_downloading(file_id: int, downloading: bool, progress: float = 0.0):
     await _exec(
         "UPDATE files SET downloading=$1, download_progress=$2 WHERE id=$3",

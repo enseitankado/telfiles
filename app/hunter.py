@@ -665,6 +665,14 @@ def _build_search_queries(keywords: List[str], max_q: int = 30) -> List[str]:
         if push(f'site:t.me {kw} "new"'): return out
         if push(f'site:t.me {kw} {last_year} OR {year}'): return out
 
+    # Pattern H: paste-site dorks — t.me links shared on popular paste platforms
+    _PASTE_DORK_SITES = [
+        "pastebin.com", "gist.github.com", "justpaste.it",
+        "paste.ee", "rentry.co", "hastebin.com", "dpaste.org",
+    ]
+    for site in _PASTE_DORK_SITES:
+        if push(f'site:{site} t.me'): return out
+
     return out
 
 
@@ -967,6 +975,302 @@ async def _stage2_github(session, delay_ms):
     return found
 
 
+# ── Web archive sources ────────────────────────────────────────────────────────
+
+async def _stage2_wayback(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
+    """Wayback Machine CDX API — t.me URLs archived by the Internet Archive.
+    Collapses by urlkey to deduplicate mirror snapshots; only 200-status pages."""
+    found: Set[str] = set()
+    url = (
+        "http://web.archive.org/cdx/search/cdx"
+        "?url=t.me/*&output=text&fl=original&limit=10000"
+        "&collapse=urlkey&matchType=prefix&filter=statuscode:200"
+    )
+    _emit_event("stage2", "wayback: querying CDX API…", key="hl.stage2.waybackStart")
+    text = await _fetch_text(session, url, timeout=60)
+    if text:
+        for m in _TME_RE.finditer(text):
+            u = _normalize_username(m.group(1))
+            if u:
+                found.add(u)
+        _emit_event("stage2", f"wayback: {len(found)} candidates",
+                    key="hl.stage2.waybackDone", params={"n": len(found)})
+    return found
+
+
+async def _stage2_urlscan(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
+    """URLScan.io public API — t.me pages submitted to the scan service."""
+    found: Set[str] = set()
+    queries = [
+        "page.domain:t.me",
+        "page.url:t.me%2Fjoinchat",
+        'page.url:"t.me%2F%2B"',
+    ]
+    base = "https://urlscan.io/api/v1/search/?size=100&q="
+    for q in queries:
+        if _check_interrupt("stage2"):
+            break
+        text = await _fetch_text(session, base + q)
+        if text:
+            for m in _TME_RE.finditer(text):
+                u = _normalize_username(m.group(1))
+                if u:
+                    found.add(u)
+        await asyncio.sleep(delay_ms / 1000)
+    return found
+
+
+async def _stage2_commoncrawl(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
+    """Common Crawl Index Server — t.me URLs in the latest CC crawl snapshot."""
+    found: Set[str] = set()
+    # Discover the most recent index name
+    info = await _fetch_text(session, "https://index.commoncrawl.org/collinfo.json", timeout=30)
+    index_id = None
+    if info:
+        try:
+            index_id = json.loads(info)[0].get("id")
+        except Exception:
+            pass
+    if not index_id:
+        _emit_event("stage2", "commoncrawl: could not determine latest index", "warn",
+                    key="hl.stage2.ccNoIndex")
+        return found
+    _emit_event("stage2", f"commoncrawl: querying {index_id}…",
+                key="hl.stage2.ccStart", params={"index": index_id})
+    text = await _fetch_text(
+        session,
+        f"https://index.commoncrawl.org/{index_id}"
+        "?url=t.me/*&output=json&limit=5000&matchType=prefix",
+        timeout=60,
+    )
+    if text:
+        for m in _TME_RE.finditer(text):
+            u = _normalize_username(m.group(1))
+            if u:
+                found.add(u)
+        _emit_event("stage2", f"commoncrawl: {len(found)} candidates",
+                    key="hl.stage2.ccDone", params={"n": len(found)})
+    return found
+
+
+# ── LLM-assisted semantic discovery ─────────────────────────────────────────
+
+async def _stage2_llm(session: aiohttp.ClientSession,
+                       keywords: List[str], queries: List[str],
+                       settings: dict, delay_ms: int) -> Set[str]:
+    """Claude API — two-pass semantic discovery.
+
+    Pass 1 (semantic expansion): Claude receives existing candidate
+    descriptions as context and generates related keywords that broaden
+    the search pool (approximates embedding-based neighbourhood search
+    without requiring a separate embedding endpoint).
+
+    Pass 2 (creative query generation): Claude produces 25 novel dork
+    queries that the static template builder wouldn't generate on its own.
+    The queries run through DuckDuckGo and Bing via the shared
+    _crawl_search_engine adapter (headless Chromium)."""
+    api_key = (settings.get("anthropic_api_key") or "").strip()
+    if not api_key:
+        _emit_event("stage2", "llm: no Anthropic API key configured — skipping",
+                    "warn", key="hl.stage2.llmNoKey")
+        return set()
+
+    # Collect a sample of existing candidate descriptions for semantic context
+    context_lines: List[str] = []
+    try:
+        rows = await database._q(
+            "SELECT title, description FROM hunter_candidates "
+            "WHERE description IS NOT NULL AND description != '' "
+            "ORDER BY score DESC NULLS LAST LIMIT 20"
+        )
+        for r in rows:
+            desc = (r["description"] or "")[:120].replace("\n", " ")
+            context_lines.append(f"- {r['title'] or '?'}: {desc}")
+    except Exception:
+        pass
+
+    kw_str = ", ".join(keywords[:20]) if keywords else "files, documents, media"
+    context_block = (
+        "\n\nSample of already-found channels (for semantic context):\n"
+        + "\n".join(context_lines[:15])
+    ) if context_lines else ""
+
+    prompt = (
+        "You help discover Telegram channels that share files "
+        "(documents, videos, archives, software, books, courses, etc.).\n\n"
+        f"Keywords of interest: {kw_str}{context_block}\n\n"
+        "Task A — Semantic expansion: suggest 10 related keywords or short phrases "
+        "that would uncover *different* channels not reachable with the above keywords.\n\n"
+        "Task B — Creative dorks: write 25 diverse search-engine dork queries "
+        "that find Telegram file-sharing channels. Use operators like "
+        "site:t.me, inurl:t.me, \"t.me/+\", intitle:, inurl:joinchat. "
+        "Vary file types, topics, languages, and community terms. "
+        "Do NOT just repeat the keywords — explore adjacent topics.\n\n"
+        "Respond ONLY with valid JSON, no prose:\n"
+        "{\"keywords\": [...], \"queries\": [...]}"
+    )
+
+    _emit_event("stage2", "llm: calling Claude for semantic expansion…",
+                key="hl.stage2.llmCall")
+    try:
+        async with session.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1200,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=aiohttp.ClientTimeout(total=40),
+        ) as r:
+            if r.status != 200:
+                body = await r.text()
+                _emit_event("stage2", f"llm: API error {r.status}: {body[:120]}", "warn",
+                            key="hl.stage2.llmApiError", params={"status": r.status})
+                return set()
+            data = await r.json()
+            content = (data.get("content") or [{}])[0].get("text", "")
+    except Exception as e:
+        _emit_event("stage2", f"llm: request failed: {str(e)[:100]}", "warn",
+                    key="hl.stage2.llmFail", params={"err": str(e)[:100]})
+        return set()
+
+    # Parse JSON — be tolerant of markdown code fences
+    llm_queries: List[str] = []
+    llm_keywords: List[str] = []
+    try:
+        m = re.search(r'\{[\s\S]*\}', content)
+        if m:
+            parsed = json.loads(m.group())
+            llm_queries  = [str(q) for q in parsed.get("queries",  []) if q][:25]
+            llm_keywords = [str(k) for k in parsed.get("keywords", []) if k][:10]
+    except Exception:
+        pass
+
+    _emit_event("stage2",
+                f"llm: {len(llm_queries)} queries, {len(llm_keywords)} new keywords",
+                key="hl.stage2.llmGenerated",
+                params={"nq": len(llm_queries), "nk": len(llm_keywords)})
+
+    # Persist learned keywords so future runs benefit from semantic expansion
+    if llm_keywords:
+        try:
+            existing = settings.get("learned_keywords") or ""
+            seen = {k.strip().lower() for k in existing.split(",") if k.strip()}
+            new_kws = [k for k in llm_keywords if k.lower() not in seen]
+            if new_kws:
+                merged = (existing.rstrip(",") + "," if existing.strip() else "") + ",".join(new_kws)
+                await database.update_hunter_settings({"learned_keywords": merged})
+        except Exception:
+            pass
+
+    if not llm_queries:
+        return set()
+
+    # Run generated queries through DuckDuckGo + Bing (headless Chromium)
+    found: Set[str] = set()
+    found |= await _crawl_search_engine(
+        session, "llm→ddg",
+        "https://duckduckgo.com/",
+        "https://duckduckgo.com/html/?q={q}",
+        llm_queries, delay_ms,
+        max_q=25, page_offsets=[""],
+    )
+    if not _check_interrupt("stage2"):
+        found |= await _crawl_search_engine(
+            session, "llm→bing",
+            "https://www.bing.com/",
+            "https://www.bing.com/search?q={q}",
+            llm_queries, delay_ms,
+            max_q=15, page_offsets=[""],
+        )
+    return found
+
+
+# ── Paste-site scanner ────────────────────────────────────────────────────────
+# (label, index_url, raw_url_template_or_None, paste_id_regex_or_None, max_raws)
+# raw_url_template: {id} is replaced with the paste identifier.
+# paste_id_regex: applied to the index HTML to collect individual paste IDs.
+# max_raws: how many raw-paste fetches to attempt per site (0 = index page only).
+# Sites that require login, are self-hosted, or burn-after-read are excluded.
+_PASTE_SPECS: List[Tuple] = [
+    ("pastebin.com",
+     "https://pastebin.com/archive",
+     "https://pastebin.com/raw/{id}",
+     re.compile(r'href="/([A-Za-z0-9]{8})"'),
+     40),
+    ("paste.ee",
+     "https://paste.ee/recent",
+     "https://paste.ee/r/{id}",
+     re.compile(r'href="/p/([A-Za-z0-9]+)"'),
+     20),
+    ("justpaste.it",       "https://justpaste.it/",           None, None, 0),
+    ("rentry.co",          "https://rentry.co/",              None, None, 0),
+    ("dpaste.org",         "https://dpaste.org/",             None, None, 0),
+    ("nekobin.com",        "https://nekobin.com/",            None, None, 0),
+    ("paste.debian.net",   "https://paste.debian.net/",       None, None, 0),
+    ("paste.ubuntu.com",   "https://paste.ubuntu.com/",       None, None, 0),
+    ("paste.opensuse.org", "https://paste.opensuse.org/",     None, None, 0),
+    ("fpaste.org",         "https://fpaste.org/",             None, None, 0),
+    ("bpa.st",             "https://bpa.st/",                 None, None, 0),
+    ("paste2.org",         "https://paste2.org/",             None, None, 0),
+    ("pastelink.net",      "https://pastelink.net/",          None, None, 0),
+    ("controlc.com",       "https://controlc.com/",           None, None, 0),
+    ("hastebin.com",       "https://hastebin.com/",           None, None, 0),
+    ("codeshare.io",       "https://codeshare.io/",           None, None, 0),
+    ("ix.io",              "https://ix.io/",                  None, None, 0),
+    ("paste.sh",           "https://paste.sh/",               None, None, 0),
+    ("paste.rs",           "https://paste.rs/",               None, None, 0),
+    ("write.as",           "https://write.as/",               None, None, 0),
+    ("pasted.co",          "https://pasted.co/",              None, None, 0),
+    ("defuse.ca",          "https://defuse.ca/b/",            None, None, 0),
+]
+
+
+async def _stage2_pastesites(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
+    """Scan public paste-site archives for t.me channel/group addresses.
+
+    For each site in _PASTE_SPECS we fetch the public archive/recent-pastes
+    index page and scan its HTML directly.  For sites that expose a raw-paste
+    endpoint (Pastebin, paste.ee) we additionally pull the text of up to
+    max_raws individual pastes to catch links not visible in index snippets."""
+    found: Set[str] = set()
+
+    for label, index_url, raw_tpl, id_re, max_raws in _PASTE_SPECS:
+        if _check_interrupt("stage2"):
+            break
+        _emit_event("stage2", f"pastesites: {label}",
+                    key="hl.stage2.pasteIndex", params={"site": label})
+
+        html = await _fetch_text(session, index_url)
+        if html:
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u:
+                    found.add(u)
+
+            if raw_tpl and id_re:
+                ids = list(dict.fromkeys(id_re.findall(html)))[:max_raws]
+                for pid in ids:
+                    if _check_interrupt("stage2"):
+                        break
+                    raw = await _fetch_text(session, raw_tpl.format(id=pid))
+                    if raw:
+                        for m in _TME_RE.finditer(raw):
+                            u = _normalize_username(m.group(1))
+                            if u:
+                                found.add(u)
+                    await asyncio.sleep(delay_ms / 2000)
+
+        await asyncio.sleep(delay_ms / 1000)
+
+    return found
+
+
 # Map source name → (adapter, kind) where kind is 'kw' (uses query list) or 'plain'
 _STAGE2_SOURCES = {
     # Telegram-specific directories (telegramly removed: site returns 404)
@@ -993,6 +1297,14 @@ _STAGE2_SOURCES = {
     "reddit":       (_stage2_reddit,       "kw"),
     "hackernews":   (_stage2_hackernews,   "kw"),
     "github":       (_stage2_github,       "plain"),
+    # Paste sites (archive crawl + raw-paste fetch where available)
+    "pastesites":   (_stage2_pastesites,   "plain"),
+    # Web archives
+    "wayback":      (_stage2_wayback,      "plain"),
+    "urlscan":      (_stage2_urlscan,      "plain"),
+    "commoncrawl":  (_stage2_commoncrawl,  "plain"),
+    # LLM-assisted semantic discovery (requires anthropic_api_key in settings)
+    "llm":          (_stage2_llm,          "llm"),
 }
 
 
@@ -1009,6 +1321,9 @@ _DEFAULT_SOURCES = ",".join([
     "duckduckgo", "google", "bing", "brave", "yandex", "startpage", "ecosia", "mojeek",
     "searchtg",
     "reddit", "hackernews", "github",
+    "pastesites",
+    "wayback", "urlscan", "commoncrawl",
+    # "llm" is NOT in the default list — requires anthropic_api_key to be set
 ])
 
 
@@ -1124,7 +1439,9 @@ async def stage2_crawl_web(settings: dict) -> int:
                 if kind == "plain":
                     res = await adapter(session, delay_ms)
                 elif kind == "kw":
-                    res = await adapter(session, keywords, delay_ms)
+                    res = await adapter(session, base_kw, delay_ms)
+                elif kind == "llm":
+                    res = await adapter(session, base_kw, queries, settings, delay_ms)
                 else:  # query
                     res = await adapter(session, queries, delay_ms)
                 all_found[src] = res
@@ -1757,6 +2074,21 @@ async def blacklist_candidate(candidate_id: int, reason: Optional[str] = None) -
     await database.add_to_blacklist(cand["username"], reason)
     await database.update_hunter_candidate(candidate_id,
         {"status": "blacklisted", "decided_at": datetime.utcnow()})
+    return {"ok": True}
+
+
+async def restore_candidate(candidate_id: int) -> dict:
+    """Kara listeden veya reddedilenlerden geri al → discovered durumuna döndür."""
+    cand = await database.get_hunter_candidate(candidate_id)
+    if not cand:
+        return {"ok": False, "error": "not found"}
+    if cand.get("status") == "blacklisted":
+        # Kara liste kaydını da kaldır
+        await database._exec(
+            "DELETE FROM hunter_blacklist WHERE username = $1", cand["username"]
+        )
+    await database.update_hunter_candidate(candidate_id,
+        {"status": "discovered", "decided_at": None, "error": None})
     return {"ok": True}
 
 

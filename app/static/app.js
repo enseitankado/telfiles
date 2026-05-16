@@ -25,6 +25,7 @@ const S = {
   colGroupIds: new Set(),
   fileIdsFilter: null,        // null or Set<int> — when set, restricts grid to these files
   fileIdsFilterLabel: null,   // human-readable label for the chip
+  fileIdsFilterNotifId: null, // id of the notification that set the filter
 
   selectedLinks: new Set(),
   selectedGroups: new Set(),
@@ -1376,11 +1377,11 @@ function renderFiles(files, gFilter) {
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
       <td title="${esc(fName)}"><div class="fname-cell"><span class="fname-trunc">${esc(fName)}</span>${tg}${dupBadge}</div></td>
+      <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''} title="${esc(ctxRaw)}">${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
       <td>${dlState(f)}</td>
-      <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''} title="${esc(ctxRaw)}">${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
     </tr>`;
   }).join('');
   // Direct per-checkbox listeners — gives us a real DOM event with shiftKey.
@@ -1518,7 +1519,7 @@ function showToast(html, ms = 4000) {
 function _updateFileDlCell(fileId, fakef) {
   const cb = document.querySelector(`#files-body .row-chk[data-fid="${fileId}"]`);
   if (!cb) return;
-  const dlTd = cb.closest('tr')?.children[7];
+  const dlTd = cb.closest('tr')?.children[8];
   if (dlTd) dlTd.innerHTML = dlState(fakef);
 }
 
@@ -1551,7 +1552,26 @@ function pollDownload(fileId) {
 async function loadDownloadsList() {
   _paintGridLoading('dl-hist-tbody', 8);
   try {
-    _serverDownloads = await api('/api/downloads');
+    [_serverDownloads] = await Promise.all([
+      api('/api/downloads'),
+      api('/api/downloads/active').then(active => {
+        for (const f of active) {
+          if (!_dlHistory.find(e => e.id === f.id)) {
+            _dlHistory.push({
+              id: f.id,
+              name: f.file_name || '',
+              size: f.file_size || 0,
+              group: f.group_name || '',
+              pct: Math.round((f.download_progress || 0) * 100),
+              status: 'downloading',
+              startedAt: Date.now(),
+            });
+            S.dlQueue[f.id] = Math.round((f.download_progress || 0) * 100);
+            pollDownload(f.id);
+          }
+        }
+      }).catch(() => {}),
+    ]);
   } catch (e) {
     _serverDownloads = [];
   }
@@ -2439,6 +2459,7 @@ function showNotifMatches(notifId) {
   // Sonra notification filtresini uygula
   S.fileIdsFilter = new Set((n.file_ids || []).map(x => parseInt(x, 10)));
   S.fileIdsFilterLabel = n.keywords;
+  S.fileIdsFilterNotifId = notifId;
   S.offset = 0;
   renderChips();
   switchTab('files');
@@ -2447,6 +2468,7 @@ function showNotifMatches(notifId) {
 function clearFileIdsFilter() {
   S.fileIdsFilter = null;
   S.fileIdsFilterLabel = null;
+  S.fileIdsFilterNotifId = null;
   S.offset = 0;
   renderChips();
   loadFiles();
@@ -2474,6 +2496,7 @@ async function dismissWatchNotif(notifId) {
 
 async function dismissNotifAndReload(notifId) {
   await dismissWatchNotif(notifId);
+  if (S.fileIdsFilterNotifId === notifId) clearFileIdsFilter();
 }
 
 
@@ -2891,6 +2914,7 @@ async function loadHunterSettings() {
     set('h-sources',   _hunterSettings.sources || '');
     set('h-min-subs',  _hunterSettings.min_subscribers);
     set('h-languages', _hunterSettings.languages || '');
+    set('h-anthropic-key', _hunterSettings.anthropic_api_key || '');
     const cap = document.getElementById('hunter-cap-info');
     if (cap) cap.textContent = t('hunter.lookupsToday', {n: _hunterSettings.lookups_used_today || 0, cap: _hunterSettings.tg_daily_lookup_cap || 500});
   } catch(e) {}
@@ -2934,6 +2958,7 @@ async function hunterSaveSettings() {
     sources: get('h-sources'),
     min_subscribers: get('h-min-subs'),
     languages: get('h-languages'),
+    anthropic_api_key: get('h-anthropic-key'),
   };
   try {
     await api('/api/hunter/settings', { method: 'PUT', json: patch });
@@ -3297,6 +3322,7 @@ async function hunterShowDetail(cid) {
         ${c.status !== 'joined' && c.status !== 'blacklisted' ? `<button class="h-btn h-btn-join" data-act="join"      title="${esc(t('hunter.actionHelpJoin'))}">${esc(t('hunter.join'))}</button>` : ''}
         ${c.status !== 'rejected' && c.status !== 'blacklisted' ? `<button class="h-btn"          data-act="reject"    title="${esc(t('hunter.actionHelpReject'))}">${esc(t('hunter.reject'))}</button>` : ''}
         ${c.status !== 'blacklisted' ? `<button class="h-btn h-btn-reject" data-act="blacklist" title="${esc(t('hunter.actionHelpBlacklist'))}">${esc(t('hunter.blacklist'))}</button>` : ''}
+        ${c.status === 'blacklisted' || c.status === 'rejected' ? `<button class="h-btn" data-act="restore" title="Keşfedildi durumuna geri al">↩ Geri Al</button>` : ''}
         <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>
       </div>
 
@@ -3684,6 +3710,7 @@ function _bindHdActions() {
       case 'join':      hunterJoin(cid); break;
       case 'reject':    hunterReject(cid); break;
       case 'blacklist': hunterBlacklist(cid); break;
+      case 'restore':   hunterRestore(cid); break;
       case 'close':     closeHunterDetail(); break;
     }
   });
@@ -3736,6 +3763,17 @@ async function hunterBlacklist(cid, ev) {
   closeHunterDetail();
   hunterReloadCandidates();
   showToast(`✓ @${esc(c.username)} kara listeye eklendi.`, 3000);
+}
+
+async function hunterRestore(cid) {
+  const c = _hunterCandidates.find(x => x.id === cid) || await api(`/api/hunter/candidates/${cid}`);
+  let r;
+  try { r = await api(`/api/hunter/candidates/${cid}/restore`, { method: 'POST' }); }
+  catch (e) { showToast('Geri alınamadı: ' + esc(e.message), 4500); return; }
+  if (!r.ok) { showToast('Geri alınamadı: ' + esc(r.error || ''), 4500); return; }
+  closeHunterDetail();
+  hunterReloadCandidates();
+  showToast(`✓ @${esc(c.username)} keşfedildi durumuna geri alındı.`, 3000);
 }
 
 // ── Hunter: clear list ──────────────────────────────────────────────────────

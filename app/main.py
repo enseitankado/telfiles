@@ -325,6 +325,10 @@ async def _attach_realtime(account_id: int):
 async def lifespan(app: FastAPI):
     await database.init_db()
 
+    stale = await database.reset_stale_downloads()
+    if stale:
+        logger.info(f"Reset {stale} stale download(s) left over from previous run.")
+
     accounts = await database.list_accounts()
     if not accounts:
         logger.info("No accounts configured — open the web UI to add one.")
@@ -924,6 +928,11 @@ async def list_downloads():
     return await database.list_downloaded_files()
 
 
+@app.get("/api/downloads/active")
+async def list_active_downloads():
+    return await database.list_downloading_files()
+
+
 # ── Links ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/links")
@@ -1240,6 +1249,11 @@ async def hunter_reject(cid: int):
 @app.post("/api/hunter/candidates/{cid}/blacklist")
 async def hunter_blacklist(cid: int, reason: Optional[str] = Query(None)):
     return await hunter.blacklist_candidate(cid, reason)
+
+
+@app.post("/api/hunter/candidates/{cid}/restore")
+async def hunter_restore(cid: int):
+    return await hunter.restore_candidate(cid)
 
 
 @app.get("/api/hunter/blacklist")
