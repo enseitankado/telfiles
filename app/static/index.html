@@ -1334,6 +1334,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
       <div id="downloads-panel" style="display:none">
         <div id="dl-hist-hd">
           <span data-i18n="downloads.title">İndirmeler</span> <span id="dl-hist-count" style="color:var(--text-4);font-weight:400"></span>
+          <span id="dl-space-notice" style="display:none;margin-left:10px;font-size:.72rem;color:var(--text-3);font-weight:400">⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span></span>
           <span id="dl-bulk-actions" style="display:none;align-items:center;gap:6px;margin-left:14px">
             <span id="dl-bulk-count" style="font-size:.72rem;color:var(--accent-h);font-weight:600"></span>
             <button class="dl-bulk-btn" id="dl-bulk-dl" onclick="bulkDownloadDownloaded()">⬇ Seçilenleri İndir</button>
@@ -1342,9 +1343,6 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             <button class="dl-bulk-btn dl-bulk-btn-alt" onclick="clearDownloadSelection()">Temizle</button>
           </span>
           <button onclick="loadDownloadsList()" data-i18n="downloads.refresh" style="margin-left:auto;font-size:.72rem;padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;color:var(--text-3)">Yenile</button>
-        </div>
-        <div id="dl-space-notice" style="display:none;margin:8px 12px 0;padding:7px 12px;font-size:.74rem;color:var(--text-2);background:var(--bg-info);border:1px solid var(--accent-soft);border-radius:6px">
-          ⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span>
         </div>
         <div id="dl-hist-body-wrap">
           <table class="dlt-table">
