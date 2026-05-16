@@ -420,6 +420,7 @@ const I18N = {
     'downloads.bulkCancel': 'İptal',
     'downloads.dlBlobTip': 'Tarayıcıya indir',
     'downloads.delTip': "Volume'den sil",
+    'downloads.spaceNotice': 'Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.',
 
     // Status panel
     'status.totalFiles': 'Toplam Dosya',
@@ -887,6 +888,7 @@ const I18N = {
     'downloads.bulkCancel': 'Cancel',
     'downloads.dlBlobTip': 'Download to browser',
     'downloads.delTip': 'Remove from volume',
+    'downloads.spaceNotice': 'These files take up server disk space. Download to your browser and delete when no longer needed.',
 
     'status.totalFiles': 'Total Files',
     'status.totalSize': 'Total Size',
@@ -1349,6 +1351,7 @@ const I18N = {
     'downloads.bulkCancel': 'Abbrechen',
     'downloads.dlBlobTip': 'In Browser herunterladen',
     'downloads.delTip': 'Aus Volume entfernen',
+    'downloads.spaceNotice': 'Diese Dateien belegen Speicherplatz auf dem Server. Bei Nichtbedarf in den Browser herunterladen und löschen.',
 
     'status.totalFiles': 'Dateien gesamt',
     'status.totalSize': 'Größe gesamt',
@@ -1811,6 +1814,7 @@ const I18N = {
     'downloads.bulkCancel': 'Отмена',
     'downloads.dlBlobTip': 'Скачать в браузер',
     'downloads.delTip': 'Удалить с тома',
+    'downloads.spaceNotice': 'Эти файлы занимают место на диске сервера. Скачайте в браузер и удалите, когда они больше не нужны.',
 
     'status.totalFiles': 'Всего файлов',
     'status.totalSize': 'Общий размер',
@@ -2273,6 +2277,7 @@ const I18N = {
     'downloads.bulkCancel': '取消',
     'downloads.dlBlobTip': '下载到浏览器',
     'downloads.delTip': '从卷中删除',
+    'downloads.spaceNotice': '这些文件占用服务器磁盘空间。不再需要时请下载到浏览器并删除。',
 
     'status.totalFiles': '文件总数',
     'status.totalSize': '总大小',

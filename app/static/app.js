@@ -1651,6 +1651,10 @@ function renderDownloadsTab() {
   all = _active.concat(_done);
   _updateDlSortArrows();
 
+  const notice = document.getElementById('dl-space-notice');
+  const completedSize = _serverDownloads.reduce((s, d) => s + (d.file_size || 0), 0);
+  if (notice) notice.style.display = completedSize > 0 ? '' : 'none';
+
   if (!all.length) {
     tbody.innerHTML = '';
     empty.style.display = '';
@@ -1658,7 +1662,11 @@ function renderDownloadsTab() {
     return;
   }
   empty.style.display = 'none';
-  if (count) count.textContent = `(${all.length})`;
+  if (count) {
+    count.textContent = completedSize > 0
+      ? `(${all.length}) · ${fmtSize(completedSize)}`
+      : `(${all.length})`;
+  }
 
   // Drop selections for ids that are no longer present at all
   const knownIds = new Set(all.map(r => r.id));
