@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS files (
     mime_type TEXT,
     file_size BIGINT DEFAULT 0,
     date TIMESTAMPTZ NOT NULL,
+    synced_at TIMESTAMPTZ,
     local_path TEXT,
     downloaded_at TIMESTAMPTZ,
     downloading BOOLEAN DEFAULT FALSE,
@@ -142,6 +143,7 @@ CREATE TABLE IF NOT EXISTS hunter_settings (
     min_subscribers INTEGER DEFAULT 0,
     languages TEXT,                -- comma separated language codes ('tr','en'…) or empty
     sources TEXT DEFAULT '',  -- empty = run every adapter registered in hunter._STAGE2_SOURCES
+    anthropic_api_key TEXT DEFAULT '',
     last_run_at TIMESTAMPTZ,
     next_run_at TIMESTAMPTZ
 );
@@ -319,6 +321,10 @@ async def _migrate_to_multi_account():
     # Add discovered_by_account_id columns if missing (idempotent)
     await _exec("""ALTER TABLE files ADD COLUMN IF NOT EXISTS discovered_by_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL""")
     await _exec("""ALTER TABLE links ADD COLUMN IF NOT EXISTS discovered_by_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL""")
+    # Add synced_at column if missing; existing rows keep NULL (unknown sync time)
+    await _exec("""ALTER TABLE files ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ""")
+    # Add anthropic_api_key to hunter_settings if missing
+    await _exec("""ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS anthropic_api_key TEXT DEFAULT ''""")
 
     # If no accounts exist but legacy credentials/session is present, seed default Account 1
     n = await _qval("SELECT COUNT(*) FROM accounts")
@@ -520,8 +526,8 @@ async def insert_file(
         date_ts = datetime.fromisoformat(date.replace("Z", "+00:00")) if date else datetime.utcnow()
         await _exec(
             """INSERT INTO files
-               (group_id, message_id, file_name, file_ext, mime_type, file_size, date, context, discovered_by_account_id)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)""",
+               (group_id, message_id, file_name, file_ext, mime_type, file_size, date, synced_at, context, discovered_by_account_id)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)""",
             group_id, message_id, file_name, file_ext, mime_type, file_size, date_ts, context, discovered_by_account_id,
         )
         return True
@@ -626,9 +632,9 @@ async def search_files(
     args: List[Any] = []
     idx = 1
 
-    if query:
+    for word in query.split():
         conditions.append(f"f.file_name ILIKE ${idx}")
-        args.append(f"%{query}%"); idx += 1
+        args.append(f"%{word}%"); idx += 1
     if ext:
         conditions.append(f"LOWER(f.file_ext) = LOWER(${idx})")
         args.append(ext.lstrip(".")); idx += 1
@@ -1077,10 +1083,10 @@ async def get_stats() -> Dict:
     total_size       = await _qval("SELECT COALESCE(SUM(file_size),0) FROM files")
     downloaded_size  = await _qval("SELECT COALESCE(SUM(file_size),0) FROM files WHERE local_path IS NOT NULL")
     recent           = await _qrow(
-        """SELECT COUNT(*) FILTER (WHERE date >= NOW()-INTERVAL '24 hours')                        AS cnt24,
-                  COALESCE(SUM(file_size) FILTER (WHERE date >= NOW()-INTERVAL '24 hours'),0)      AS sz24,
-                  COUNT(*) FILTER (WHERE date >= NOW()-INTERVAL '7 days')                          AS cnt7,
-                  COALESCE(SUM(file_size) FILTER (WHERE date >= NOW()-INTERVAL '7 days'),0)        AS sz7
+        """SELECT COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours')                        AS cnt24,
+                  COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours'),0)      AS sz24,
+                  COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days')                          AS cnt7,
+                  COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days'),0)        AS sz7
            FROM files"""
     )
     return {
@@ -1433,6 +1439,7 @@ DEFAULT_HUNTER_SETTINGS = {
     "schedule_kind": "manual", "schedule_interval_seconds": 86400,
     "keywords": "", "min_subscribers": 0, "languages": "",
     "sources": "",  # empty = run every adapter registered in hunter._STAGE2_SOURCES
+    "anthropic_api_key": "",
     "tg_temp_join_enabled": True,
     # Auto-learned keyword pool, comma-separated. Grown by Stage 3 after
     # each successful enrichment; merged into the Stage 2 keyword list on
