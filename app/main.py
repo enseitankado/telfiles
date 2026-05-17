@@ -898,6 +898,10 @@ async def trigger_download(file_id: int, background_tasks: BackgroundTasks, body
         raise HTTPException(404, "File not found")
 
     if f["local_path"] and os.path.exists(f["local_path"]):
+        if body.destination_ids:
+            # Dosya zaten indirdi ama transfer istendi — download_file yerel cache'ten döner
+            background_tasks.add_task(_download_and_transfer, file_id, body.destination_ids)
+            return {"status": "transfer_started", "path": f["local_path"]}
         return {"status": "already_downloaded", "path": f["local_path"]}
 
     if f["downloading"]:
@@ -995,6 +999,19 @@ async def api_test_transfer_destination(dest_id: int):
     dest = await database.get_transfer_destination(dest_id)
     if not dest:
         raise HTTPException(404, "Hedef bulunamadı")
+    result = await _transfer.test_destination(dest)
+    return result
+
+
+class TransferTestConfigBody(BaseModel):
+    type: str
+    config: dict = {}
+
+
+@app.post("/api/transfer-destinations/test-config")
+async def api_test_transfer_config(body: TransferTestConfigBody):
+    """Kaydetmeden önce geçici bir yapılandırmayı test et."""
+    dest = {"type": body.type, "config": body.config}
     result = await _transfer.test_destination(dest)
     return result
 

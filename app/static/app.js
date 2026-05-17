@@ -1502,6 +1502,11 @@ async function _doDownload(fileId, destinationIds) {
     json: { destination_ids: destinationIds || [] },
   });
   if (r.status === 'already_downloaded') { loadFiles(); return; }
+  if (r.status === 'transfer_started') {
+    showToast('Dosya zaten indirdi — transfer başlatıldı.');
+    loadFiles();
+    return;
+  }
 
   if (!_dlHistory.find(e => e.id === fileId)) {
     _dlHistory.push({ id: fileId, name: '', size: 0, group: '', pct: 0, status: 'queued', startedAt: Date.now() });
@@ -4139,6 +4144,8 @@ function resetTdForm() {
   document.getElementById('td-remote-path').value = '/';
   document.getElementById('td-passive').value = 'true';
   document.getElementById('td-enabled').checked = true;
+  const res = document.getElementById('td-test-result');
+  if (res) res.style.display = 'none';
   onTdTypeChange();
 }
 
@@ -4203,6 +4210,38 @@ function _buildTdBody() {
     if (type === 'ftp') config.passive = document.getElementById('td-passive').value !== 'false';
   }
   return { name, type, config, enabled: document.getElementById('td-enabled').checked };
+}
+
+async function testTransferDestForm() {
+  const body = _buildTdBody();
+  if (!body) return;
+  const btn = document.getElementById('td-form-test-btn');
+  const res = document.getElementById('td-test-result');
+  if (btn) { btn.textContent = 'Test ediliyor…'; btn.disabled = true; }
+  if (res) { res.style.display = 'none'; }
+  try {
+    const r = await api('/api/transfer-destinations/test-config', {
+      method: 'POST',
+      json: { type: body.type, config: body.config },
+    });
+    if (res) {
+      res.style.display = 'block';
+      res.style.background = r.ok ? '#dcfce7' : '#fee2e2';
+      res.style.color = r.ok ? '#15803d' : '#dc2626';
+      res.style.border = r.ok ? '1px solid #86efac' : '1px solid #fca5a5';
+      res.textContent = (r.ok ? '✓ ' : '✗ ') + (r.message || '');
+    }
+  } catch (e) {
+    if (res) {
+      res.style.display = 'block';
+      res.style.background = '#fee2e2';
+      res.style.color = '#dc2626';
+      res.style.border = '1px solid #fca5a5';
+      res.textContent = '✗ ' + (e.message || 'Bağlantı testi başarısız');
+    }
+  } finally {
+    if (btn) { btn.textContent = 'Bağlantıyı Test Et'; btn.disabled = false; }
+  }
 }
 
 async function saveTransferDest() {
