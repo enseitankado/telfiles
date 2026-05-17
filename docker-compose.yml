@@ -30,6 +30,7 @@ services:
       - ./data:/app/data
       - ./downloads:/app/downloads
       - ./app/static:/app/static
+      - /:/app/host
     env_file:
       - .env
     environment:

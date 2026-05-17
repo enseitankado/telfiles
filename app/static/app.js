@@ -4143,6 +4143,7 @@ function resetTdForm() {
   document.getElementById('td-pass').value = '';
   document.getElementById('td-remote-path').value = '/';
   document.getElementById('td-passive').value = 'true';
+  document.getElementById('td-remote-mode').value = 'copy';
   document.getElementById('td-enabled').checked = true;
   const res = document.getElementById('td-test-result');
   if (res) res.style.display = 'none';
@@ -4181,6 +4182,7 @@ function editTransferDest(id) {
       document.getElementById('td-pass').value = cfg.password || '';
       document.getElementById('td-remote-path').value = cfg.path || '/';
       document.getElementById('td-passive').value = cfg.passive !== false ? 'true' : 'false';
+      document.getElementById('td-remote-mode').value = cfg.mode || 'copy';
     }
     onTdTypeChange();
     document.getElementById('td-add-form').style.display = 'block';
@@ -4206,6 +4208,7 @@ function _buildTdBody() {
       username: document.getElementById('td-user').value.trim(),
       password: document.getElementById('td-pass').value,
       path: document.getElementById('td-remote-path').value.trim() || '/',
+      mode: document.getElementById('td-remote-mode').value,
     };
     if (type === 'ftp') config.passive = document.getElementById('td-passive').value !== 'false';
   }
