@@ -88,7 +88,7 @@ async function uiAuthLogin() {
   try {
     await api('/api/uiauth/login', { method: 'POST', json: { password: pw, remember } });
   } catch (e) {
-    msg.textContent = e.message || 'Hatalı parola';
+    msg.textContent = e.message || t('pw.wrongPass');
     return;
   }
   document.getElementById('ug-pass').value = '';
@@ -97,7 +97,7 @@ async function uiAuthLogin() {
 }
 
 async function uiAuthLogout() {
-  if (!confirm('Arabirim oturumu kapatılsın mı?')) return;
+  if (!confirm(t('pw.confirmLogout'))) return;
   try { await fetch('/api/uiauth/logout', { method: 'POST', credentials: 'same-origin' }); }
   catch (e) {}
   location.reload();
@@ -106,17 +106,17 @@ async function uiAuthLogout() {
 async function uiAuthChangePassword() {
   const cur = document.getElementById('ui-cur-pw').value;
   const nw  = document.getElementById('ui-new-pw').value;
-  if (!nw) { showToast('Yeni parola boş olamaz.', 3000); return; }
+  if (!nw) { showToast(t('pw.emptyNew'), 3000); return; }
   try {
     await api('/api/uiauth/change-password', {
       method: 'POST',
       json: { current_password: cur, new_password: nw },
     });
   } catch (e) {
-    showToast('Parola değiştirilemedi: ' + esc(e.message), 4000);
+    showToast(t('pw.changeFail') + ' ' + esc(e.message), 4000);
     return;
   }
-  showToast('Parola değiştirildi. Tekrar giriş yapman gerekiyor.', 2500);
+  showToast(t('pw.changeOk'), 2500);
   setTimeout(() => location.reload(), 1500);
 }
 
@@ -126,9 +126,7 @@ async function _refreshUiPwState() {
   if (!el) return;
   try {
     const r = await fetch('/api/uiauth/check').then(r => r.json());
-    el.textContent = r.default_password
-      ? 'varsayılan parola (admin) — değiştirmen önerilir'
-      : 'özel parola tanımlı';
+    el.textContent = r.default_password ? t('pw.statDefault') : t('pw.statCustom');
   } catch (e) { /* leave as-is */ }
 }
 
@@ -152,6 +150,9 @@ function applySavedTheme() {
 
 function show(id) { document.getElementById(id).style.display = 'flex'; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+const _LANG_LOCALE = { tr: 'tr-TR', en: 'en-US', de: 'de-DE', ru: 'ru-RU', zh: 'zh-CN' };
+function _locale() { return _LANG_LOCALE[getLang()] || 'en-US'; }
 
 // Kullanıcı greeter'da "Şimdi geç" dediyse, sonraki yenilemelerde aynı
 // formu tekrar göstermek için bir localStorage flag'i kullanıyoruz.
@@ -218,20 +219,20 @@ function showUpdateBanner(v) {
   el.innerHTML = `
     <div class="tfu-row">
       <div class="tfu-msg">
-        <b>Yeni sürüm var.</b>
-        <span class="tfu-dim">Yüklü: <code>${esc(localShort)}</code> · GitHub: <code>${esc(latestShort)}</code></span>
+        <b>${esc(t('update.newVersion'))}</b>
+        <span class="tfu-dim">${esc(t('update.installed'))} <code>${esc(localShort)}</code> · GitHub: <code>${esc(latestShort)}</code></span>
       </div>
       <div class="tfu-actions">
-        <button class="tfu-btn" id="tfu-copy">Güncelleme komutunu kopyala</button>
-        <button class="tfu-link" id="tfu-later">Daha sonra</button>
+        <button class="tfu-btn" id="tfu-copy">${esc(t('update.copyBtn'))}</button>
+        <button class="tfu-link" id="tfu-later">${esc(t('update.later'))}</button>
       </div>
     </div>
     <div class="tfu-cmd"><code>${esc(cmd)}</code></div>
   `;
   document.body.appendChild(el);
   document.getElementById('tfu-copy').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(cmd); showToast('Komut kopyalandı. Sunucunuzda çalıştırın.'); }
-    catch { showToast('Kopyalama başarısız — komutu elle kopyalayın.'); }
+    try { await navigator.clipboard.writeText(cmd); showToast(t('update.cmdCopied')); }
+    catch { showToast(t('update.copyFail')); }
   });
   document.getElementById('tfu-later').addEventListener('click', () => {
     localStorage.setItem('tf_update_dismissed_commit', v.latest.commit);
@@ -346,13 +347,13 @@ async function authSaveCreds() {
   const idStr   = document.getElementById('inp-api-id').value.trim();
   const hashStr = document.getElementById('inp-api-hash').value.trim();
   const apiId = parseInt(idStr, 10);
-  if (!apiId || !hashStr) { loginMsg('API ID ve API Hash gerekli.'); return; }
+  if (!apiId || !hashStr) { loginMsg(t('creds.apiRequired')); return; }
   try {
     await api('/api/credentials', { method: 'POST', json: {
       api_id: apiId, api_hash: hashStr, account_id: _loginAccountId || 1
     }});
-  } catch (e) { loginMsg('Kaydedilemedi: ' + e.message); return; }
-  _setCredsSkipped(false);   // Kimlik girildi: skip flag'i artık geçerli değil.
+  } catch (e) { loginMsg(t('creds.saveFail') + ' ' + e.message); return; }
+  _setCredsSkipped(false);
   loginMsg('');
   showStep('phone');
   setTimeout(() => document.getElementById('inp-phone')?.focus(), 30);
@@ -373,7 +374,7 @@ function authSkipCreds() {
       switchTab('settings');
       switchSettingsTab('account');
     } catch (e) { /* tab switcher henüz hazır değilse sessizce geç */ }
-    showToast('API ID/Hash girilmedi. Ayarlar → Hesap üzerinden ekleyebilirsiniz.', 6000);
+    showToast(t('creds.needApiKey'), 6000);
   });
 }
 
@@ -427,7 +428,7 @@ async function loadCredentials() {
     const hashEl = document.getElementById('creds-cur-hash');
     const idInp  = document.getElementById('creds-api-id');
     const hashInp = document.getElementById('creds-api-hash');
-    if (idEl)   idEl.textContent   = r.api_id ? r.api_id : '— (tanımlı değil)';
+    if (idEl)   idEl.textContent   = r.api_id ? r.api_id : t('creds.notDefined');
     if (hashEl) hashEl.textContent = r.api_hash_masked || '—';
     // Prefill the inputs only if the user hasn't already started editing
     if (idInp   && r.api_id   != null && document.activeElement !== idInp   && !idInp.value)   idInp.value   = r.api_id;
@@ -440,40 +441,40 @@ async function saveCredentials() {
   const hashStr = document.getElementById('creds-api-hash').value.trim();
   const apiId = parseInt(idStr, 10);
   if (!apiId || !hashStr) {
-    showToast('API ID ve API Hash gerekli.');
+    showToast(t('creds.apiRequired'));
     return;
   }
-  if (!confirm('Kaydedince mevcut oturum kapatılacak ve giriş ekranı açılacak. Devam edilsin mi?')) return;
+  if (!confirm(t('creds.saveConfirm'))) return;
   try {
     await api('/api/credentials', { method: 'POST', json: { api_id: apiId, api_hash: hashStr } });
   } catch (e) {
-    showToast('Kaydedilemedi: ' + esc(e.message));
+    showToast(t('creds.saveFail') + ' ' + esc(e.message));
     return;
   }
-  _setCredsSkipped(false);   // Açık kararla creds girildi; skip flag'ini temizle.
+  _setCredsSkipped(false);
   document.getElementById('creds-api-id').value = '';
   document.getElementById('creds-api-hash').value = '';
-  showToast('Kimlik bilgileri kaydedildi. Giriş ekranı açılıyor…', 2500);
+  showToast(t('creds.saveOk'), 2500);
   setTimeout(() => location.reload(), 1200);
 }
 
 async function logoutAccount() {
-  if (!confirm('Hesaptan çıkış yapılacak. Devam edilsin mi?')) return;
+  if (!confirm(t('creds.logoutConfirm'))) return;
   try {
     await api('/api/auth/logout', { method: 'POST' });
   } catch (e) {
-    showToast('Çıkış yapılamadı: ' + esc(e.message));
+    showToast(t('creds.logoutFail') + ' ' + esc(e.message));
     return;
   }
-  showToast('Çıkış yapıldı. Giriş ekranı açılıyor…', 2500);
+  showToast(t('creds.logoutOk'), 2500);
   setTimeout(() => location.reload(), 1200);
 }
 
 // ── Sync interval ─────────────────────────────────────────────────────────────
 function _fmtInterval(sec) {
-  if (sec >= 86400) return Math.round(sec / 86400) + ' gün';
-  if (sec >= 3600)  return Math.round(sec / 3600)  + ' saat';
-  return Math.round(sec / 60) + ' dk';
+  if (sec >= 86400) return t('fmt.days',    { n: Math.round(sec / 86400) });
+  if (sec >= 3600)  return t('fmt.hours',   { n: Math.round(sec / 3600) });
+  return                       t('fmt.minutes', { n: Math.round(sec / 60) });
 }
 
 async function loadSyncInterval() {
@@ -485,7 +486,7 @@ async function loadSyncInterval() {
   if (cur)  cur.textContent = _fmtInterval(r.sync_interval_seconds);
   if (next) {
     next.textContent = r.next_sync_at
-      ? new Date(r.next_sync_at * 1000).toLocaleString('tr-TR')
+      ? new Date(r.next_sync_at * 1000).toLocaleString(getLang())
       : '—';
   }
   document.querySelectorAll('#sync-int-presets .sync-preset').forEach(b => {
@@ -497,11 +498,11 @@ async function loadSyncInterval() {
 async function saveSyncInterval(secs) {
   try {
     await api('/api/settings', { method: 'PUT', json: { sync_interval_seconds: secs } });
-    showToast(`Tarama aralığı: ${_fmtInterval(secs)}.`, 2500);
+    showToast(t('sync.intervalSaved', { interval: _fmtInterval(secs) }), 2500);
     loadSyncInterval();
     pollSync();
   } catch (e) {
-    showToast('Aralık kaydedilemedi: ' + esc(e.message), 4000);
+    showToast(t('sync.intervalFail') + ' ' + esc(e.message), 4000);
   }
 }
 
@@ -510,13 +511,13 @@ async function startSync() {
   const btn = document.getElementById('pg-sync-btn');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
-  btn.textContent = 'Başlatılıyor…';
+  btn.textContent = t('sync.starting');
   try {
     await api('/api/sync/start', {method:'POST'});
   } catch(e) {
     console.error('Sync start error:', e);
     btn.disabled = false;
-    btn.textContent = 'Tara';
+    btn.textContent = t('sync.scan');
     return;
   }
   pollSync();
@@ -620,7 +621,7 @@ function updateLastSyncDisplay() {
     return;
   }
   const date = new Date(ts * 1000);
-  lastEl.textContent = t('sync.lastSync', {date: date.toLocaleString(getLang() === 'tr' ? 'tr-TR' : (getLang()==='zh'?'zh-CN':(getLang()==='ru'?'ru-RU':(getLang()==='de'?'de-DE':'en-US'))))});
+  lastEl.textContent = t('sync.lastSync', {date: date.toLocaleString(_locale())});
   if (elapsedEl) {
     const elapsed = Date.now() / 1000 - ts;
     elapsedEl.textContent = t('sync.ago', {dur: _fmtElapsed(elapsed)});
@@ -717,8 +718,8 @@ function renderSidebar() {
     return `<div class="g-item${selCls}${hidCls}${exclCls}" onclick="selectGroup(${g.id},event)">
       <span class="g-name" title="${esc(name)}">${esc(name)}</span>
       <div class="g-acts">
-        <button class="ga" onclick="openGroupNameEdit(event,${g.id})" title="İsim düzenle">✏</button>
-        <a class="ga ga-tg" href="${esc(tgHref)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Telegram'da aç">↗</a>
+        <button class="ga" onclick="openGroupNameEdit(event,${g.id})" title="${esc(t('groups.editName'))}">✏</button>
+        <a class="ga ga-tg" href="${esc(tgHref)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(t('table.openTg'))}">↗</a>
       </div>
       <div class="g-meta">${(g.file_count||0).toLocaleString()} · ${fmtSize(g.total_size||0)}</div>
     </div>`;
@@ -864,19 +865,13 @@ async function leaveGroup(e, id) {
   if (e) e.stopPropagation();
   const g = _groups.find(x => x.id === id);
   const name = g ? (g.display_name || g.name) : `#${id}`;
-  if (!confirm(
-    `“${name}” grubundan Telegram hesabında AYRILMAK üzeresin.\n\n` +
-    `· Bu işlem Telegram tarafında üyeliğini sonlandırır.\n` +
-    `· Sahibi olduğun bir grupsa, grup tüm üyeler için silinir.\n` +
-    `· Yerel veriler (dosya/link kayıtları) korunur ama grup “takip edilmiyor” olarak işaretlenir.\n\n` +
-    `Devam edilsin mi?`
-  )) return;
-  const purge = confirm(`Bu grupla ilgili yerel veriler (${(g?.file_count||0).toLocaleString()} dosya kaydı) tamamen silinsin mi?\n\nİptal: kayıtlar duruyor, sadece takipten çıkarılır.\nTamam: kayıtlar veritabanından silinir.`);
+  if (!confirm(t('groups.leaveConfirm', { name }))) return;
+  const purge = confirm(t('groups.purgeConfirm', { count: (g?.file_count||0).toLocaleString() }));
   try {
     await api(`/api/groups/${id}/leave?purge=${purge}`, { method: 'POST' });
-    showToast(`“${esc(name)}” gruptan ayrıldı.`, 3000);
+    showToast(t('groups.leaveOk', { name: esc(name) }), 3000);
   } catch (err) {
-    showToast('Ayrılamadı: ' + esc(err.message), 5000);
+    showToast(t('groups.leaveFail') + ' ' + esc(err.message), 5000);
     return;
   }
   S.selectedGroups.delete(id);
@@ -888,18 +883,18 @@ async function rescanGroup(e, id) {
   try {
     const r = await api(`/api/groups/${id}/rescan`, { method: 'POST' });
     showToast(r.queued
-      ? `“${esc(r.name||id)}” sıfırdan taranıyor.`
-      : `“${esc(r.name||id)}” sıraya alındı; mevcut tarama bitince çalışacak.`,
+      ? t('groups.rescanStarted', { name: esc(r.name||id) })
+      : t('groups.rescanQueued',  { name: esc(r.name||id) }),
       3000);
   } catch (err) {
-    showToast('Yeniden tarama başlatılamadı: ' + esc(err.message), 4000);
+    showToast(t('groups.rescanFail') + ' ' + esc(err.message), 4000);
   }
 }
 
 async function bulkRescanGroups() {
   const ids = [...S.selectedGroups];
   if (!ids.length) return;
-  if (!confirm(`Seçili ${ids.length} grup sıfırdan yeniden taranacak. Devam edilsin mi?`)) return;
+  if (!confirm(t('groups.rescanConfirm', { n: ids.length }))) return;
   let failed = 0;
   for (const id of ids) {
     try { await api(`/api/groups/${id}/rescan`, { method: 'POST' }); }
@@ -907,21 +902,15 @@ async function bulkRescanGroups() {
   }
   S.selectedGroups.clear();
   renderSidebar();
-  if (failed) showToast(`${ids.length - failed} grup tarandı, ${failed} hata.`, 4000);
-  else        showToast(`${ids.length} grup için yeniden tarama başlatıldı.`, 3000);
+  if (failed) showToast(t('groups.rescanSome', { ok: ids.length - failed, fail: failed }), 4000);
+  else        showToast(t('groups.rescanOk', { n: ids.length }), 3000);
 }
 
 async function bulkLeaveGroups() {
   const ids = [...S.selectedGroups];
   if (!ids.length) return;
-  if (!confirm(
-    `Seçili ${ids.length} grup için Telegram hesabında AYRILMA işlemi yapılacak.\n\n` +
-    `· Her grup için Telegram tarafında üyeliğin sonlanır.\n` +
-    `· Sahibi olduğun gruplarda grup tüm üyeler için silinir.\n` +
-    `· Yerel veriler (dosya/link kayıtları) korunur, sadece takipten çıkarılır.\n\n` +
-    `Devam edilsin mi?`
-  )) return;
-  const purge = confirm(`Ayrıca seçili grupların yerel kayıtları (dosyalar/linkler) veritabanından silinsin mi?\n\nİptal: kayıtlar kalsın.\nTamam: tamamen silinsin.`);
+  if (!confirm(t('groups.bulkLeaveConfirm', { n: ids.length }))) return;
+  const purge = confirm(t('groups.bulkLeavePurge'));
   let ok = 0, failed = 0;
   for (const id of ids) {
     try {
@@ -933,8 +922,8 @@ async function bulkLeaveGroups() {
   }
   S.selectedGroups.clear();
   await loadGroups();
-  if (failed) showToast(`${ok} grupta başarılı, ${failed} hata.`, 4500);
-  else showToast(`${ok} gruptan ayrıldın.`, 3000);
+  if (failed) showToast(t('groups.bulkLeaveSome', { ok, fail: failed }), 4500);
+  else showToast(t('groups.bulkLeaveOk', { ok }), 3000);
 }
 
 function bulkClearSelection() { S.selectedGroups.clear(); renderSidebar(); }
@@ -1189,8 +1178,8 @@ function stSystem(d) {
 
 function stSync(d) {
   const s = d.sync || {};
-  const lastAt   = s.last_sync_at ? new Date(s.last_sync_at).toLocaleString('tr-TR') : '—';
-  const nextAt   = s.next_sync_at && s.next_sync_at > 0 ? new Date(s.next_sync_at*1000).toLocaleString('tr-TR') : '—';
+  const lastAt   = s.last_sync_at ? new Date(s.last_sync_at).toLocaleString(_locale()) : '—';
+  const nextAt   = s.next_sync_at && s.next_sync_at > 0 ? new Date(s.next_sync_at*1000).toLocaleString(_locale()) : '—';
   const statusTxt = s.running
     ? `🔄 ${s.processed_groups||0} / ${s.total_groups||0}`
     : t('status.ready');
@@ -1372,7 +1361,7 @@ function renderFiles(files, gFilter) {
     // Same file (name + size) re-posted across multiple messages collapses
     // into one row; surface the underlying count.
     const dupBadge = (f.appearances && f.appearances > 1)
-      ? `<span class="link-dup-badge" title="${f.appearances} mesajda paylaşılmış">×${f.appearances}</span>`
+      ? `<span class="link-dup-badge" title="${esc(t('table.appearances', { n: f.appearances }))}">×${f.appearances}</span>`
       : '';
     return `<tr${selRow} onclick="selectFileRow(event,${f.id})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
@@ -1503,7 +1492,7 @@ async function _doDownload(fileId, destinationIds) {
   });
   if (r.status === 'already_downloaded') { loadFiles(); return; }
   if (r.status === 'transfer_started') {
-    showToast('Dosya zaten indirdi — transfer başlatıldı.');
+    showToast(t('dl.transferStarted'));
     loadFiles();
     return;
   }
@@ -1511,7 +1500,7 @@ async function _doDownload(fileId, destinationIds) {
   if (!_dlHistory.find(e => e.id === fileId)) {
     _dlHistory.push({ id: fileId, name: '', size: 0, group: '', pct: 0, status: 'queued', startedAt: Date.now() });
     if (S.activeTab !== 'downloads') {
-      showToast('İndirme başladı. <a onclick="switchTab(\'downloads\')">İndirmeler sekmesinden</a> takip edebilirsin.');
+      showToast(t('dl.downloadStarted', { link: `<a onclick="switchTab('downloads')" style="cursor:pointer;text-decoration:underline">${t('dl.goToDownloads')}</a>` }));
     }
   }
 
@@ -1689,7 +1678,7 @@ function renderDownloadsTab() {
 
   const completedRows = _serverDownloads.map(d => ({
     id: d.id,
-    name: d.file_name || `Dosya #${d.id}`,
+    name: d.file_name || t('common.fileId', { n: d.id }),
     size: d.file_size || 0,
     group: d.group_name || '',
     pct: 100,
@@ -1767,12 +1756,12 @@ function renderDownloadsTab() {
     const checked = S.selectedDownloads.has(e.id) ? ' checked' : '';
     const chkCell = `<input type="checkbox" class="dl-row-chk" data-status="${e.status}"${checked} onchange="toggleDownloadSelect(${e.id},this.checked)">`;
     const actions = isDone
-      ? `<button class="dl-act dl-act-dl" onclick="downloadBlob(${e.id})" title="Tarayıcıya indir">⬇</button>
-         <button class="dl-act dl-act-del" onclick="deleteLocalFile(${e.id})" title="Volume'den sil">🗑</button>`
-      : `<button class="dl-act dl-act-del" onclick="cancelDownload(${e.id})" title="İndirmeyi iptal et">✕</button>`;
+      ? `<button class="dl-act dl-act-dl" onclick="downloadBlob(${e.id})" title="${esc(t('dl.downloadTitle'))}">⬇</button>
+         <button class="dl-act dl-act-del" onclick="deleteLocalFile(${e.id})" title="${esc(t('dl.deleteTitle'))}">🗑</button>`
+      : `<button class="dl-act dl-act-del" onclick="cancelDownload(${e.id})" title="${esc(t('dl.cancelTitle'))}">✕</button>`;
     return `<tr>
       <td class="chk-cell">${chkCell}</td>
-      <td title="${esc(e.name||'')}">${esc(e.name || `Dosya #${e.id}`)}</td>
+      <td title="${esc(e.name||'')}">${esc(e.name || t('common.fileId', { n: e.id }))}</td>
       <td>${fmtSize(e.size)}</td>
       <td>${esc(e.group||'')}</td>
       <td>${e.downloaded_at ? fmtDate(e.downloaded_at) : '—'}</td>
@@ -1821,7 +1810,7 @@ function updateDownloadBulkBar() {
   if (!bar) return;
   const n = S.selectedDownloads.size;
   bar.style.display = n > 0 ? 'inline-flex' : 'none';
-  if (cnt) cnt.textContent = `${n} dosya seçili`;
+  if (cnt) cnt.textContent = t('dl.filesSelected', { n });
   const { done, inflight } = _selectedDownloadIdsByStatus();
   const dlBtn = document.getElementById('dl-bulk-dl');
   const delBtn = document.getElementById('dl-bulk-del');
@@ -1846,13 +1835,13 @@ function bulkDownloadDownloaded() {
   const { done } = _selectedDownloadIdsByStatus();
   if (!done.length) return;
   done.forEach((id, i) => setTimeout(() => downloadBlob(id), i * 200));
-  showToast(`${done.length} dosya indiriliyor.`, 2500);
+  showToast(t('dl.downloading', { n: done.length }), 2500);
 }
 
 async function bulkDeleteDownloaded() {
   const { done } = _selectedDownloadIdsByStatus();
   if (!done.length) return;
-  if (!confirm(`Seçili ${done.length} tamamlanmış dosya volume'den kalıcı silinecek. Devam edilsin mi?`)) return;
+  if (!confirm(t('dl.deleteConfirmBulk', { n: done.length }))) return;
   let failed = 0;
   for (const id of done) {
     try { await api(`/api/files/${id}/local`, { method: 'DELETE' }); }
@@ -1861,15 +1850,15 @@ async function bulkDeleteDownloaded() {
   done.forEach(id => S.selectedDownloads.delete(id));
   await loadDownloadsList();
   loadFiles();
-  if (failed) showToast(`${done.length - failed} silindi, ${failed} hata oluştu.`, 4000);
-  else showToast(`${done.length} dosya silindi.`, 2500);
+  if (failed) showToast(t('dl.deletedSome', { ok: done.length - failed, fail: failed }), 4000);
+  else showToast(t('dl.deletedBulk', { n: done.length }), 2500);
 }
 
 async function cancelDownload(fileId) {
   try {
     await api(`/api/files/${fileId}/cancel`, { method: 'POST' });
   } catch (e) {
-    showToast('İptal edilemedi: ' + esc(e.message), 4000);
+    showToast(t('dl.cancelFail') + ' ' + esc(e.message), 4000);
     return;
   }
   // Remove the in-flight entry from the local history; the next poll for that
@@ -1880,13 +1869,13 @@ async function cancelDownload(fileId) {
   S.selectedDownloads.delete(fileId);
   if (S.activeTab === 'downloads') renderDownloadsTab();
   loadFiles();
-  showToast('İndirme iptal edildi.', 2500);
+  showToast(t('dl.cancelOk'), 2500);
 }
 
 async function bulkCancelDownloads() {
   const { inflight } = _selectedDownloadIdsByStatus();
   if (!inflight.length) return;
-  if (!confirm(`Seçili ${inflight.length} devam eden indirme iptal edilecek. Devam edilsin mi?`)) return;
+  if (!confirm(t('dl.cancelConfirmBulk', { n: inflight.length }))) return;
   let failed = 0;
   for (const id of inflight) {
     try { await api(`/api/files/${id}/cancel`, { method: 'POST' }); }
@@ -1898,8 +1887,8 @@ async function bulkCancelDownloads() {
   }
   if (S.activeTab === 'downloads') renderDownloadsTab();
   loadFiles();
-  if (failed) showToast(`${inflight.length - failed} iptal edildi, ${failed} hata.`, 4000);
-  else        showToast(`${inflight.length} indirme iptal edildi.`, 2500);
+  if (failed) showToast(t('dl.cancelSome', { ok: inflight.length - failed, fail: failed }), 4000);
+  else        showToast(t('dl.cancelBulkOk', { n: inflight.length }), 2500);
 }
 
 function downloadBlob(fileId) {
@@ -1913,11 +1902,11 @@ function downloadBlob(fileId) {
 }
 
 async function deleteLocalFile(fileId) {
-  if (!confirm("Bu dosya volume'den kalıcı olarak silinecek. Devam edilsin mi?")) return;
+  if (!confirm(t('dl.deleteFileConfirm'))) return;
   try {
     await api(`/api/files/${fileId}/local`, { method: 'DELETE' });
   } catch (e) {
-    showToast(`Silinemedi: ${esc(e.message)}`);
+    showToast(t('dl.deleteFileFail') + ' ' + esc(e.message));
     return;
   }
   _dlHistory = _dlHistory.filter(e => e.id !== fileId);
@@ -1947,8 +1936,7 @@ async function loadLinks(silent = false) {
   const urlF  = v('lcol-url');         if (urlF)  p.set('url_filter', urlF);
   const ctxF  = v('lcol-context');     if (ctxF)  p.set('context_filter', ctxF);
   const grpF  = v('lcol-group');       if (grpF)  p.set('group_filter', grpF);
-  const fmin  = v('lcol-files-min');   if (fmin && !isNaN(+fmin)) p.set('min_files', +fmin);
-  const fmax  = v('lcol-files-max');   if (fmax && !isNaN(+fmax)) p.set('max_files', +fmax);
+  const fnameF = v('lcol-files-name'); if (fnameF) p.set('file_name_filter', fnameF);
   const dfrom = v('lcol-date-from');   if (dfrom) p.set('date_from', dfrom);
   const dto   = v('lcol-date-to');     if (dto)   p.set('date_to',   dto);
 
@@ -1997,7 +1985,7 @@ function _linkFilesCell(l) {
   //   available is null + probed_at  → unsupported provider
   //   files_json non-empty           → actual file list
   if (!l.probed_at) {
-    return `<span class="link-files-pending" title="Henüz incelenmedi">…</span>`;
+    return `<span class="link-files-pending" title="${esc(t('links.notScanned'))}">…</span>`;
   }
   let files = l.files_json;
   if (typeof files === 'string') {
@@ -2005,9 +1993,9 @@ function _linkFilesCell(l) {
   }
   if (!Array.isArray(files) || files.length === 0) {
     if (l.available === false) {
-      return `<span class="link-files-dead" title="Erişim yok / silinmiş">erişim yok</span>`;
+      return `<span class="link-files-dead" title="${esc(t('links.noAccess'))}">${esc(t('links.noAccessText'))}</span>`;
     }
-    return `<span class="link-files-unknown" title="Bu sağlayıcı henüz desteklenmiyor">—</span>`;
+    return `<span class="link-files-unknown" title="${esc(t('links.unsupported'))}">—</span>`;
   }
   const totalSz = +(l.file_size_total || 0);
   const sizeStr = totalSz > 0 ? ' · ' + fmtSize(totalSz) : '';
@@ -2042,7 +2030,7 @@ function renderLinks(links) {
     // Same URL re-posted across multiple messages collapses into one row;
     // surface the underlying count so the user knows it's not a single shot.
     const dupBadge = (l.appearances && l.appearances > 1)
-      ? ` <span class="link-dup-badge" title="${l.appearances} mesajda paylaşılmış">×${l.appearances}</span>`
+      ? ` <span class="link-dup-badge" title="${esc(t('table.appearances', { n: l.appearances }))}">×${l.appearances}</span>`
       : '';
     // URL'ler zaten ASCII; group_name ve context Telegram'dan geldiği için
     // emoji/biçim temizliği uygulanır.
@@ -2181,11 +2169,11 @@ function renderChips() {
   if (S.activeGroupId!=null) {
     const g = _groups.find(x=>x.id===S.activeGroupId);
     const name = g ? (g.display_name||g.name) : `#${S.activeGroupId}`;
-    chips.push(`<span class="chip" onclick="clearGroupFilter()" title="Grup filtresini kaldır">📁 ${esc(name)}</span>`);
+    chips.push(`<span class="chip" onclick="clearGroupFilter()" title="${esc(t('filter.removeGroup'))}">📁 ${esc(name)}</span>`);
   }
   if (S.fileIdsFilter && S.fileIdsFilter.size > 0) {
-    const lbl = S.fileIdsFilterLabel ? `🔔 ${esc(S.fileIdsFilterLabel)} (${S.fileIdsFilter.size})` : `🔔 ${S.fileIdsFilter.size} dosya`;
-    chips.push(`<span class="chip" onclick="clearFileIdsFilter()" title="Bildirim filtresini kaldır">${lbl}</span>`);
+    const lbl = S.fileIdsFilterLabel ? `🔔 ${esc(S.fileIdsFilterLabel)} (${S.fileIdsFilter.size})` : `🔔 ${esc(t('accounts.fileCount', { n: S.fileIdsFilter.size }))}`;
+    chips.push(`<span class="chip" onclick="clearFileIdsFilter()" title="${esc(t('filter.removeNotif'))}">${lbl}</span>`);
   }
   document.getElementById('chip-list').innerHTML=chips.join('');
 }
@@ -2246,7 +2234,7 @@ function tgLink(f) {
   const href=f.group_username
     ?`https://t.me/${f.group_username}/${f.message_id}`
     :`https://t.me/c/${gid.startsWith('-100')?gid.slice(4):gid.replace('-','')}/${f.message_id}`;
-  return `<a href="${href}" target="_blank" rel="noopener" title="Telegram'da aç" style="color:#9ca3af;font-size:.82em;margin-left:3px">↗</a>`;
+  return `<a href="${href}" target="_blank" rel="noopener" title="${esc(t('table.openTg'))}" style="color:#9ca3af;font-size:.82em;margin-left:3px">↗</a>`;
 }
 
 function tgGroupHref(g) {
@@ -2285,7 +2273,7 @@ function _paintGridLoading(tbodyId, colspan) {
   const tb = document.getElementById(tbodyId);
   if (!tb) return;
   tb.innerHTML = `<tr class="grid-loading-row"><td colspan="${colspan}">
-    <span class="gl-inner"><span class="hd-spinner"></span> Yükleniyor…</span>
+    <span class="gl-inner"><span class="hd-spinner"></span> ${esc(t('common.loadingData'))}</span>
   </td></tr>`;
 }
 function fmtSize(b){if(!b)return'—';if(b>=1073741824)return(b/1073741824).toFixed(1)+' GB';if(b>=1048576)return(b/1048576).toFixed(1)+' MB';if(b>=1024)return(b/1024).toFixed(0)+' KB';return b+' B';}
@@ -2451,7 +2439,7 @@ function renderNotificationLog() {
     return;
   }
   el.innerHTML = _allNotifications.map(n => {
-    const time = new Date(n.last_match_at).toLocaleString('tr-TR');
+    const time = new Date(n.last_match_at).toLocaleString(_locale());
     const isDismissed = !!n.dismissed_at;
     const groups = (n.group_names || []);
     const groupsHtml = groups.length
@@ -3117,9 +3105,9 @@ function renderHunterPager() {
   const toN = Math.min(offset + limit, total);
 
   let html = `
-    <span class="hp-info"><b>${fromN.toLocaleString()}</b> – <b>${toN.toLocaleString()}</b> / <b>${total.toLocaleString()}</b> aday</span>
+    <span class="hp-info">${esc(t('hg.pagerRange', { from: fromN.toLocaleString(), to: toN.toLocaleString(), total: total.toLocaleString() }))}</span>
     <span style="flex:1"></span>
-    <label style="display:inline-flex;align-items:center;gap:6px">Sayfa başı:
+    <label style="display:inline-flex;align-items:center;gap:6px">${esc(t('hg.perPage'))}
       <select onchange="hunterSetLimit(this.value)">
         <option value="20"${limit===20?' selected':''}>20</option>
         <option value="50"${limit===50?' selected':''}>50</option>
@@ -3302,9 +3290,9 @@ function renderHunterCandidates() {
     // hangi olduğu netleştiriliyor.
     let files;
     if (c.deep_scan_status === 'done' && (c.deep_scan_total || 0) > 0) {
-      files = `${c.deep_scan_total.toLocaleString()} <span title="Tam tarama yapıldı — kanalın tüm geçmişindeki gerçek dosya sayısı." style="color:#16a34a;font-size:.85em">✓</span>`;
+      files = `${c.deep_scan_total.toLocaleString()} <span title="${esc(t('hg.deepScanDoneTitle'))}" style="color:#16a34a;font-size:.85em">✓</span>`;
     } else if (c.estimated_files != null) {
-      files = `${c.estimated_files.toLocaleString()} <span title="Stage 3 örnekleminden tahmin (varsayılan: son 200 mesaj). Gerçek toplam için Tam Tara'ya basın." style="color:var(--text-4);font-size:.85em">~</span>`;
+      files = `${c.estimated_files.toLocaleString()} <span title="${esc(t('hg.estimatedTitle'))}" style="color:var(--text-4);font-size:.85em">~</span>`;
     } else {
       files = '—';
     }
@@ -3317,7 +3305,7 @@ function renderHunterCandidates() {
       if (c.already_joined) {
         // User is already a member of this channel via Telegram; skip the
         // Join button (which would fire JoinChannelRequest and risk FloodWait).
-        actions = `<span class="hg-already-joined" title="Bu kanala zaten üyesin — Telegram'dan veya başka bir akışla katılmışsın.">✓ Zaten üye</span>
+        actions = `<span class="hg-already-joined" title="${esc(t('hunter.alreadyJoinedTitle'))}">${esc(t('hunter.alreadyJoined'))}</span>
                    <button class="hg-btn hg-btn-reject" onclick="hunterReject(${c.id}, event)">${esc(t('hunter.reject'))}</button>`;
       } else {
         actions = `<button class="hg-btn hg-btn-join" onclick="hunterJoin(${c.id}, event)">${esc(t('hunter.join'))}</button>
@@ -3334,11 +3322,9 @@ function renderHunterCandidates() {
       let waitTxt = '';
       if (Number.isFinite(dueMs)) {
         const diff = Math.max(0, Math.round((dueMs - Date.now()) / 1000));
-        if (diff < 60)        waitTxt = `${diff}sn`;
-        else if (diff < 3600) waitTxt = `${Math.round(diff/60)}dk`;
-        else                  waitTxt = `${Math.round(diff/3600)}sa`;
+        waitTxt = _fmtWait(diff);
       }
-      const tip = `Üyelik kuyrukta · sonraki deneme: ${waitTxt} · ${c.queue_attempts||1} deneme oldu`;
+      const tip = t('hg.queueTip', { wait: waitTxt, attempts: c.queue_attempts || 1 });
       queueBadge = ` <span class="hg-queue-badge" title="${esc(tip)}">⏳ ${esc(waitTxt)}</span>`;
     }
     return `<tr class="${sel?'hg-row-selected':''}" onclick="hgRowClick(event, ${c.id})">
@@ -3410,7 +3396,7 @@ async function hunterShowDetail(cid) {
         ${c.status !== 'joined' && c.status !== 'blacklisted' ? `<button class="h-btn h-btn-join" data-act="join"      title="${esc(t('hunter.actionHelpJoin'))}">${esc(t('hunter.join'))}</button>` : ''}
         ${c.status !== 'rejected' && c.status !== 'blacklisted' ? `<button class="h-btn"          data-act="reject"    title="${esc(t('hunter.actionHelpReject'))}">${esc(t('hunter.reject'))}</button>` : ''}
         ${c.status !== 'blacklisted' ? `<button class="h-btn h-btn-reject" data-act="blacklist" title="${esc(t('hunter.actionHelpBlacklist'))}">${esc(t('hunter.blacklist'))}</button>` : ''}
-        ${c.status === 'blacklisted' || c.status === 'rejected' ? `<button class="h-btn" data-act="restore" title="Keşfedildi durumuna geri al">↩ Geri Al</button>` : ''}
+        ${c.status === 'blacklisted' || c.status === 'rejected' ? `<button class="h-btn" data-act="restore" title="${esc(t('hunter.restoreBtnTitle'))}">${esc(t('hunter.restoreBtn'))}</button>` : ''}
         <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>
       </div>
 
@@ -3548,9 +3534,9 @@ async function refreshHdFiles() {
   const namedPct  = total > 0 ? Math.round((named / total) * 100) : 0;
   const ephemPct  = total > 0 ? (100 - namedPct) : 0;
   const breakdownLine = total > 0
-    ? `<span class="hd-kind-bar" title="Adlı dosya: kullanıcı tarafından bilinçli yüklenmiş, gerçek isim taşıyor. Doğal medya: sesli mesaj, kamera videosu, sticker, animasyon vb. Telegram'ın native medya tipleri.">
-         <span class="hd-kind hd-kind-named"   title="Adlı (gerçek) dosya">📄 ${named.toLocaleString()} adlı (${namedPct}%) · ${fmtSize(namedSz)}</span>
-         <span class="hd-kind hd-kind-ephem" title="Doğal Telegram medyası">🎤 ${ephemeral.toLocaleString()} doğal (${ephemPct}%) · ${fmtSize(ephemSz)}</span>
+    ? `<span class="hd-kind-bar" title="${esc(t('hd.kindBarTitle'))}">
+         <span class="hd-kind hd-kind-named"   title="${esc(t('hd.kindNamedTitle'))}">📄 ${named.toLocaleString()} ${esc(t('hd.kindNamedLabel'))} (${namedPct}%) · ${fmtSize(namedSz)}</span>
+         <span class="hd-kind hd-kind-ephem" title="${esc(t('hd.kindEphemTitle'))}">🎤 ${ephemeral.toLocaleString()} ${esc(t('hd.kindEphemLabel'))} (${ephemPct}%) · ${fmtSize(ephemSz)}</span>
        </span>`
     : '';
   let body = `<div class="hd-files-bar">
@@ -3614,8 +3600,8 @@ function _renderHdFileRow(f) {
     actionsHtml = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
   }
   const kindBadge = (f.is_named === false)
-    ? `<span class="hf-kind hf-kind-ephem" title="Doğal Telegram medyası — sesli mesaj, kamera videosu, sticker veya animasyon. Gerçek bir dosya değil; ismi mesaj id'sinden türetildi.">🎤</span>`
-    : `<span class="hf-kind hf-kind-named" title="Adlı dosya — kanal sahibi bilinçli olarak yükledi.">📄</span>`;
+    ? `<span class="hf-kind hf-kind-ephem" title="${esc(t('hf.kindEphemTitle'))}">🎤</span>`
+    : `<span class="hf-kind hf-kind-named" title="${esc(t('hf.kindNamedTitle'))}">📄</span>`;
   return `<li class="hf-row${liExtraClass}${f.is_named === false ? ' hf-ephem' : ''}" data-msg="${msgId}">
     ${kindBadge}
     <span class="hf-name" title="${esc(f.file_name||'')}">${esc(f.file_name || '—')}</span>
@@ -3813,55 +3799,55 @@ async function hunterJoin(cid, ev) {
   const c = _hunterCandidates.find(x => x.id === cid) || await api(`/api/hunter/candidates/${cid}`);
   let r;
   try { r = await api(`/api/hunter/candidates/${cid}/join`, { method: 'POST' }); }
-  catch (e) { showToast('Katılım başarısız: ' + esc(e.message), 4500); return; }
-  if (!r.ok) { showToast('Katılım başarısız: ' + esc(r.error || ''), 4500); return; }
+  catch (e) { showToast(t('hunter.joinFail') + ' ' + esc(e.message), 4500); return; }
+  if (!r.ok) { showToast(t('hunter.joinFail') + ' ' + esc(r.error || ''), 4500); return; }
   closeHunterDetail();
   hunterReloadCandidates();
   if (r.queued) {
     const wait = _fmtWait(r.wait_s);
-    showToast(`⏳ @${esc(c.username)} kuyruğa alındı. ~${wait} sonra otomatik denenecek.`, 4500);
+    showToast(t('hunter.joinQueuedMsg', { username: esc(c.username), wait }), 4500);
   } else {
     loadGroups();
-    showToast(`✓ @${esc(c.username)} kanalına katılındı.`, 3000);
+    showToast(t('hunter.joinOkMsg', { username: esc(c.username) }), 3000);
   }
 }
 
 function _fmtWait(s) {
   s = Math.max(0, parseInt(s, 10) || 0);
-  if (s < 60)   return `${s} sn`;
-  if (s < 3600) return `${Math.round(s/60)} dk`;
-  return `${Math.round(s/3600)} sa`;
+  if (s < 60)   return t('fmt.seconds',    { n: s });
+  if (s < 3600) return t('fmt.minutes',    { n: Math.round(s/60) });
+  return               t('fmt.hoursShort', { n: Math.round(s/3600) });
 }
 
 async function hunterReject(cid, ev) {
   if (ev) ev.stopPropagation();
   const c = _hunterCandidates.find(x => x.id === cid) || await api(`/api/hunter/candidates/${cid}`);
   try { await api(`/api/hunter/candidates/${cid}/reject`, { method: 'POST' }); }
-  catch (e) { showToast('Reddedilemedi: ' + esc(e.message), 4500); return; }
+  catch (e) { showToast(t('hunter.rejectFail') + ' ' + esc(e.message), 4500); return; }
   closeHunterDetail();
   hunterReloadCandidates();
-  showToast(`✓ @${esc(c.username)} reddedildi.`, 3000);
+  showToast(t('hunter.rejectOkMsg', { username: esc(c.username) }), 3000);
 }
 
 async function hunterBlacklist(cid, ev) {
   if (ev) ev.stopPropagation();
   const c = _hunterCandidates.find(x => x.id === cid) || await api(`/api/hunter/candidates/${cid}`);
   try { await api(`/api/hunter/candidates/${cid}/blacklist`, { method: 'POST' }); }
-  catch (e) { showToast('Kara listeye eklenemedi: ' + esc(e.message), 4500); return; }
+  catch (e) { showToast(t('hunter.blacklistFail') + ' ' + esc(e.message), 4500); return; }
   closeHunterDetail();
   hunterReloadCandidates();
-  showToast(`✓ @${esc(c.username)} kara listeye eklendi.`, 3000);
+  showToast(t('hunter.blacklistOkMsg', { username: esc(c.username) }), 3000);
 }
 
 async function hunterRestore(cid) {
   const c = _hunterCandidates.find(x => x.id === cid) || await api(`/api/hunter/candidates/${cid}`);
   let r;
   try { r = await api(`/api/hunter/candidates/${cid}/restore`, { method: 'POST' }); }
-  catch (e) { showToast('Geri alınamadı: ' + esc(e.message), 4500); return; }
-  if (!r.ok) { showToast('Geri alınamadı: ' + esc(r.error || ''), 4500); return; }
+  catch (e) { showToast(t('hunter.undoFail') + ' ' + esc(e.message), 4500); return; }
+  if (!r.ok) { showToast(t('hunter.undoFail') + ' ' + esc(r.error || ''), 4500); return; }
   closeHunterDetail();
   hunterReloadCandidates();
-  showToast(`✓ @${esc(c.username)} keşfedildi durumuna geri alındı.`, 3000);
+  showToast(t('hunter.undoOkMsg', { username: esc(c.username) }), 3000);
 }
 
 // ── Hunter: clear list ──────────────────────────────────────────────────────
@@ -4002,7 +3988,7 @@ async function _hgBulkLoop(action, ids, progressMsg, delayMs = 0) {
 async function hgBulkJoin() {
   const ids = [...S.hunterSelected];
   if (!ids.length) return;
-  showToast(`${ids.length} kanal için katılım sırası başlatıldı.`, 2500);
+  showToast(t('hunter.bulkJoinStart', { n: ids.length }), 2500);
   let joined = 0, queued = 0;
   await _hgBulkLoop(async (id) => {
     const r = await api(`/api/hunter/candidates/${id}/join`, { method: 'POST' });
@@ -4015,9 +4001,9 @@ async function hgBulkJoin() {
   // Build a single summary toast that distinguishes immediate joins from
   // FloodWait-queued ones, so the user knows which need patience.
   const parts = [];
-  if (joined) parts.push(`✓ ${joined} kanala katılındı`);
-  if (queued) parts.push(`⏳ ${queued} kanal kuyrukta — arka planda denenecek`);
-  if (!parts.length) parts.push(`${ids.length} kanal işlendi`);
+  if (joined) parts.push(t('hunter.bulkJoinOk', { joined }));
+  if (queued) parts.push(t('hunter.bulkJoinQueued', { queued }));
+  if (!parts.length) parts.push(t('hunter.bulkJoinDone', { n: ids.length }));
   showToast(parts.join(' · '), 4000);
 }
 
@@ -4029,7 +4015,7 @@ async function hgBulkReject() {
   }, ids);
   hgClearSelection();
   await hunterReloadCandidates();
-  showToast(`✓ ${ids.length} aday reddedildi.`, 3000);
+  showToast(t('hunter.bulkRejectOk', { n: ids.length }), 3000);
 }
 
 async function hgBulkBlacklist() {
@@ -4040,13 +4026,13 @@ async function hgBulkBlacklist() {
   }, ids);
   hgClearSelection();
   await hunterReloadCandidates();
-  showToast(`✓ ${ids.length} aday kara listeye eklendi.`, 3000);
+  showToast(t('hunter.bulkBlacklistOk', { n: ids.length }), 3000);
 }
 
 async function hgBulkDeepScan() {
   const ids = [...S.hunterSelected];
   if (!ids.length) return;
-  showToast(`${ids.length} aday için tam tarama kuyruğu başladı.`, 2500);
+  showToast(t('hunter.bulkDeepScanStart', { n: ids.length }), 2500);
   // Trigger them; backend serializes via _deep_scan_tasks dict, so we just kick all
   await _hgBulkLoop(async (id) => {
     await api(`/api/hunter/candidates/${id}/deep_scan`, { method: 'POST' });
@@ -4081,6 +4067,7 @@ function hunterHelpOverlayClick(e) {
 
 // ── Transfer Destinations ────────────────────────────────────────────────────
 let _tdEditId = null;
+let _tdOpenId = null; // null=closed, number=existing item open, 'new'=add form open
 
 function _typeLabelShort(type) {
   return { local: 'Yerel', ftp: 'FTP', sftp: 'SFTP' }[type] || type;
@@ -4093,6 +4080,7 @@ function _destPathLabel(d) {
 }
 
 async function loadTransferDestinations() {
+  _closeTdItem();
   try {
     const dests = await api('/api/transfer-destinations');
     renderTransferDestinations(dests || []);
@@ -4103,33 +4091,113 @@ function renderTransferDestinations(dests) {
   const list = document.getElementById('td-list');
   if (!list) return;
   if (!dests.length) {
-    list.innerHTML = '<div style="font-size:.78rem;color:var(--text-4);padding:8px 0">Henüz hedef eklenmedi.</div>';
+    list.innerHTML = `<div style="font-size:.78rem;color:var(--text-4);padding:8px 0">${esc(t('td.noDestinations'))}</div>`;
     return;
   }
   list.innerHTML = dests.map(d => `
-    <div class="td-row ${d.enabled ? '' : 'td-disabled'}" id="td-row-${d.id}">
-      <span class="td-badge ${d.type}">${_typeLabelShort(d.type)}</span>
-      <span class="td-name">${esc(d.name)}</span>
-      <span class="td-path">${esc(_destPathLabel(d))}</span>
-      <div class="td-actions">
-        <button class="td-btn td-btn-test" id="td-test-${d.id}" onclick="testTransferDest(${d.id})">Test</button>
-        <button class="td-btn" onclick="editTransferDest(${d.id})">Düzenle</button>
-        <button class="td-btn td-btn-danger" onclick="deleteTransferDest(${d.id})">Sil</button>
+    <div class="td-item ${d.enabled ? '' : 'td-disabled'}" id="td-item-${d.id}">
+      <div class="td-item-head" onclick="toggleTdItem(${d.id})">
+        <span class="td-chevron" id="td-chevron-${d.id}">›</span>
+        <span class="td-badge ${d.type}">${_typeLabelShort(d.type)}</span>
+        <span class="td-name">${esc(d.name)}</span>
+        <span class="td-path">${esc(_destPathLabel(d))}</span>
+        <div class="td-actions" onclick="event.stopPropagation()">
+          <button class="td-btn td-btn-test" id="td-test-${d.id}" onclick="testTransferDest(${d.id})">Test</button>
+          <button class="td-btn td-btn-danger" onclick="deleteTransferDest(${d.id})">${esc(t('common.delete'))}</button>
+        </div>
       </div>
+      <div class="td-item-body" id="td-body-${d.id}" style="display:none"></div>
     </div>`).join('');
 }
 
-function openAddTransferDest() {
-  _tdEditId = null;
+function toggleTdItem(id) {
+  if (_tdOpenId === id) { _closeTdItem(); return; }
+  _openTdItem(id);
+}
+
+async function _openTdItem(id) {
+  _closeTdItem();
+  const dests = await api('/api/transfer-destinations');
+  const d = (dests || []).find(x => x.id === id);
+  if (!d) return;
+  _tdEditId = id;
+  _tdOpenId = id;
   resetTdForm();
-  document.getElementById('td-form-title').textContent = 'Yeni Hedef';
-  document.getElementById('td-add-form').style.display = 'block';
-  document.getElementById('td-name').focus();
+  document.getElementById('td-form-title').textContent = t('td.editTitle');
+  document.getElementById('td-name').value = d.name || '';
+  document.getElementById('td-type').value = d.type || 'local';
+  document.getElementById('td-enabled').checked = !!d.enabled;
+  const cfg = d.config || {};
+  if (d.type === 'local') {
+    document.getElementById('td-local-path').value = cfg.path || '';
+    document.getElementById('td-local-mode').value = cfg.mode || 'copy';
+  } else {
+    document.getElementById('td-host').value = cfg.host || '';
+    document.getElementById('td-port').value = cfg.port || (d.type === 'sftp' ? 22 : 21);
+    document.getElementById('td-user').value = cfg.username || '';
+    document.getElementById('td-pass').value = cfg.password || '';
+    document.getElementById('td-remote-path').value = cfg.path || '/';
+    document.getElementById('td-passive').value = cfg.passive !== false ? 'true' : 'false';
+    document.getElementById('td-remote-mode').value = cfg.mode || 'copy';
+  }
+  onTdTypeChange();
+  const body = document.getElementById(`td-body-${id}`);
+  const form = document.getElementById('td-add-form');
+  if (body && form) {
+    body.style.display = 'block';
+    body.appendChild(form);
+    document.getElementById('td-name').focus();
+  }
+  const chevron = document.getElementById(`td-chevron-${id}`);
+  if (chevron) chevron.classList.add('open');
+}
+
+function _closeTdItem() {
+  if (_tdOpenId === null) return;
+  const prevId = _tdOpenId;
+  _tdOpenId = null;
+  _tdEditId = null;
+  const form = document.getElementById('td-add-form');
+  const container = document.getElementById('td-form-container');
+  if (form && container) container.appendChild(form);
+  if (prevId === 'new') {
+    const newItem = document.getElementById('td-item-new');
+    if (newItem) newItem.remove();
+  } else {
+    const body = document.getElementById(`td-body-${prevId}`);
+    if (body) body.style.display = 'none';
+    const chevron = document.getElementById(`td-chevron-${prevId}`);
+    if (chevron) chevron.classList.remove('open');
+  }
+  resetTdForm();
+}
+
+function openAddTransferDest() {
+  _closeTdItem();
+  _tdEditId = null;
+  _tdOpenId = 'new';
+  resetTdForm();
+  document.getElementById('td-form-title').textContent = t('td.newTitle');
+  const list = document.getElementById('td-list');
+  const newItem = document.createElement('div');
+  newItem.className = 'td-item';
+  newItem.id = 'td-item-new';
+  newItem.innerHTML = `
+    <div class="td-item-head" style="cursor:default;background:var(--bg-info)">
+      <span style="font-size:.8rem;font-weight:700;color:var(--accent)">${esc(t('td.newItem'))}</span>
+    </div>
+    <div class="td-item-body" id="td-body-new" style="display:block"></div>`;
+  list.appendChild(newItem);
+  const bodyEl = document.getElementById('td-body-new');
+  const form = document.getElementById('td-add-form');
+  if (bodyEl && form) {
+    bodyEl.appendChild(form);
+    document.getElementById('td-name').focus();
+  }
 }
 
 function closeAddTransferDest() {
-  document.getElementById('td-add-form').style.display = 'none';
-  _tdEditId = null;
+  _closeTdItem();
 }
 
 function resetTdForm() {
@@ -4161,47 +4229,19 @@ function onTdTypeChange() {
   if (!portEl.value) portEl.value = type === 'sftp' ? '22' : '21';
 }
 
-function editTransferDest(id) {
-  // Load from current rendered list
-  api('/api/transfer-destinations').then(dests => {
-    const d = (dests || []).find(x => x.id === id);
-    if (!d) return;
-    _tdEditId = id;
-    document.getElementById('td-form-title').textContent = 'Hedefi Düzenle';
-    document.getElementById('td-name').value = d.name || '';
-    document.getElementById('td-type').value = d.type || 'local';
-    document.getElementById('td-enabled').checked = !!d.enabled;
-    const cfg = d.config || {};
-    if (d.type === 'local') {
-      document.getElementById('td-local-path').value = cfg.path || '';
-      document.getElementById('td-local-mode').value = cfg.mode || 'copy';
-    } else {
-      document.getElementById('td-host').value = cfg.host || '';
-      document.getElementById('td-port').value = cfg.port || (d.type === 'sftp' ? 22 : 21);
-      document.getElementById('td-user').value = cfg.username || '';
-      document.getElementById('td-pass').value = cfg.password || '';
-      document.getElementById('td-remote-path').value = cfg.path || '/';
-      document.getElementById('td-passive').value = cfg.passive !== false ? 'true' : 'false';
-      document.getElementById('td-remote-mode').value = cfg.mode || 'copy';
-    }
-    onTdTypeChange();
-    document.getElementById('td-add-form').style.display = 'block';
-    document.getElementById('td-name').focus();
-  });
-}
 
 function _buildTdBody() {
   const type = document.getElementById('td-type').value;
   const name = document.getElementById('td-name').value.trim();
-  if (!name) { showToast('Hedef adı boş bırakılamaz'); return null; }
+  if (!name) { showToast(t('td.errNameRequired')); return null; }
   let config = {};
   if (type === 'local') {
     const path = document.getElementById('td-local-path').value.trim();
-    if (!path) { showToast('Dizin yolu boş bırakılamaz'); return null; }
+    if (!path) { showToast(t('td.errPathRequired')); return null; }
     config = { path, mode: document.getElementById('td-local-mode').value };
   } else {
     const host = document.getElementById('td-host').value.trim();
-    if (!host) { showToast('Sunucu adresi boş bırakılamaz'); return null; }
+    if (!host) { showToast(t('td.errHostRequired')); return null; }
     config = {
       host,
       port: parseInt(document.getElementById('td-port').value) || (type === 'sftp' ? 22 : 21),
@@ -4220,7 +4260,7 @@ async function testTransferDestForm() {
   if (!body) return;
   const btn = document.getElementById('td-form-test-btn');
   const res = document.getElementById('td-test-result');
-  if (btn) { btn.textContent = 'Test ediliyor…'; btn.disabled = true; }
+  if (btn) { btn.textContent = t('td.testing'); btn.disabled = true; }
   if (res) { res.style.display = 'none'; }
   try {
     const r = await api('/api/transfer-destinations/test-config', {
@@ -4240,10 +4280,10 @@ async function testTransferDestForm() {
       res.style.background = '#fee2e2';
       res.style.color = '#dc2626';
       res.style.border = '1px solid #fca5a5';
-      res.textContent = '✗ ' + (e.message || 'Bağlantı testi başarısız');
+      res.textContent = '✗ ' + (e.message || t('td.testFail'));
     }
   } finally {
-    if (btn) { btn.textContent = 'Bağlantıyı Test Et'; btn.disabled = false; }
+    if (btn) { btn.textContent = t('td.testBtn'); btn.disabled = false; }
   }
 }
 
@@ -4256,22 +4296,23 @@ async function saveTransferDest() {
     } else {
       await api('/api/transfer-destinations', { method: 'POST', json: body });
     }
-    closeAddTransferDest();
+    _closeTdItem();
     loadTransferDestinations();
-    showToast('Hedef kaydedildi.');
+    showToast(t('td.saved'));
   } catch (e) {
-    showToast('Kayıt hatası: ' + (e.message || e));
+    showToast(t('td.saveError') + ' ' + esc(e.message || e));
   }
 }
 
 async function deleteTransferDest(id) {
-  if (!confirm('Bu transfer hedefini silmek istiyor musun?')) return;
+  if (!confirm(t('td.deleteConfirm'))) return;
+  if (_tdOpenId === id) _closeTdItem();
   try {
     await api(`/api/transfer-destinations/${id}`, { method: 'DELETE' });
     loadTransferDestinations();
-    showToast('Hedef silindi.');
+    showToast(t('td.deleted'));
   } catch (e) {
-    showToast('Silme hatası: ' + (e.message || e));
+    showToast(t('td.deleteError') + ' ' + esc(e.message || e));
   }
 }
 
@@ -4281,15 +4322,15 @@ async function testTransferDest(id) {
   try {
     const r = await api(`/api/transfer-destinations/${id}/test`, { method: 'POST' });
     if (btn) {
-      btn.textContent = r.ok ? '✓ OK' : '✗ Hata';
+      btn.textContent = r.ok ? '✓ OK' : '✗';
       btn.className = `td-btn td-btn-test ${r.ok ? 'ok' : 'fail'}`;
       btn.title = r.message || '';
       btn.disabled = false;
     }
-    showToast(r.message || (r.ok ? 'Bağlantı başarılı' : 'Bağlantı başarısız'));
+    showToast(r.message || (r.ok ? t('td.testOk') : t('td.testFail')));
   } catch (e) {
-    if (btn) { btn.textContent = '✗ Hata'; btn.className = 'td-btn td-btn-test fail'; btn.disabled = false; }
-    showToast('Test hatası: ' + (e.message || e));
+    if (btn) { btn.textContent = '✗'; btn.className = 'td-btn td-btn-test fail'; btn.disabled = false; }
+    showToast(t('td.testError') + ' ' + esc(e.message || e));
   }
 }
 

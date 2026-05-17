@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#2563eb">
+<link rel="manifest" href="/manifest.json">
 <title>TelFiles</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -887,8 +889,15 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 
 /* ── Transfer Destinations ── */
 .td-list{display:flex;flex-direction:column;gap:7px}
-.td-row{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-2);border-radius:8px;background:var(--bg-3)}
-.td-row.td-disabled{opacity:.55}
+.td-item{border:1px solid var(--border-2);border-radius:8px;background:var(--bg-3);overflow:hidden}
+.td-item.td-disabled{opacity:.55}
+.td-item-head{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;transition:background .12s}
+.td-item-head:hover{background:var(--bg-hover)}
+.td-item-body{border-top:1px solid var(--border-2)}
+.td-item-body #td-add-form{margin:0}
+.td-item-body .td-form{border:none;border-radius:0;background:var(--bg-3)}
+.td-chevron{font-size:.95rem;color:var(--text-3);transition:transform .15s;flex-shrink:0;line-height:1}
+.td-chevron.open{transform:rotate(90deg)}
 .td-badge{padding:2px 8px;border-radius:99px;font-size:.67rem;font-weight:700;letter-spacing:.03em;white-space:nowrap}
 .td-badge.local{background:#dcfce7;color:#15803d}
 .td-badge.ftp{background:#dbeafe;color:#1d4ed8}
@@ -1031,15 +1040,15 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
   <div style="font-size:2.5rem">📱</div>
   <h2 data-i18n="login.title">TelFiles — Giriş</h2>
   <div id="login-step-creds" class="login-step">
-    <div style="font-size:.82rem;color:var(--text-3);text-align:center;max-width:300px;line-height:1.4">
+    <div style="font-size:.82rem;color:var(--text-3);text-align:center;max-width:300px;line-height:1.4" data-i18n-html="login.apiHint">
       Telegram'a bağlanmak için <b>API ID</b> ve <b>API Hash</b> gerekir.
       <a href="https://my.telegram.org" target="_blank" rel="noopener" style="color:var(--accent)">my.telegram.org</a>
       → API Development Tools'tan bir kez alıp aşağıya girin.
     </div>
-    <input id="inp-api-id" type="number" placeholder="API ID (sayı)" autocomplete="off">
-    <input id="inp-api-hash" type="text" placeholder="API Hash (uzun karakter dizisi)" autocomplete="off">
-    <button onclick="authSaveCreds()">Kaydet ve devam et</button>
-    <button onclick="authSkipCreds()" style="background:transparent;color:var(--text-3);border:1px solid var(--input-border);font-weight:500">Şimdi geç — sonra Ayarlar'dan girerim</button>
+    <input id="inp-api-id" type="number" placeholder="API ID (sayı)" data-i18n-ph="settings.api.idPh" autocomplete="off">
+    <input id="inp-api-hash" type="text" placeholder="API Hash (uzun karakter dizisi)" data-i18n-ph="settings.api.hashPh" autocomplete="off">
+    <button onclick="authSaveCreds()" data-i18n="login.saveAndContinue">Kaydet ve devam et</button>
+    <button onclick="authSkipCreds()" style="background:transparent;color:var(--text-3);border:1px solid var(--input-border);font-weight:500" data-i18n="creds.skipBtn">Şimdi geç — sonra Ayarlar'dan girerim</button>
   </div>
   <div id="login-step-phone" class="login-step active">
     <input id="inp-phone" type="tel" placeholder="+905xxxxxxxxx" data-i18n-ph="login.phonePh" autocomplete="tel">
@@ -1059,11 +1068,11 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 <div id="ui-greeter">
   <div class="ug-card">
     <div class="ug-brand"><span>📡</span> TelFiles</div>
-    <input id="ug-pass" type="password" placeholder="Parola" autocomplete="current-password" onkeydown="if(event.key==='Enter')uiAuthLogin()">
-    <label class="ug-remember"><input id="ug-remember" type="checkbox"> <span>Bu bilgisayarda hatırla</span></label>
-    <button id="ug-login" onclick="uiAuthLogin()">Giriş</button>
+    <input id="ug-pass" type="password" placeholder="Parola" data-i18n-ph="uiauth.passPlaceholder" autocomplete="current-password" onkeydown="if(event.key==='Enter')uiAuthLogin()">
+    <label class="ug-remember"><input id="ug-remember" type="checkbox"> <span data-i18n="creds.remember">Bu bilgisayarda hatırla</span></label>
+    <button id="ug-login" onclick="uiAuthLogin()" data-i18n="uiauth.loginBtn">Giriş</button>
     <div class="ug-msg" id="ug-msg"></div>
-    <div class="ug-hint" id="ug-hint">Varsayılan parola: <code>admin</code> · Ayarlar → Hesap'tan değiştirebilirsin.</div>
+    <div class="ug-hint" id="ug-hint" data-i18n-html="uiauth.hint">Varsayılan parola: <code>admin</code> · Ayarlar → Hesap'tan değiştirebilirsin.</div>
   </div>
 </div>
 
@@ -1135,24 +1144,24 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         <div id="settings-sub-tabs">
           <button class="sub-tab-btn active" data-stab="groups"  onclick="switchSettingsTab('groups')" data-i18n="settings.subtab.groups">📋 Gruplar</button>
           <button class="sub-tab-btn"        data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
-          <button class="sub-tab-btn"        data-stab="transfer" onclick="switchSettingsTab('transfer')">📤 Transfer Hedefleri</button>
+          <button class="sub-tab-btn"        data-stab="transfer" onclick="switchSettingsTab('transfer')" data-i18n="settings.subtab.transfer">📤 Transfer Hedefleri</button>
           <button class="sub-tab-btn"        data-stab="watches" onclick="switchSettingsTab('watches')"><span data-i18n="settings.subtab.notifications">🔔 Bildirimler</span> <span id="settings-watch-count" class="settings-tab-badge" style="display:none">0</span></button>
         </div>
 
         <div id="settings-tab-account" class="settings-tab-content">
         <div class="settings-card" id="ui-pw-card">
-          <h3>Arabirim Parolası</h3>
+          <h3 data-i18n="settings.uiPass.title">Arabirim Parolası</h3>
           <div class="creds-current" id="ui-pw-current">
-            Mevcut: <b id="ui-pw-state">—</b>
+            <span data-i18n="settings.uiPass.currentLabel">Mevcut:</span> <b id="ui-pw-state">—</b>
           </div>
           <div class="creds-form">
-            <input id="ui-cur-pw" type="password" placeholder="Mevcut parola" autocomplete="current-password">
-            <input id="ui-new-pw" type="password" placeholder="Yeni parola" autocomplete="new-password">
-            <button class="creds-btn" onclick="uiAuthChangePassword()">Parolayı Değiştir</button>
+            <input id="ui-cur-pw" type="password" placeholder="Mevcut parola" data-i18n-ph="settings.uiPass.curPh" autocomplete="current-password">
+            <input id="ui-new-pw" type="password" placeholder="Yeni parola" data-i18n-ph="settings.uiPass.newPh" autocomplete="new-password">
+            <button class="creds-btn" onclick="uiAuthChangePassword()" data-i18n="settings.uiPass.change">Parolayı Değiştir</button>
           </div>
           <div class="creds-foot">
-            <span class="creds-hint">Değiştirince mevcut tarayıcı oturumların hepsi kapanır.</span>
-            <button class="creds-btn creds-btn-alt" onclick="uiAuthLogout()">Arabirim Oturumunu Kapat</button>
+            <span class="creds-hint" data-i18n="settings.uiPass.hint">Değiştirince mevcut tarayıcı oturumların hepsi kapanır.</span>
+            <button class="creds-btn creds-btn-alt" onclick="uiAuthLogout()" data-i18n="settings.uiPass.logoutBtn">Arabirim Oturumunu Kapat</button>
           </div>
         </div>
 
@@ -1162,8 +1171,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             <button class="creds-btn creds-btn-add" onclick="openAddAccount()" style="margin-left:auto"><span data-i18n="accounts.add">+ Hesap Ekle</span></button>
           </h3>
           <details class="api-help">
-            <summary>API ID ve API Hash nereden alınır?</summary>
-            <ol>
+            <summary data-i18n="accounts.apiHelp.summary">API ID ve API Hash nereden alınır?</summary>
+            <ol data-i18n-html="accounts.apiHelp.ol">
               <li><a href="https://my.telegram.org" target="_blank" rel="noopener"><b>my.telegram.org</b></a> adresini açın.</li>
               <li>Telegram'da kullandığınız <b>telefon numaranızla</b> giriş yapın (sayfa "+90 5xx..." şeklinde uluslararası formatta bekler).</li>
               <li>Telegram resmi uygulamanıza bir <b>doğrulama kodu</b> gelir — bu kod SMS değil, uygulama içi mesajdır. Onu sayfaya girin.</li>
@@ -1172,7 +1181,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
               <li><b>Create application</b>'a basın.</li>
               <li>Açılan sayfada görünen <b>App api_id</b> (sayı) ve <b>App api_hash</b> (uzun karakter dizisi) değerlerini kopyalayıp aşağıdaki forma yapıştırın.</li>
             </ol>
-            <div class="api-help-foot">
+            <div class="api-help-foot" data-i18n-html="accounts.apiHelp.tip">
               <b>İpucu:</b> Bu kimlik bilgileri <b>cihaza/Telegram hesabınıza özgüdür</b>, bir kez alınır — sonradan farklı projelerde de aynısını kullanabilirsiniz. Telegram bu bilgileri kimseyle paylaşmaz ve yalnızca size gösterir.
             </div>
           </details>
@@ -1192,22 +1201,22 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         </div>
 
         <div class="settings-card" id="sync-interval-card">
-          <h3>Tarama Sıklığı</h3>
+          <h3 data-i18n="settings.scanFreq.title">Tarama Sıklığı</h3>
           <div class="sync-current">
-            Mevcut: <b id="sync-int-cur">—</b> · Sonraki tarama: <span id="sync-int-next">—</span>
+            <span data-i18n="settings.sync.currentLabel">Mevcut:</span> <b id="sync-int-cur">—</b> <span data-i18n="settings.sync.nextLabel">· Sonraki tarama:</span> <span id="sync-int-next">—</span>
           </div>
           <div class="sync-presets" id="sync-int-presets">
-            <button class="sync-preset" data-secs="900">15 dk</button>
-            <button class="sync-preset" data-secs="1800">30 dk</button>
-            <button class="sync-preset" data-secs="3600">1 saat</button>
-            <button class="sync-preset" data-secs="7200">2 saat</button>
-            <button class="sync-preset" data-secs="14400">4 saat</button>
-            <button class="sync-preset" data-secs="21600">6 saat</button>
-            <button class="sync-preset" data-secs="43200">12 saat</button>
-            <button class="sync-preset" data-secs="86400">24 saat</button>
+            <button class="sync-preset" data-secs="900" data-i18n="settings.sync.preset.15m">15 dk</button>
+            <button class="sync-preset" data-secs="1800" data-i18n="settings.sync.preset.30m">30 dk</button>
+            <button class="sync-preset" data-secs="3600" data-i18n="settings.sync.preset.1h">1 saat</button>
+            <button class="sync-preset" data-secs="7200" data-i18n="settings.sync.preset.2h">2 saat</button>
+            <button class="sync-preset" data-secs="14400" data-i18n="settings.sync.preset.4h">4 saat</button>
+            <button class="sync-preset" data-secs="21600" data-i18n="settings.sync.preset.6h">6 saat</button>
+            <button class="sync-preset" data-secs="43200" data-i18n="settings.sync.preset.12h">12 saat</button>
+            <button class="sync-preset" data-secs="86400" data-i18n="settings.sync.preset.24h">24 saat</button>
           </div>
-          <div class="sync-hint">
-            <b>Önerim:</b> 1–2 saat. Realtime handler yeni mesajları zaten anında yakalıyor; periyodik tarama yalnızca backfill güvencesi. 30 dk altına inmek floodwait riskini artırır, gözle görülür kazanç sağlamaz.
+          <div class="sync-hint" data-i18n-html="settings.sync.hint">
+            <b>Önerim:</b> 1–2 saat. Realtime handler yeni mesajları zaten anında yakalıyor; periyodik tarama yalnızca backfill güvencesi. 30 dk altına inmek floodwait riskini artırır, gözle görülür kazanım sağlamaz.
           </div>
         </div>
 
@@ -1357,7 +1366,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
               <div class="bulk-actions">
                 <button class="bulk-btn" id="bulk-hide-btn" onclick="bulkToggleHide()" data-i18n="groups.bulkHide">Gizle</button>
                 <button class="bulk-btn" id="bulk-excl-btn" onclick="bulkToggleExcluded()" data-i18n="groups.bulkUntrack">Takip Etme</button>
-                <button class="bulk-btn" onclick="bulkRescanGroups()">Yeniden Tara</button>
+                <button class="bulk-btn" onclick="bulkRescanGroups()" data-i18n="groups.bulkRescan">Yeniden Tara</button>
                 <button class="bulk-btn bulk-btn-danger" onclick="bulkLeaveGroups()" data-i18n="groups.bulkLeave">Telegram'dan Ayrıl</button>
                 <button class="bulk-btn cancel" onclick="bulkClearSelection()" data-i18n="common.cancel">İptal</button>
               </div>
@@ -1371,77 +1380,78 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         <div id="settings-tab-transfer" class="settings-tab-content">
           <div class="settings-card">
             <h3 style="display:flex;align-items:center;justify-content:space-between">
-              <span>Transfer Hedefleri</span>
-              <button class="creds-btn creds-btn-add" onclick="openAddTransferDest()">+ Hedef Ekle</button>
+              <span data-i18n="td.title">Transfer Hedefleri</span>
+              <button class="creds-btn creds-btn-add" onclick="openAddTransferDest()" data-i18n="td.addBtn">+ Hedef Ekle</button>
             </h3>
-            <div style="font-size:.74rem;color:var(--text-3);margin-bottom:12px;line-height:1.55">
+            <div style="font-size:.74rem;color:var(--text-3);margin-bottom:12px;line-height:1.55" data-i18n-html="settings.transfer.hint">
               İndirilen dosyaları otomatik olarak bu hedeflere kopyalar/taşır. İndirme düğmesine tıkladığında hangi hedeflere gönderileceğini seçebilirsin.
               <br>Samba paylaşımları için önce sisteme mount edin, ardından <b>Yerel Dizin</b> olarak ekleyin.
             </div>
             <div class="td-list" id="td-list"></div>
-            <div id="td-add-form" style="display:none;margin-top:10px">
+            <div id="td-form-container" style="display:none">
+            <div id="td-add-form">
               <div class="td-form">
-                <h4 id="td-form-title">Yeni Hedef</h4>
+                <h4 id="td-form-title" data-i18n="td.newTitle">Yeni Hedef</h4>
                 <div class="td-form-row">
-                  <label>Ad</label>
-                  <input id="td-name" type="text" placeholder="örn: Plex Kütüphanesi">
+                  <label data-i18n="td.labelName">Ad</label>
+                  <input id="td-name" type="text" data-i18n-ph="td.namePh" placeholder="örn: Plex Kütüphanesi">
                 </div>
                 <div class="td-form-row">
-                  <label>Tür</label>
+                  <label data-i18n="td.labelType">Tür</label>
                   <select id="td-type" onchange="onTdTypeChange()">
-                    <option value="local">Yerel Dizin / NAS / Harici Disk</option>
-                    <option value="ftp">FTP Sunucusu</option>
-                    <option value="sftp">SFTP Sunucusu</option>
+                    <option value="local" data-i18n="td.typeLocal">Yerel Dizin / NAS / Harici Disk</option>
+                    <option value="ftp" data-i18n="td.typeFtp">FTP Sunucusu</option>
+                    <option value="sftp" data-i18n="td.typeSftp">SFTP Sunucusu</option>
                   </select>
                 </div>
                 <!-- local fields -->
                 <div id="td-fields-local">
                   <div class="td-form-row">
-                    <label>Dizin Yolu</label>
+                    <label data-i18n="td.labelPath">Dizin Yolu</label>
                     <input id="td-local-path" type="text" placeholder="/media/plex/downloads">
                   </div>
                   <div class="td-form-row">
-                    <label>İşlem</label>
+                    <label data-i18n="td.labelMode">İşlem</label>
                     <select id="td-local-mode">
-                      <option value="copy">Kopyala (kaynak dosya kalır)</option>
-                      <option value="move">Taşı (kaynak dosya silinir)</option>
+                      <option value="copy" data-i18n="td.modeCopy">Kopyala (kaynak dosya kalır)</option>
+                      <option value="move" data-i18n="td.modeMove">Taşı (kaynak dosya silinir)</option>
                     </select>
                   </div>
                 </div>
                 <!-- ftp/sftp fields -->
                 <div id="td-fields-remote" style="display:none;flex-direction:column;gap:10px">
                   <div class="td-form-row">
-                    <label>Sunucu</label>
-                    <input id="td-host" type="text" placeholder="192.168.1.100 veya ftp.example.com">
+                    <label data-i18n="td.labelHost">Sunucu</label>
+                    <input id="td-host" type="text" placeholder="192.168.1.100 veya ftp.example.com" data-i18n-ph="td.hostPh">
                   </div>
                   <div class="td-form-row">
-                    <label>Port</label>
+                    <label data-i18n="td.labelPort">Port</label>
                     <input id="td-port" type="number" placeholder="21" style="max-width:90px">
                   </div>
                   <div class="td-form-row">
-                    <label>Kullanıcı</label>
-                    <input id="td-user" type="text" placeholder="kullanici_adi" autocomplete="off">
+                    <label data-i18n="td.labelUser">Kullanıcı</label>
+                    <input id="td-user" type="text" placeholder="kullanici_adi" data-i18n-ph="td.userPh" autocomplete="off">
                   </div>
                   <div class="td-form-row">
-                    <label>Parola</label>
-                    <input id="td-pass" type="password" placeholder="parola" autocomplete="new-password">
+                    <label data-i18n="td.labelPass">Parola</label>
+                    <input id="td-pass" type="password" placeholder="parola" data-i18n-ph="td.passPh" autocomplete="new-password">
                   </div>
                   <div class="td-form-row">
-                    <label>Uzak Dizin</label>
+                    <label data-i18n="td.labelRemotePath">Uzak Dizin</label>
                     <input id="td-remote-path" type="text" placeholder="/uploads">
                   </div>
                   <div class="td-form-row" id="td-passive-row">
-                    <label>FTP Modu</label>
+                    <label data-i18n="td.labelFtpMode">FTP Modu</label>
                     <select id="td-passive">
-                      <option value="true">Pasif (önerilen)</option>
-                      <option value="false">Aktif</option>
+                      <option value="true" data-i18n="td.ftpPassive">Pasif (önerilen)</option>
+                      <option value="false" data-i18n="td.ftpActive">Aktif</option>
                     </select>
                   </div>
                   <div class="td-form-row">
-                    <label>İşlem</label>
+                    <label data-i18n="td.labelMode">İşlem</label>
                     <select id="td-remote-mode">
-                      <option value="copy">Kopyala (yerel dosya kalır)</option>
-                      <option value="move">Taşı (yerel dosya silinir)</option>
+                      <option value="copy" data-i18n="td.modeCopyRemote">Kopyala (yerel dosya kalır)</option>
+                      <option value="move" data-i18n="td.modeMoveRemote">Taşı (yerel dosya silinir)</option>
                     </select>
                   </div>
                 </div>
@@ -1449,16 +1459,17 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
                   <label class="td-toggle">
                     <input type="checkbox" id="td-enabled" checked>
                     <span class="td-toggle-track"></span>
-                    <span>Etkin</span>
+                    <span data-i18n="td.labelEnabled">Etkin</span>
                   </label>
                 </div>
                 <div id="td-test-result" style="display:none;padding:7px 10px;border-radius:7px;font-size:.77rem;font-weight:500;margin-top:2px"></div>
                 <div class="td-form-actions">
-                  <button class="td-cancel-btn td-btn" onclick="closeAddTransferDest()">İptal</button>
-                  <button class="td-btn" onclick="testTransferDestForm()" id="td-form-test-btn" style="background:var(--bg-3);border:1px solid var(--input-border)!important;color:var(--text-2)">Bağlantıyı Test Et</button>
-                  <button class="td-save-btn td-btn" onclick="saveTransferDest()">Kaydet</button>
+                  <button class="td-cancel-btn td-btn" onclick="closeAddTransferDest()" data-i18n="common.cancel">İptal</button>
+                  <button class="td-btn" onclick="testTransferDestForm()" id="td-form-test-btn" style="background:var(--bg-3);border:1px solid var(--input-border)!important;color:var(--text-2)" data-i18n="td.testBtn">Bağlantıyı Test Et</button>
+                  <button class="td-save-btn td-btn" onclick="saveTransferDest()" data-i18n="common.save">Kaydet</button>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -1487,10 +1498,10 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           <span id="dl-space-notice" style="display:none;margin-left:10px;font-size:.72rem;color:var(--text-3);font-weight:400">⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span></span>
           <span id="dl-bulk-actions" style="display:none;align-items:center;gap:6px;margin-left:14px">
             <span id="dl-bulk-count" style="font-size:.72rem;color:var(--accent-h);font-weight:600"></span>
-            <button class="dl-bulk-btn" id="dl-bulk-dl" onclick="bulkDownloadDownloaded()">⬇ Seçilenleri İndir</button>
-            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-del" onclick="bulkDeleteDownloaded()">🗑 Seçilenleri Sil</button>
-            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-cancel" onclick="bulkCancelDownloads()">✕ İndirmeyi İptal Et</button>
-            <button class="dl-bulk-btn dl-bulk-btn-alt" onclick="clearDownloadSelection()">Temizle</button>
+            <button class="dl-bulk-btn" id="dl-bulk-dl" onclick="bulkDownloadDownloaded()" data-i18n="dl.bulkDownload">⬇ Seçilenleri İndir</button>
+            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-del" onclick="bulkDeleteDownloaded()" data-i18n="dl.bulkDelete">🗑 Seçilenleri Sil</button>
+            <button class="dl-bulk-btn dl-bulk-btn-del" id="dl-bulk-cancel" onclick="bulkCancelDownloads()" data-i18n="dl.bulkCancelBtn">✕ İndirmeyi İptal Et</button>
+            <button class="dl-bulk-btn dl-bulk-btn-alt" onclick="clearDownloadSelection()" data-i18n="dl.clearSel">Temizle</button>
           </span>
           <button onclick="loadDownloadsList()" data-i18n="downloads.refresh" style="margin-left:auto;font-size:.72rem;padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;color:var(--text-3)">Yenile</button>
         </div>
@@ -1641,7 +1652,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           <table id="hunter-grid">
             <thead>
               <tr>
-                <th class="hg-chk-cell"><input type="checkbox" id="hg-select-all" onchange="hgSelectAll(this.checked)" title="Tümünü seç"></th>
+                <th class="hg-chk-cell"><input type="checkbox" id="hg-select-all" onchange="hgSelectAll(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
                 <th class="hg-sortable" onclick="hgSort('score')" style="width:62px"><span data-i18n="hunter.score">Puan</span> <span class="sort-arrow" id="hg-arr-score"></span></th>
                 <th class="hg-sortable" onclick="hgSort('username')"><span data-i18n="hg.channel">Kanal</span> <span class="sort-arrow" id="hg-arr-username"></span></th>
                 <th class="hg-sortable" onclick="hgSort('members')" style="width:80px"><span data-i18n="hunter.members">Üye</span> <span class="sort-arrow" id="hg-arr-members"></span></th>
@@ -1669,7 +1680,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
                     <option value="blacklisted" data-i18n="hunter.statusBlacklisted">Kara Listede</option>
                   </select>
                 </th>
-                <th><input id="hg-flt-sources" type="text" placeholder="ör. brave" oninput="hgFilterChange()"></th>
+                <th><input id="hg-flt-sources" type="text" placeholder="ör. brave" data-i18n-ph="hg.sourcesPh" oninput="hgFilterChange()"></th>
                 <th></th>
               </tr>
             </thead>
@@ -1775,12 +1786,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
                   <option>Archive.org</option>
                 </select>
               </th>
-              <th>
-                <div class="range-input-wrap">
-                  <input id="lcol-files-min" type="text" placeholder="min" data-i18n-ph="filter.min" oninput="debouncedLoadLinks()">
-                  <input id="lcol-files-max" type="text" placeholder="max" data-i18n-ph="filter.max" oninput="debouncedLoadLinks()">
-                </div>
-              </th>
+              <th><input id="lcol-files-name" type="text" placeholder="dosya adı…" data-i18n-ph="filter.colFileName" oninput="debouncedLoadLinks()"></th>
               <th><input id="lcol-group" type="text" placeholder="grup…" data-i18n-ph="filter.colGroup" oninput="debouncedLoadLinks()"></th>
               <th>
                 <div class="range-input-wrap">
@@ -1843,16 +1849,21 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 <!-- Download destinations modal -->
 <div id="dl-dest-overlay" onclick="if(event.target===this)closeDlDestModal()">
   <div id="dl-dest-modal">
-    <h3>Transfer Hedefi Seç</h3>
-    <div class="ddm-sub">Dosya önce sunucuya indirilir, ardından seçtiğin hedeflere kopyalanır.</div>
+    <h3 data-i18n="ddm.title">Transfer Hedefi Seç</h3>
+    <div class="ddm-sub" data-i18n="ddm.sub">Dosya önce sunucuya indirilir, ardından seçtiğin hedeflere kopyalanır.</div>
     <div id="ddm-options"></div>
     <div class="ddm-actions">
-      <button class="ddm-btn ddm-skip" onclick="confirmDlDestModal(false)">Sadece Sunucuya İndir</button>
-      <button class="ddm-btn ddm-confirm" onclick="confirmDlDestModal(true)">İndir ve Transfer Et</button>
+      <button class="ddm-btn ddm-skip" onclick="confirmDlDestModal(false)" data-i18n="ddm.skipBtn">Sadece Sunucuya İndir</button>
+      <button class="ddm-btn ddm-confirm" onclick="confirmDlDestModal(true)" data-i18n="ddm.confirmBtn">İndir ve Transfer Et</button>
     </div>
   </div>
 </div>
 <script src="i18n.js"></script>
 <script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
 </body>
 </html>
