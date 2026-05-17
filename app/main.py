@@ -1042,8 +1042,7 @@ async def search_links_endpoint(
     url_filter: str = Query(""),
     context_filter: str = Query(""),
     group_filter: str = Query(""),
-    min_files: Optional[int] = Query(None),
-    max_files: Optional[int] = Query(None),
+    file_name_filter: str = Query(""),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
 ):
@@ -1060,8 +1059,7 @@ async def search_links_endpoint(
         url_filter=url_filter,
         context_filter=context_filter,
         group_filter=group_filter,
-        min_files=min_files,
-        max_files=max_files,
+        file_name_filter=file_name_filter,
         date_from=date_from,
         date_to=date_to,
     )

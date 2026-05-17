@@ -851,8 +851,7 @@ async def search_links(
     url_filter: str = "",
     context_filter: str = "",
     group_filter: str = "",
-    min_files: Optional[int] = None,
-    max_files: Optional[int] = None,
+    file_name_filter: str = "",
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> Tuple[List[Dict], int]:
@@ -882,10 +881,12 @@ async def search_links(
             f"(COALESCE(g.display_name, g.name) ILIKE ${idx} OR g.username ILIKE ${idx})"
         )
         args.append(f"%{group_filter}%"); idx += 1
-    if min_files is not None:
-        conditions.append(f"l.file_count >= ${idx}"); args.append(int(min_files)); idx += 1
-    if max_files is not None:
-        conditions.append(f"l.file_count <= ${idx}"); args.append(int(max_files)); idx += 1
+    if file_name_filter:
+        conditions.append(
+            f"EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(l.files_json, '[]'::jsonb)) AS f"
+            f" WHERE f->>'name' ILIKE ${idx})"
+        )
+        args.append(f"%{file_name_filter}%"); idx += 1
     def _parse_date(s: str):
         try:
             return datetime.strptime(s[:10], "%Y-%m-%d")
