@@ -17,6 +17,7 @@ import ui_auth
 
 import database
 import telegram_client
+import transfer as _transfer
 from sync import (
     cancel_download,
     download_file,
@@ -869,8 +870,29 @@ async def get_file(file_id: int):
     return f
 
 
+class DownloadRequest(BaseModel):
+    destination_ids: list[int] = []
+
+
+async def _download_and_transfer(file_id: int, destination_ids: list[int]):
+    local_path = await download_file(file_id)
+    if not destination_ids:
+        return
+    dests = await database.list_transfer_destinations()
+    dests_by_id = {d["id"]: d for d in dests}
+    for dest_id in destination_ids:
+        dest = dests_by_id.get(dest_id)
+        if not dest or not dest.get("enabled"):
+            continue
+        try:
+            await _transfer.transfer_file(local_path, dest)
+            logger.info("Transfer tamamlandı: file_id=%s dest=%s", file_id, dest["name"])
+        except Exception as exc:
+            logger.error("Transfer hatası: file_id=%s dest=%s hata=%s", file_id, dest["name"], exc)
+
+
 @app.post("/api/files/{file_id}/download")
-async def trigger_download(file_id: int, background_tasks: BackgroundTasks):
+async def trigger_download(file_id: int, background_tasks: BackgroundTasks, body: DownloadRequest = DownloadRequest()):
     f = await database.get_file_by_id(file_id)
     if not f:
         raise HTTPException(404, "File not found")
@@ -881,7 +903,10 @@ async def trigger_download(file_id: int, background_tasks: BackgroundTasks):
     if f["downloading"]:
         return {"status": "downloading", "progress": f["download_progress"]}
 
-    background_tasks.add_task(download_file, file_id)
+    if body.destination_ids:
+        background_tasks.add_task(_download_and_transfer, file_id, body.destination_ids)
+    else:
+        background_tasks.add_task(download_file, file_id)
     return {"status": "started"}
 
 
@@ -921,6 +946,57 @@ async def delete_local_file(file_id: int):
             raise HTTPException(500, f"Could not delete file: {e}")
     await database.clear_file_local_path(file_id)
     return {"ok": True}
+
+
+# ── Transfer Destinations ─────────────────────────────────────────────────────
+
+class TransferDestBody(BaseModel):
+    name: str
+    type: str
+    config: dict = {}
+    enabled: bool = True
+
+
+@app.get("/api/transfer-destinations")
+async def api_list_transfer_destinations():
+    return await database.list_transfer_destinations()
+
+
+@app.post("/api/transfer-destinations")
+async def api_create_transfer_destination(body: TransferDestBody):
+    allowed = {"local", "ftp", "sftp"}
+    if body.type not in allowed:
+        raise HTTPException(400, f"Geçersiz tür. İzin verilenler: {', '.join(allowed)}")
+    dest = await database.create_transfer_destination(body.name, body.type, body.config, body.enabled)
+    return dest
+
+
+@app.put("/api/transfer-destinations/{dest_id}")
+async def api_update_transfer_destination(dest_id: int, body: TransferDestBody):
+    allowed = {"local", "ftp", "sftp"}
+    if body.type not in allowed:
+        raise HTTPException(400, f"Geçersiz tür. İzin verilenler: {', '.join(allowed)}")
+    dest = await database.update_transfer_destination(dest_id, body.name, body.type, body.config, body.enabled)
+    if not dest:
+        raise HTTPException(404, "Hedef bulunamadı")
+    return dest
+
+
+@app.delete("/api/transfer-destinations/{dest_id}")
+async def api_delete_transfer_destination(dest_id: int):
+    ok = await database.delete_transfer_destination(dest_id)
+    if not ok:
+        raise HTTPException(404, "Hedef bulunamadı")
+    return {"ok": True}
+
+
+@app.post("/api/transfer-destinations/{dest_id}/test")
+async def api_test_transfer_destination(dest_id: int):
+    dest = await database.get_transfer_destination(dest_id)
+    if not dest:
+        raise HTTPException(404, "Hedef bulunamadı")
+    result = await _transfer.test_destination(dest)
+    return result
 
 
 @app.get("/api/downloads")

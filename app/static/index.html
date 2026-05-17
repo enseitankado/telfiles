@@ -885,6 +885,60 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #watch-banner .wb-item .wb-x{cursor:pointer;font-weight:700;opacity:.7;padding:0 2px}
 #watch-banner .wb-item .wb-x:hover{opacity:1}
 
+/* ── Transfer Destinations ── */
+.td-list{display:flex;flex-direction:column;gap:7px}
+.td-row{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border-2);border-radius:8px;background:var(--bg-3)}
+.td-row.td-disabled{opacity:.55}
+.td-badge{padding:2px 8px;border-radius:99px;font-size:.67rem;font-weight:700;letter-spacing:.03em;white-space:nowrap}
+.td-badge.local{background:#dcfce7;color:#15803d}
+.td-badge.ftp{background:#dbeafe;color:#1d4ed8}
+.td-badge.sftp{background:#fae8ff;color:#7e22ce}
+[data-theme="dark"] .td-badge.local,[data-theme="nord"] .td-badge.local,[data-theme="forest"] .td-badge.local,[data-theme="slate"] .td-badge.local,[data-theme="crimson"] .td-badge.local,[data-theme="rosepine"] .td-badge.local{background:#14532d;color:#86efac}
+[data-theme="dark"] .td-badge.ftp,[data-theme="nord"] .td-badge.ftp,[data-theme="forest"] .td-badge.ftp,[data-theme="slate"] .td-badge.ftp,[data-theme="crimson"] .td-badge.ftp,[data-theme="rosepine"] .td-badge.ftp{background:#1e3a5f;color:#93c5fd}
+[data-theme="dark"] .td-badge.sftp,[data-theme="nord"] .td-badge.sftp,[data-theme="forest"] .td-badge.sftp,[data-theme="slate"] .td-badge.sftp,[data-theme="crimson"] .td-badge.sftp,[data-theme="rosepine"] .td-badge.sftp{background:#3b0764;color:#d8b4fe}
+.td-name{font-weight:600;color:var(--text-1);font-size:.83rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.td-path{font-size:.71rem;color:var(--text-4);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.td-actions{display:flex;gap:4px;flex-shrink:0}
+.td-btn{padding:3px 9px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.71rem;font-weight:500}
+.td-btn:hover{background:var(--bg-hover);border-color:var(--accent-soft);color:var(--text-1)}
+.td-btn-danger:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.td-btn-test.ok{background:#dcfce7;border-color:#86efac;color:#15803d}
+.td-btn-test.fail{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+.td-form{padding:14px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:10px;display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.td-form h4{font-size:.75rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin:0}
+.td-form-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.td-form-row label{font-size:.75rem;color:var(--text-3);min-width:80px;flex-shrink:0}
+.td-form-row input,.td-form select{flex:1;min-width:120px;padding:6px 9px;border:1px solid var(--input-border);border-radius:7px;font-size:.82rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.td-form-row input:focus,.td-form select:focus{border-color:var(--accent)}
+.td-form-actions{display:flex;gap:6px;justify-content:flex-end}
+.td-form-actions button{padding:6px 16px;border-radius:7px;font-size:.82rem;font-weight:600;cursor:pointer;border:none}
+.td-save-btn{background:var(--accent);color:#fff}
+.td-save-btn:hover{background:var(--accent-h)}
+.td-cancel-btn{background:var(--bg-2);border:1px solid var(--input-border)!important;color:var(--text-2)}
+.td-toggle{position:relative;display:inline-flex;align-items:center;cursor:pointer;gap:6px;font-size:.78rem;color:var(--text-2)}
+.td-toggle input{position:absolute;opacity:0;width:0;height:0}
+.td-toggle-track{width:34px;height:18px;background:var(--border-2);border-radius:99px;transition:background .15s;flex-shrink:0}
+.td-toggle input:checked+.td-toggle-track{background:var(--accent)}
+.td-toggle-track::after{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;background:#fff;border-radius:99px;transition:transform .15s}
+.td-toggle input:checked~.td-toggle-track::after{transform:translateX(16px)}
+/* ── Download destinations modal ── */
+#dl-dest-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:center;justify-content:center}
+#dl-dest-overlay.open{display:flex}
+#dl-dest-modal{background:var(--bg-2);border-radius:12px;padding:20px 22px;width:360px;max-width:95vw;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+#dl-dest-modal h3{font-size:.9rem;font-weight:700;color:var(--text-1);margin-bottom:4px}
+#dl-dest-modal .ddm-sub{font-size:.72rem;color:var(--text-4);margin-bottom:14px}
+.ddm-option{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-2);border-radius:8px;cursor:pointer;margin-bottom:6px;background:var(--bg-3)}
+.ddm-option:hover{border-color:var(--accent-soft);background:var(--bg-hover)}
+.ddm-option.selected{border-color:var(--accent);background:var(--bg-info)}
+.ddm-option input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;flex-shrink:0;cursor:pointer}
+.ddm-opt-name{font-size:.83rem;font-weight:600;color:var(--text-1);flex:1}
+.ddm-opt-path{font-size:.68rem;color:var(--text-4)}
+.ddm-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+.ddm-btn{padding:7px 18px;border-radius:8px;font-size:.83rem;font-weight:600;cursor:pointer;border:none}
+.ddm-confirm{background:var(--accent);color:#fff}
+.ddm-confirm:hover{background:var(--accent-h)}
+.ddm-skip{background:var(--bg-3);border:1px solid var(--input-border)!important;color:var(--text-2)}
+.ddm-skip:hover{background:var(--bg-hover)}
 /* ── Name edit modal ── */
 #gn-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
 #gn-overlay.open{display:flex}
@@ -1081,6 +1135,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
         <div id="settings-sub-tabs">
           <button class="sub-tab-btn active" data-stab="groups"  onclick="switchSettingsTab('groups')" data-i18n="settings.subtab.groups">📋 Gruplar</button>
           <button class="sub-tab-btn"        data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
+          <button class="sub-tab-btn"        data-stab="transfer" onclick="switchSettingsTab('transfer')">📤 Transfer Hedefleri</button>
           <button class="sub-tab-btn"        data-stab="watches" onclick="switchSettingsTab('watches')"><span data-i18n="settings.subtab.notifications">🔔 Bildirimler</span> <span id="settings-watch-count" class="settings-tab-badge" style="display:none">0</span></button>
         </div>
 
@@ -1309,6 +1364,92 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             </div>
             <div id="sidebar-foot">
               <button id="show-hidden-btn" onclick="toggleShowHidden()"></button>
+            </div>
+          </div>
+        </div>
+
+        <div id="settings-tab-transfer" class="settings-tab-content">
+          <div class="settings-card">
+            <h3 style="display:flex;align-items:center;justify-content:space-between">
+              <span>Transfer Hedefleri</span>
+              <button class="creds-btn creds-btn-add" onclick="openAddTransferDest()">+ Hedef Ekle</button>
+            </h3>
+            <div style="font-size:.74rem;color:var(--text-3);margin-bottom:12px;line-height:1.55">
+              İndirilen dosyaları otomatik olarak bu hedeflere kopyalar/taşır. İndirme düğmesine tıkladığında hangi hedeflere gönderileceğini seçebilirsin.
+              <br>Samba paylaşımları için önce sisteme mount edin, ardından <b>Yerel Dizin</b> olarak ekleyin.
+            </div>
+            <div class="td-list" id="td-list"></div>
+            <div id="td-add-form" style="display:none;margin-top:10px">
+              <div class="td-form">
+                <h4 id="td-form-title">Yeni Hedef</h4>
+                <div class="td-form-row">
+                  <label>Ad</label>
+                  <input id="td-name" type="text" placeholder="örn: Plex Kütüphanesi">
+                </div>
+                <div class="td-form-row">
+                  <label>Tür</label>
+                  <select id="td-type" onchange="onTdTypeChange()">
+                    <option value="local">Yerel Dizin / NAS / Harici Disk</option>
+                    <option value="ftp">FTP Sunucusu</option>
+                    <option value="sftp">SFTP Sunucusu</option>
+                  </select>
+                </div>
+                <!-- local fields -->
+                <div id="td-fields-local">
+                  <div class="td-form-row">
+                    <label>Dizin Yolu</label>
+                    <input id="td-local-path" type="text" placeholder="/media/plex/downloads">
+                  </div>
+                  <div class="td-form-row">
+                    <label>İşlem</label>
+                    <select id="td-local-mode">
+                      <option value="copy">Kopyala (kaynak dosya kalır)</option>
+                      <option value="move">Taşı (kaynak dosya silinir)</option>
+                    </select>
+                  </div>
+                </div>
+                <!-- ftp/sftp fields -->
+                <div id="td-fields-remote" style="display:none;flex-direction:column;gap:10px">
+                  <div class="td-form-row">
+                    <label>Sunucu</label>
+                    <input id="td-host" type="text" placeholder="192.168.1.100 veya ftp.example.com">
+                  </div>
+                  <div class="td-form-row">
+                    <label>Port</label>
+                    <input id="td-port" type="number" placeholder="21" style="max-width:90px">
+                  </div>
+                  <div class="td-form-row">
+                    <label>Kullanıcı</label>
+                    <input id="td-user" type="text" placeholder="kullanici_adi" autocomplete="off">
+                  </div>
+                  <div class="td-form-row">
+                    <label>Parola</label>
+                    <input id="td-pass" type="password" placeholder="parola" autocomplete="new-password">
+                  </div>
+                  <div class="td-form-row">
+                    <label>Uzak Dizin</label>
+                    <input id="td-remote-path" type="text" placeholder="/uploads">
+                  </div>
+                  <div class="td-form-row" id="td-passive-row">
+                    <label>Mod</label>
+                    <select id="td-passive">
+                      <option value="true">Pasif (önerilen)</option>
+                      <option value="false">Aktif</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="td-form-row" style="margin-top:2px">
+                  <label class="td-toggle">
+                    <input type="checkbox" id="td-enabled" checked>
+                    <span class="td-toggle-track"></span>
+                    <span>Etkin</span>
+                  </label>
+                </div>
+                <div class="td-form-actions">
+                  <button class="td-cancel-btn td-btn" onclick="closeAddTransferDest()">İptal</button>
+                  <button class="td-save-btn td-btn" onclick="saveTransferDest()">Kaydet</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1690,6 +1831,18 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
     } catch(e){}
   })();
 </script>
+<!-- Download destinations modal -->
+<div id="dl-dest-overlay" onclick="if(event.target===this)closeDlDestModal()">
+  <div id="dl-dest-modal">
+    <h3>Transfer Hedefi Seç</h3>
+    <div class="ddm-sub">Dosya önce sunucuya indirilir, ardından seçtiğin hedeflere kopyalanır.</div>
+    <div id="ddm-options"></div>
+    <div class="ddm-actions">
+      <button class="ddm-btn ddm-skip" onclick="confirmDlDestModal(false)">Sadece Sunucuya İndir</button>
+      <button class="ddm-btn ddm-confirm" onclick="confirmDlDestModal(true)">İndir ve Transfer Et</button>
+    </div>
+  </div>
+</div>
 <script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>

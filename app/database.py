@@ -306,6 +306,15 @@ CREATE TABLE IF NOT EXISTS watch_notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notif_watch_active ON watch_notifications (watch_id) WHERE dismissed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS transfer_destinations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    config JSONB NOT NULL DEFAULT '{}',
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 """
 
 
@@ -1912,3 +1921,60 @@ async def update_group_member_count(group_id: int, count: int):
         "UPDATE groups SET member_count = $1, member_count_updated_at = NOW() WHERE id = $2",
         count, group_id,
     )
+
+
+# ── Transfer Destinations ─────────────────────────────────────────────────────
+
+async def list_transfer_destinations() -> List[Dict]:
+    rows = await _q("SELECT * FROM transfer_destinations ORDER BY id")
+    result = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("config"), str):
+            d["config"] = _json.loads(d["config"])
+        result.append(d)
+    return result
+
+
+async def get_transfer_destination(dest_id: int) -> Optional[Dict]:
+    row = await _qrow("SELECT * FROM transfer_destinations WHERE id=$1", dest_id)
+    if not row:
+        return None
+    d = dict(row)
+    if isinstance(d.get("config"), str):
+        d["config"] = _json.loads(d["config"])
+    return d
+
+
+async def create_transfer_destination(name: str, type_: str, config: dict, enabled: bool = True) -> Dict:
+    row = await _qrow(
+        """INSERT INTO transfer_destinations (name, type, config, enabled)
+           VALUES ($1, $2, $3::jsonb, $4)
+           RETURNING *""",
+        name, type_, _json.dumps(config), enabled,
+    )
+    d = dict(row)
+    if isinstance(d.get("config"), str):
+        d["config"] = _json.loads(d["config"])
+    return d
+
+
+async def update_transfer_destination(dest_id: int, name: str, type_: str, config: dict, enabled: bool) -> Optional[Dict]:
+    row = await _qrow(
+        """UPDATE transfer_destinations
+           SET name=$1, type=$2, config=$3::jsonb, enabled=$4
+           WHERE id=$5
+           RETURNING *""",
+        name, type_, _json.dumps(config), enabled, dest_id,
+    )
+    if not row:
+        return None
+    d = dict(row)
+    if isinstance(d.get("config"), str):
+        d["config"] = _json.loads(d["config"])
+    return d
+
+
+async def delete_transfer_destination(dest_id: int) -> bool:
+    result = await _exec("DELETE FROM transfer_destinations WHERE id=$1", dest_id)
+    return "DELETE 1" in str(result)

@@ -954,6 +954,8 @@ function switchSettingsTab(name) {
     loadAccountsList();
     _refreshUiPwState();
     loadTelemetrySettings();
+  } else if (name === 'transfer') {
+    loadTransferDestinations();
   }
 }
 
@@ -1470,8 +1472,16 @@ function updateBulkFileBtn() {
 }
 
 async function bulkDownloadSelected() {
-  for (const fileId of [...S.selectedFiles]) {
-    await triggerDownload(fileId);
+  const fileIds = [...S.selectedFiles];
+  const dests = await _getEnabledDests();
+  let destIds = [];
+  if (dests.length > 0) {
+    const result = await _showDlDestModal(dests, fileIds);
+    if (result === null) return; // cancelled
+    destIds = result;
+  }
+  for (const fileId of fileIds) {
+    await _doDownload(fileId, destIds);
   }
   S.selectedFiles.clear();
   updateBulkFileBtn();
@@ -1486,9 +1496,12 @@ function dlState(f) {
   return `<span class="dl-link" onclick="triggerDownload(${f.id})">${esc(t("table.dlLink"))}</span>`;
 }
 
-async function triggerDownload(fileId) {
-  const r = await api(`/api/files/${fileId}/download`, {method:'POST'});
-  if (r.status==='already_downloaded') { loadFiles(); return; }
+async function _doDownload(fileId, destinationIds) {
+  const r = await api(`/api/files/${fileId}/download`, {
+    method: 'POST',
+    json: { destination_ids: destinationIds || [] },
+  });
+  if (r.status === 'already_downloaded') { loadFiles(); return; }
 
   if (!_dlHistory.find(e => e.id === fileId)) {
     _dlHistory.push({ id: fileId, name: '', size: 0, group: '', pct: 0, status: 'queued', startedAt: Date.now() });
@@ -1500,6 +1513,68 @@ async function triggerDownload(fileId) {
   S.dlQueue[fileId] = 0;
   if (S.activeTab === 'downloads') renderDownloadsTab();
   pollDownload(fileId);
+}
+
+// _dlDestPending: { fileIds: [], resolve: fn }
+let _dlDestPending = null;
+
+async function triggerDownload(fileId) {
+  const dests = await _getEnabledDests();
+  if (dests.length > 0) {
+    const destIds = await _showDlDestModal(dests, [fileId]);
+    if (destIds === null) return; // cancelled
+    await _doDownload(fileId, destIds);
+  } else {
+    await _doDownload(fileId, []);
+  }
+}
+
+async function _getEnabledDests() {
+  try {
+    const dests = await api('/api/transfer-destinations');
+    return (dests || []).filter(d => d.enabled);
+  } catch { return []; }
+}
+
+function _showDlDestModal(dests, fileIds) {
+  return new Promise(resolve => {
+    _dlDestPending = { fileIds, resolve };
+    const wrap = document.getElementById('ddm-options');
+    wrap.innerHTML = '';
+    dests.forEach(d => {
+      const desc = _destPathLabel(d);
+      const row = document.createElement('div');
+      row.className = 'ddm-option selected';
+      row.dataset.id = d.id;
+      row.innerHTML = `
+        <input type="checkbox" checked onchange="this.closest('.ddm-option').classList.toggle('selected',this.checked)">
+        <span class="td-badge ${d.type}">${_typeLabelShort(d.type)}</span>
+        <span class="ddm-opt-name">${esc(d.name)}</span>
+        <span class="ddm-opt-path">${esc(desc)}</span>`;
+      row.querySelector('input').addEventListener('change', () => {});
+      wrap.appendChild(row);
+    });
+    document.getElementById('dl-dest-overlay').classList.add('open');
+  });
+}
+
+function closeDlDestModal() {
+  document.getElementById('dl-dest-overlay').classList.remove('open');
+  if (_dlDestPending) { _dlDestPending.resolve(null); _dlDestPending = null; }
+}
+
+function confirmDlDestModal(withTransfer) {
+  document.getElementById('dl-dest-overlay').classList.remove('open');
+  if (!_dlDestPending) return;
+  let destIds = [];
+  if (withTransfer) {
+    document.querySelectorAll('#ddm-options .ddm-option').forEach(row => {
+      if (row.querySelector('input').checked) destIds.push(parseInt(row.dataset.id));
+    });
+  }
+  const pending = _dlDestPending;
+  _dlDestPending = null;
+  pending.resolve(destIds);
 }
 
 function showToast(html, ms = 4000) {
@@ -3998,6 +4073,183 @@ function hunterHelpOverlayClick(e) {
   if (e.target.id === 'hunter-help-overlay') hunterCloseHelp();
 }
 
+
+// ── Transfer Destinations ────────────────────────────────────────────────────
+let _tdEditId = null;
+
+function _typeLabelShort(type) {
+  return { local: 'Yerel', ftp: 'FTP', sftp: 'SFTP' }[type] || type;
+}
+
+function _destPathLabel(d) {
+  const cfg = d.config || {};
+  if (d.type === 'local') return cfg.path || '';
+  return `${cfg.host || ''}:${cfg.port || ''} → ${cfg.path || '/'}`;
+}
+
+async function loadTransferDestinations() {
+  try {
+    const dests = await api('/api/transfer-destinations');
+    renderTransferDestinations(dests || []);
+  } catch (e) { console.error('Transfer hedefleri yüklenemedi:', e); }
+}
+
+function renderTransferDestinations(dests) {
+  const list = document.getElementById('td-list');
+  if (!list) return;
+  if (!dests.length) {
+    list.innerHTML = '<div style="font-size:.78rem;color:var(--text-4);padding:8px 0">Henüz hedef eklenmedi.</div>';
+    return;
+  }
+  list.innerHTML = dests.map(d => `
+    <div class="td-row ${d.enabled ? '' : 'td-disabled'}" id="td-row-${d.id}">
+      <span class="td-badge ${d.type}">${_typeLabelShort(d.type)}</span>
+      <span class="td-name">${esc(d.name)}</span>
+      <span class="td-path">${esc(_destPathLabel(d))}</span>
+      <div class="td-actions">
+        <button class="td-btn td-btn-test" id="td-test-${d.id}" onclick="testTransferDest(${d.id})">Test</button>
+        <button class="td-btn" onclick="editTransferDest(${d.id})">Düzenle</button>
+        <button class="td-btn td-btn-danger" onclick="deleteTransferDest(${d.id})">Sil</button>
+      </div>
+    </div>`).join('');
+}
+
+function openAddTransferDest() {
+  _tdEditId = null;
+  resetTdForm();
+  document.getElementById('td-form-title').textContent = 'Yeni Hedef';
+  document.getElementById('td-add-form').style.display = 'block';
+  document.getElementById('td-name').focus();
+}
+
+function closeAddTransferDest() {
+  document.getElementById('td-add-form').style.display = 'none';
+  _tdEditId = null;
+}
+
+function resetTdForm() {
+  document.getElementById('td-name').value = '';
+  document.getElementById('td-type').value = 'local';
+  document.getElementById('td-local-path').value = '';
+  document.getElementById('td-local-mode').value = 'copy';
+  document.getElementById('td-host').value = '';
+  document.getElementById('td-port').value = '';
+  document.getElementById('td-user').value = '';
+  document.getElementById('td-pass').value = '';
+  document.getElementById('td-remote-path').value = '/';
+  document.getElementById('td-passive').value = 'true';
+  document.getElementById('td-enabled').checked = true;
+  onTdTypeChange();
+}
+
+function onTdTypeChange() {
+  const type = document.getElementById('td-type').value;
+  document.getElementById('td-fields-local').style.display = type === 'local' ? '' : 'none';
+  document.getElementById('td-fields-remote').style.display = type !== 'local' ? 'flex' : 'none';
+  const passiveRow = document.getElementById('td-passive-row');
+  if (passiveRow) passiveRow.style.display = type === 'ftp' ? '' : 'none';
+  // Default port
+  const portEl = document.getElementById('td-port');
+  if (!portEl.value) portEl.value = type === 'sftp' ? '22' : '21';
+}
+
+function editTransferDest(id) {
+  // Load from current rendered list
+  api('/api/transfer-destinations').then(dests => {
+    const d = (dests || []).find(x => x.id === id);
+    if (!d) return;
+    _tdEditId = id;
+    document.getElementById('td-form-title').textContent = 'Hedefi Düzenle';
+    document.getElementById('td-name').value = d.name || '';
+    document.getElementById('td-type').value = d.type || 'local';
+    document.getElementById('td-enabled').checked = !!d.enabled;
+    const cfg = d.config || {};
+    if (d.type === 'local') {
+      document.getElementById('td-local-path').value = cfg.path || '';
+      document.getElementById('td-local-mode').value = cfg.mode || 'copy';
+    } else {
+      document.getElementById('td-host').value = cfg.host || '';
+      document.getElementById('td-port').value = cfg.port || (d.type === 'sftp' ? 22 : 21);
+      document.getElementById('td-user').value = cfg.username || '';
+      document.getElementById('td-pass').value = cfg.password || '';
+      document.getElementById('td-remote-path').value = cfg.path || '/';
+      document.getElementById('td-passive').value = cfg.passive !== false ? 'true' : 'false';
+    }
+    onTdTypeChange();
+    document.getElementById('td-add-form').style.display = 'block';
+    document.getElementById('td-name').focus();
+  });
+}
+
+function _buildTdBody() {
+  const type = document.getElementById('td-type').value;
+  const name = document.getElementById('td-name').value.trim();
+  if (!name) { showToast('Hedef adı boş bırakılamaz'); return null; }
+  let config = {};
+  if (type === 'local') {
+    const path = document.getElementById('td-local-path').value.trim();
+    if (!path) { showToast('Dizin yolu boş bırakılamaz'); return null; }
+    config = { path, mode: document.getElementById('td-local-mode').value };
+  } else {
+    const host = document.getElementById('td-host').value.trim();
+    if (!host) { showToast('Sunucu adresi boş bırakılamaz'); return null; }
+    config = {
+      host,
+      port: parseInt(document.getElementById('td-port').value) || (type === 'sftp' ? 22 : 21),
+      username: document.getElementById('td-user').value.trim(),
+      password: document.getElementById('td-pass').value,
+      path: document.getElementById('td-remote-path').value.trim() || '/',
+    };
+    if (type === 'ftp') config.passive = document.getElementById('td-passive').value !== 'false';
+  }
+  return { name, type, config, enabled: document.getElementById('td-enabled').checked };
+}
+
+async function saveTransferDest() {
+  const body = _buildTdBody();
+  if (!body) return;
+  try {
+    if (_tdEditId) {
+      await api(`/api/transfer-destinations/${_tdEditId}`, { method: 'PUT', json: body });
+    } else {
+      await api('/api/transfer-destinations', { method: 'POST', json: body });
+    }
+    closeAddTransferDest();
+    loadTransferDestinations();
+    showToast('Hedef kaydedildi.');
+  } catch (e) {
+    showToast('Kayıt hatası: ' + (e.message || e));
+  }
+}
+
+async function deleteTransferDest(id) {
+  if (!confirm('Bu transfer hedefini silmek istiyor musun?')) return;
+  try {
+    await api(`/api/transfer-destinations/${id}`, { method: 'DELETE' });
+    loadTransferDestinations();
+    showToast('Hedef silindi.');
+  } catch (e) {
+    showToast('Silme hatası: ' + (e.message || e));
+  }
+}
+
+async function testTransferDest(id) {
+  const btn = document.getElementById(`td-test-${id}`);
+  if (btn) { btn.textContent = '…'; btn.disabled = true; btn.className = 'td-btn td-btn-test'; }
+  try {
+    const r = await api(`/api/transfer-destinations/${id}/test`, { method: 'POST' });
+    if (btn) {
+      btn.textContent = r.ok ? '✓ OK' : '✗ Hata';
+      btn.className = `td-btn td-btn-test ${r.ok ? 'ok' : 'fail'}`;
+      btn.title = r.message || '';
+      btn.disabled = false;
+    }
+    showToast(r.message || (r.ok ? 'Bağlantı başarılı' : 'Bağlantı başarısız'));
+  } catch (e) {
+    if (btn) { btn.textContent = '✗ Hata'; btn.className = 'td-btn td-btn-test fail'; btn.disabled = false; }
+    showToast('Test hatası: ' + (e.message || e));
+  }
+}
 
 // ── Telemetry settings ───────────────────────────────────────────────────────
 async function loadTelemetrySettings() {
