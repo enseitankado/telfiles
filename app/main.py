@@ -338,26 +338,55 @@ def _minutes_until_next_window(schedules: list, settings: dict) -> Optional[int]
 
 
 async def _bandwidth_checker_loop():
-    """Wake every 30 s; when a window opens, start all queued scheduled downloads."""
+    """Wake every 30 s; release explicitly-timed and bandwidth-window downloads."""
     while True:
         try:
             await asyncio.sleep(30)
-            settings  = await database.get_bandwidth_settings()
+            all_pending = await database.list_scheduled_downloads()
+            if not all_pending:
+                continue
+
+            now_utc = datetime.now(timezone.utc)
+
+            def _parse_dest_ids(entry):
+                ids = entry.get("destination_ids") or []
+                if isinstance(ids, str):
+                    import json as _j2
+                    try:
+                        return _j2.loads(ids)
+                    except Exception:
+                        return []
+                return ids
+
+            # Release explicitly time-scheduled downloads regardless of bandwidth window
+            for entry in all_pending:
+                sat = entry.get("scheduled_at")
+                if not sat:
+                    continue
+                if sat.tzinfo is None:
+                    sat = sat.replace(tzinfo=timezone.utc)
+                if sat <= now_utc:
+                    fid = entry["file_id"]
+                    dest_ids = _parse_dest_ids(entry)
+                    await database.remove_scheduled_download(fid)
+                    if dest_ids:
+                        asyncio.create_task(_download_and_transfer(fid, dest_ids))
+                    else:
+                        asyncio.create_task(download_file(fid))
+                    logger.info("Time-scheduled: started download for file_id=%s", fid)
+
+            # Release bandwidth-window-deferred downloads (scheduled_at IS NULL)
+            settings = await database.get_bandwidth_settings()
             if not settings.get("enabled"):
                 continue
             schedules = await database.list_bandwidth_schedules()
             if not _schedule_allows_now(schedules, settings):
                 continue
-            pending = await database.list_scheduled_downloads()
-            for entry in pending:
-                fid      = entry["file_id"]
-                dest_ids = entry.get("destination_ids") or []
-                if isinstance(dest_ids, str):
-                    import json as _j2
-                    try:
-                        dest_ids = _j2.loads(dest_ids)
-                    except Exception:
-                        dest_ids = []
+            for entry in all_pending:
+                if entry.get("scheduled_at"):
+                    continue
+                fid = entry["file_id"]
+                dest_ids = _parse_dest_ids(entry)
                 await database.remove_scheduled_download(fid)
                 if dest_ids:
                     asyncio.create_task(_download_and_transfer(fid, dest_ids))
@@ -419,6 +448,7 @@ async def _attach_realtime(account_id: int):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.init_db()
+    asyncio.create_task(database.sync_torrent_files())
 
     stale = await database.reset_stale_downloads()
     if stale:
@@ -966,6 +996,7 @@ async def get_file(file_id: int):
 
 class DownloadRequest(BaseModel):
     destination_ids: list[int] = []
+    scheduled_at: Optional[str] = None
 
 
 async def _download_and_transfer(file_id: int, destination_ids: list[int]):
@@ -1000,6 +1031,17 @@ async def trigger_download(file_id: int, background_tasks: BackgroundTasks, body
 
     if f["downloading"]:
         return {"status": "downloading", "progress": f["download_progress"]}
+
+    # Explicit user-chosen schedule time
+    if body.scheduled_at:
+        try:
+            dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            await database.add_scheduled_download(file_id, body.destination_ids or [], scheduled_at=dt)
+            return {"status": "scheduled"}
+        except Exception as e:
+            logger.warning("Bad scheduled_at value: %s — %s", body.scheduled_at, e)
 
     # Check bandwidth scheduling
     bw_settings = await database.get_bandwidth_settings()
@@ -1168,9 +1210,11 @@ async def get_bw_settings():
 async def set_bw_settings(body: BandwidthSettingsBody):
     await database.set_bandwidth_settings(body.enabled, body.min_size_mb)
     if not body.enabled:
-        # Scheduling disabled — release all pending scheduled downloads immediately
+        # Scheduling disabled — release bandwidth-deferred downloads (not explicit-time ones)
         pending = await database.list_scheduled_downloads()
         for entry in pending:
+            if entry.get("scheduled_at"):
+                continue  # explicit-time schedule; keep it
             fid      = entry["file_id"]
             dest_ids = entry.get("destination_ids") or []
             await database.remove_scheduled_download(fid)
@@ -1719,7 +1763,19 @@ async def hunter_file_blob_delete(cid: int, msg_id: int):
     return {"ok": True}
 
 
-# ── Torrent parse endpoints ───────────────────────────────────────────────────
+# ── Torrent endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/api/torrents/search")
+async def torrent_content_search(
+    q: str = Query("", min_length=1),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Search inside torrent file contents via the trigram-indexed
+    torrent_files table. Returns one dict per matching .torrent file."""
+    if not q or not q.strip():
+        return []
+    return await database.search_torrent_files(q.strip(), limit=limit)
+
 
 @app.post("/api/torrents/parse-all")
 async def start_torrent_parse(request: Request):

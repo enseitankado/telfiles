@@ -1331,10 +1331,23 @@ async function loadFiles(silent = false) {
     initSizeSlider(stats.max_file_size||0);
   }
 
+  // Fetch torrent content matches in parallel with the render so matched
+  // torrent rows in the current page auto-expand with filtered tree.
+  const nameQ = document.getElementById('col-name').value.trim();
+  const torrentMatchPromise = nameQ
+    ? fetch(`/api/torrents/search?q=${encodeURIComponent(nameQ)}&limit=200`)
+        .then(r => r.ok ? r.json() : []).catch(() => [])
+    : Promise.resolve([]);
+
   renderFiles(data.files, '');
   renderPagination(data.total, S.limit, S.offset);
   const fc = document.getElementById('flt-count');
   if (fc) fc.textContent = t("filter.fileCount", {n: (data.total || 0).toLocaleString()});
+
+  if (nameQ) {
+    const matches = await torrentMatchPromise;
+    _autoExpandTorrentMatches(matches, nameQ);
+  }
 }
 
 function renderFiles(files, gFilter) {
@@ -1535,6 +1548,67 @@ function filterTorrentTree(fileId, term) {
   if (listEl) listEl.outerHTML = _buildTorrentListHtml(c.data?.tree || [], term);
 }
 
+// Auto-expand torrent rows in the current page that matched via content search.
+// `matches` comes from /api/torrents/search; `term` is the active name filter.
+function _autoExpandTorrentMatches(matches, term) {
+  if (!matches || !matches.length) return;
+  const matchMap = new Map(matches.map(m => [m.torrent_file_id, m]));
+
+  for (const [fileId, match] of matchMap) {
+    const row = document.getElementById(`torrent-tree-${fileId}`);
+    if (!row) continue;  // not on this page
+
+    const btn = document.querySelector(`.torrent-toggle[onclick*="toggleTorrentTree(event,${fileId})"]`);
+
+    // If already cached from a previous load, reuse and re-filter.
+    if (_torrentCache[fileId]?.state === 'done') {
+      _torrentCache[fileId].open   = true;
+      _torrentCache[fileId].filter = term;
+      row.style.display = '';
+      if (btn) btn.classList.add('open');
+      _refreshTorrentPanel(fileId);
+      continue;
+    }
+
+    // Show the row in loading state; inject matched_paths immediately so the
+    // user sees something while the full tree loads.
+    _torrentCache[fileId] = { state: 'loading', open: true, filter: term };
+    row.style.display = '';
+    if (btn) btn.classList.add('open');
+
+    const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
+    if (panel) {
+      // Render a preview using just the matched paths (fast, no extra fetch).
+      const preview = {
+        torrent_name: match.torrent_name || match.file_name || '',
+        total_size:   match.content_size || 0,
+        file_count:   (match.matched_paths || []).length,
+        tree:         match.matched_paths || [],
+      };
+      panel.innerHTML = _buildTorrentPanelHtml(fileId, preview, term);
+    }
+
+    // Fetch the full tree in background to replace the preview.
+    fetch(`/api/files/${fileId}/torrent-tree`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        _torrentCache[fileId] = { state: 'done', data, open: true, filter: term };
+        _refreshTorrentPanel(fileId);
+      })
+      .catch(() => {
+        // Keep preview on error — matched_paths is still useful.
+        if (_torrentCache[fileId]?.state === 'loading') {
+          _torrentCache[fileId].state = 'done';
+          _torrentCache[fileId].data  = {
+            torrent_name: match.torrent_name || '',
+            total_size:   match.content_size || 0,
+            tree:         match.matched_paths || [],
+          };
+        }
+      });
+  }
+}
+
 // ── Torrent parse controls ────────────────────────────────────────────────────
 
 let _torrentCtrlVisible = false;
@@ -1720,13 +1794,15 @@ async function bulkDownloadSelected() {
   const fileIds = [...S.selectedFiles];
   const dests = await _getEnabledDests();
   let destIds = [];
+  let scheduledAt = null;
   if (dests.length > 0) {
     const result = await _showDlDestModal(dests, fileIds);
     if (result === null) return; // cancelled
-    destIds = result;
+    destIds = result.destIds;
+    scheduledAt = result.scheduledAt;
   }
   for (const fileId of fileIds) {
-    await _doDownload(fileId, destIds);
+    await _doDownload(fileId, destIds, scheduledAt);
   }
   S.selectedFiles.clear();
   updateBulkFileBtn();
@@ -1741,15 +1817,22 @@ function dlState(f) {
   return `<span class="dl-link" onclick="triggerDownload(${f.id})">${esc(t("table.dlLink"))}</span>`;
 }
 
-async function _doDownload(fileId, destinationIds) {
+async function _doDownload(fileId, destinationIds, scheduledAt = null) {
+  const body = { destination_ids: destinationIds || [] };
+  if (scheduledAt) body.scheduled_at = scheduledAt;
   const r = await api(`/api/files/${fileId}/download`, {
     method: 'POST',
-    json: { destination_ids: destinationIds || [] },
+    json: body,
   });
   if (r.status === 'already_downloaded') { loadFiles(); return; }
   if (r.status === 'transfer_started') {
     showToast(t('dl.transferStarted'));
     loadFiles();
+    return;
+  }
+  if (r.status === 'scheduled') {
+    showToast(t('ddm.scheduledToast'));
+    if (S.activeTab === 'downloads') loadDownloadsList();
     return;
   }
 
@@ -1771,9 +1854,9 @@ let _dlDestPending = null;
 async function triggerDownload(fileId) {
   const dests = await _getEnabledDests();
   if (dests.length > 0) {
-    const destIds = await _showDlDestModal(dests, [fileId]);
-    if (destIds === null) return; // cancelled
-    await _doDownload(fileId, destIds);
+    const result = await _showDlDestModal(dests, [fileId]);
+    if (result === null) return; // cancelled
+    await _doDownload(fileId, result.destIds, result.scheduledAt);
   } else {
     await _doDownload(fileId, []);
   }
@@ -1804,8 +1887,84 @@ function _showDlDestModal(dests, fileIds) {
       row.querySelector('input').addEventListener('change', () => {});
       wrap.appendChild(row);
     });
+    // Reset schedule section
+    const nowRadio = document.querySelector('input[name="ddm-when"][value="now"]');
+    if (nowRadio) nowRadio.checked = true;
+    const form = document.getElementById('ddm-schedule-form');
+    if (form) form.style.display = 'none';
+    const dtInput = document.getElementById('ddm-schedule-at');
+    if (dtInput) dtInput.value = '';
+    ddmLoadPresets();
     document.getElementById('dl-dest-overlay').classList.add('open');
   });
+}
+
+function ddmToggleSchedule() {
+  const later = document.querySelector('input[name="ddm-when"][value="later"]');
+  const form  = document.getElementById('ddm-schedule-form');
+  if (!form) return;
+  form.style.display = later && later.checked ? '' : 'none';
+  if (later && later.checked) {
+    const dtInput = document.getElementById('ddm-schedule-at');
+    if (dtInput && !dtInput.value) {
+      // Default to 1 hour from now
+      const d = new Date(Date.now() + 3600000);
+      d.setSeconds(0, 0);
+      dtInput.value = d.toISOString().slice(0, 16);
+    }
+  }
+}
+
+async function ddmLoadPresets() {
+  const container = document.getElementById('ddm-sched-presets');
+  if (!container) return;
+  container.innerHTML = '';
+  try {
+    const schedules = await api('/api/bandwidth/schedules');
+    if (!schedules || !schedules.length) return;
+    const label = document.createElement('span');
+    label.className = 'ddm-sched-label';
+    label.setAttribute('data-i18n', 'ddm.presets');
+    label.textContent = t('ddm.presets');
+    container.appendChild(label);
+    schedules.filter(s => s.enabled).forEach(s => {
+      const btn = document.createElement('button');
+      btn.className = 'ddm-sched-preset';
+      btn.textContent = s.name + ' (' + s.start_time + ')';
+      btn.onclick = () => {
+        const laterRadio = document.querySelector('input[name="ddm-when"][value="later"]');
+        if (laterRadio) { laterRadio.checked = true; ddmToggleSchedule(); }
+        const dt = _nextOccurrenceOf(s);
+        const dtInput = document.getElementById('ddm-schedule-at');
+        if (dtInput && dt) dtInput.value = dt.toISOString().slice(0, 16);
+      };
+      container.appendChild(btn);
+    });
+  } catch (_) {}
+}
+
+function _nextOccurrenceOf(schedule) {
+  const now = new Date();
+  const [sh, sm] = (schedule.start_time || '02:00').split(':').map(Number);
+  for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(sh, sm, 0, 0);
+    if (d <= now) continue;
+    if (schedule.rule_type === 'weekly') {
+      const jsDay = d.getDay(); // 0=Sun
+      const pyDay = (jsDay + 6) % 7; // 0=Mon
+      if ((schedule.days || []).includes(pyDay)) return d;
+    } else if (schedule.rule_type === 'specific_date') {
+      const dateStr = d.toISOString().slice(0, 10);
+      if (schedule.specific_date === dateStr) return d;
+    }
+  }
+  // Fallback: tonight at start_time
+  const d = new Date(now);
+  d.setHours(sh, sm, 0, 0);
+  if (d <= now) d.setDate(d.getDate() + 1);
+  return d;
 }
 
 function closeDlDestModal() {
@@ -1822,9 +1981,15 @@ function confirmDlDestModal(withTransfer) {
       if (row.querySelector('input').checked) destIds.push(parseInt(row.dataset.id));
     });
   }
+  let scheduledAt = null;
+  const laterRadio = document.querySelector('input[name="ddm-when"][value="later"]');
+  if (laterRadio && laterRadio.checked) {
+    const dtVal = (document.getElementById('ddm-schedule-at') || {}).value;
+    if (dtVal) scheduledAt = new Date(dtVal).toISOString();
+  }
   const pending = _dlDestPending;
   _dlDestPending = null;
-  pending.resolve(destIds);
+  pending.resolve({ destIds, scheduledAt });
 }
 
 function showToast(html, ms = 4000) {

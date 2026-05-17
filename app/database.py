@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS scheduled_downloads (
     id SERIAL PRIMARY KEY,
     file_id INTEGER NOT NULL,
     destination_ids JSONB DEFAULT '[]',
+    scheduled_at TIMESTAMPTZ,
     queued_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(file_id)
 );
@@ -353,6 +354,17 @@ CREATE TABLE IF NOT EXISTS torrent_contents (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_torrent_contents_parsed ON torrent_contents (parsed_at) WHERE error IS NULL;
+
+-- Normalized table: one row per file inside a .torrent. Enables fast
+-- substring search via trigram index without JSONB expansion at query time.
+CREATE TABLE IF NOT EXISTS torrent_files (
+    id BIGSERIAL PRIMARY KEY,
+    torrent_id BIGINT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    size BIGINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tf_torrent ON torrent_files (torrent_id);
+CREATE INDEX IF NOT EXISTS idx_tf_path_trgm ON torrent_files USING GIN (path gin_trgm_ops);
 """
 
 
@@ -372,6 +384,8 @@ async def _migrate_to_multi_account():
     await _exec("""ALTER TABLE files ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ""")
     # Add anthropic_api_key to hunter_settings if missing
     await _exec("""ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS anthropic_api_key TEXT DEFAULT ''""")
+    # Add explicit schedule time to scheduled_downloads if missing
+    await _exec("ALTER TABLE scheduled_downloads ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ")
 
     # If no accounts exist but legacy credentials/session is present, seed default Account 1
     n = await _qval("SELECT COUNT(*) FROM accounts")
@@ -680,7 +694,13 @@ async def search_files(
     idx = 1
 
     for word in query.split():
-        conditions.append(f"f.file_name ILIKE ${idx}")
+        # Match file name OR any path inside a torrent's indexed content.
+        # Using the same $idx twice is valid in PostgreSQL — one arg in args list.
+        conditions.append(
+            f"(f.file_name ILIKE ${idx} OR "
+            f"EXISTS (SELECT 1 FROM torrent_files tf "
+            f"        WHERE tf.torrent_id = f.id AND tf.path ILIKE ${idx}))"
+        )
         args.append(f"%{word}%"); idx += 1
     if ext:
         conditions.append(f"LOWER(f.file_ext) = LOWER(${idx})")
@@ -2080,7 +2100,7 @@ async def delete_bandwidth_schedule(id: int) -> None:
 
 async def list_scheduled_downloads() -> List[Dict]:
     rows = await _q(
-        """SELECT sd.file_id, sd.destination_ids, sd.queued_at,
+        """SELECT sd.file_id, sd.destination_ids, sd.queued_at, sd.scheduled_at,
                   f.file_name, f.file_size, f.file_ext,
                   COALESCE(g.display_name, g.name) AS group_name
            FROM scheduled_downloads sd
@@ -2101,14 +2121,15 @@ async def list_scheduled_downloads() -> List[Dict]:
     return result
 
 
-async def add_scheduled_download(file_id: int, destination_ids: List[int]) -> None:
+async def add_scheduled_download(file_id: int, destination_ids: List[int], scheduled_at=None) -> None:
     import json as _j
     await _exec(
-        """INSERT INTO scheduled_downloads (file_id, destination_ids)
-           VALUES ($1, $2::jsonb)
-           ON CONFLICT (file_id) DO UPDATE SET destination_ids=$2::jsonb, queued_at=NOW()""",
+        """INSERT INTO scheduled_downloads (file_id, destination_ids, scheduled_at)
+           VALUES ($1, $2::jsonb, $3)
+           ON CONFLICT (file_id) DO UPDATE SET destination_ids=$2::jsonb, scheduled_at=$3, queued_at=NOW()""",
         file_id,
         _j.dumps(destination_ids),
+        scheduled_at,
     )
 
 
@@ -2163,6 +2184,24 @@ async def save_torrent_tree(
         error,
     )
 
+    if tree and not error:
+        # Rebuild normalized torrent_files entries for fast search.
+        async with _pool.acquire() as conn:
+            await conn.execute("DELETE FROM torrent_files WHERE torrent_id = $1", file_id)
+            if tree:
+                await conn.executemany(
+                    "INSERT INTO torrent_files (torrent_id, path, size) VALUES ($1, $2, $3)",
+                    [(file_id, f["path"], f.get("size", 0)) for f in tree],
+                )
+        # The torrent is just a pointer — expose the content size as the
+        # file's canonical size throughout the entire application.
+        if total_size > 0:
+            await _exec(
+                "UPDATE files SET file_size = $1 WHERE id = $2",
+                total_size, file_id,
+            )
+            invalidate_files_caches()
+
 
 async def get_unparsed_torrents(limit: int = 5000) -> List[Dict]:
     """Return files with ext='torrent' that have no entry in torrent_contents."""
@@ -2196,3 +2235,88 @@ async def count_torrents() -> Dict:
         "errors": errors,
         "pending": max(0, total - parsed - errors),
     }
+
+
+async def sync_torrent_files() -> int:
+    """Populate torrent_files from existing torrent_contents and backfill
+    files.file_size with content totals.  Safe to call on every startup —
+    only touches rows not yet present in torrent_files."""
+    import logging as _log
+    log = _log.getLogger("database.torrent_sync")
+
+    # Populate torrent_files for any torrent_contents entry not yet synced.
+    await _exec("""
+        INSERT INTO torrent_files (torrent_id, path, size)
+        SELECT tc.file_id,
+               e->>'path',
+               COALESCE((e->>'size')::bigint, 0)
+        FROM torrent_contents tc
+        CROSS JOIN jsonb_array_elements(COALESCE(tc.tree, '[]'::jsonb)) AS e
+        WHERE tc.error IS NULL
+          AND jsonb_array_length(COALESCE(tc.tree, '[]'::jsonb)) > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM torrent_files tf WHERE tf.torrent_id = tc.file_id
+          )
+    """)
+
+    # Backfill files.file_size → torrent content total (skip if already set).
+    updated = (await _qval("""
+        WITH upd AS (
+            UPDATE files f
+            SET file_size = tc.total_size
+            FROM torrent_contents tc
+            WHERE tc.file_id = f.id
+              AND tc.error IS NULL
+              AND LOWER(f.file_ext) = 'torrent'
+              AND tc.total_size > 0
+              AND f.file_size <> tc.total_size
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM upd
+    """)) or 0
+
+    if updated:
+        invalidate_files_caches()
+        log.info("torrent sync: updated file_size for %d torrent files", updated)
+
+    tf_count = (await _qval("SELECT COUNT(*) FROM torrent_files")) or 0
+    log.info("torrent sync: torrent_files table has %d entries", tf_count)
+    return int(updated)
+
+
+async def search_torrent_files(q: str, limit: int = 100) -> List[Dict]:
+    """Full-text search inside torrent contents using the trigram-indexed
+    torrent_files table.  Returns one row per matching .torrent file, with
+    the matched paths aggregated."""
+    rows = await _q(
+        """SELECT
+               f.id               AS torrent_file_id,
+               f.file_name,
+               f.file_size        AS content_size,
+               f.date,
+               COALESCE(g.display_name, g.name) AS group_name,
+               g.username         AS group_username,
+               tc.torrent_name,
+               jsonb_agg(
+                   jsonb_build_object('path', tf.path, 'size', tf.size)
+                   ORDER BY tf.path
+               )                  AS matched_paths
+           FROM torrent_files tf
+           JOIN files f  ON f.id  = tf.torrent_id
+           JOIN groups g ON g.id  = f.group_id
+           LEFT JOIN torrent_contents tc ON tc.file_id = f.id
+           WHERE tf.path ILIKE $1
+           GROUP BY f.id, f.file_name, f.file_size, f.date,
+                    g.display_name, g.name, g.username, tc.torrent_name
+           ORDER BY count(tf.id) DESC, f.date DESC
+           LIMIT $2""",
+        f"%{q}%",
+        limit,
+    )
+    result = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("matched_paths"), str):
+            d["matched_paths"] = _json.loads(d["matched_paths"])
+        result.append(d)
+    return result
