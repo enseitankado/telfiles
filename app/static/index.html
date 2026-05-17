@@ -886,6 +886,59 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 [data-theme="dark"] #watch-banner .wb-item .wb-show,[data-theme="nord"] #watch-banner .wb-item .wb-show,[data-theme="forest"] #watch-banner .wb-item .wb-show,[data-theme="slate"] #watch-banner .wb-item .wb-show,[data-theme="crimson"] #watch-banner .wb-item .wb-show,[data-theme="rosepine"] #watch-banner .wb-item .wb-show{color:#93c5fd}
 #watch-banner .wb-item .wb-x{cursor:pointer;font-weight:700;opacity:.7;padding:0 2px}
 #watch-banner .wb-item .wb-x:hover{opacity:1}
+/* ── Torrent tree ─────────────────────────────────────────────── */
+.torrent-toggle{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1px solid var(--border-2);border-radius:3px;background:var(--bg-3);cursor:pointer;font-size:.6rem;color:var(--text-3);flex-shrink:0;transition:transform .15s,color .15s;margin-right:4px;vertical-align:middle;padding:0;line-height:1}
+.torrent-toggle:hover{color:var(--accent);border-color:var(--accent-soft)}
+.torrent-toggle.open{transform:rotate(90deg);color:var(--accent)}
+tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;border-bottom:2px solid var(--accent-soft)!important}
+.torrent-tree-panel{padding:8px 14px 12px}
+.torrent-tree-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%}
+.torrent-tree-stats{color:var(--text-3);font-size:.72rem;flex-shrink:0}
+.torrent-tree-filter{flex:1;min-width:140px;max-width:260px;padding:3px 8px;border:1px solid var(--input-border);border-radius:5px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.torrent-tree-filter:focus{border-color:var(--accent)}
+.torrent-tree-list{font-size:.73rem;max-height:280px;overflow-y:auto;border:1px solid var(--border-3);border-radius:5px;background:var(--bg-2)}
+.tt-entry{display:flex;align-items:center;gap:5px;padding:3px 8px;border-bottom:1px solid var(--border-3);min-height:22px}
+.tt-entry:last-child{border-bottom:none}
+.tt-entry.tt-dir{background:var(--bg-3);font-weight:600;color:var(--text-2);font-size:.7rem;position:sticky;top:0;z-index:1}
+.tt-entry .tt-icon{flex-shrink:0;width:14px;text-align:center;font-size:.68rem;opacity:.75}
+.tt-entry .tt-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
+.tt-entry .tt-size{flex-shrink:0;color:var(--text-3);font-size:.69rem;min-width:60px;text-align:right}
+.tt-entry.tt-match .tt-path{color:var(--accent);font-weight:600}
+.tt-loading{padding:14px 16px;text-align:center;color:var(--text-3);font-size:.76rem;display:flex;align-items:center;justify-content:center;gap:7px}
+.tt-error{padding:9px 12px;color:#dc2626;font-size:.75rem}
+.tt-empty{padding:10px 12px;color:var(--text-3);font-size:.75rem;text-align:center}
+/* ── Torrent parse bar ─────────────────────────────────────────── */
+#torrent-parse-bar{display:flex;align-items:center;gap:8px;padding:6px 16px;background:linear-gradient(90deg,var(--bg-selected),var(--bg-info));border-bottom:1px solid var(--accent-soft);font-size:.74rem;color:var(--text-1);flex-shrink:0;animation:hbbslide .2s ease}
+.tpb-label{font-weight:600;color:var(--accent-h);white-space:nowrap}
+.tpb-text{color:var(--text-2)}
+.tpb-flex{flex:1}
+.tpb-progress{width:140px;height:5px;border-radius:3px;background:var(--border-2);overflow:hidden;flex-shrink:0}
+.tpb-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s}
+.tpb-pct{color:var(--text-3);font-size:.7rem;min-width:32px;text-align:right}
+.tpb-btn{padding:3px 10px;border-radius:5px;border:1px solid var(--border-2);background:var(--bg-2);color:var(--text-2);cursor:pointer;font-size:.72rem;font-weight:500}
+.tpb-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.tpb-btn-danger:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
+/* ── Torrent parse ctrl popover ───────────────────────────────── */
+#torrent-parse-ctrl{position:fixed;bottom:50px;right:16px;z-index:120;background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.15);padding:14px 16px;min-width:260px;max-width:320px}
+#torrent-parse-ctrl h4{margin:0 0 10px;font-size:.82rem;color:var(--text-1)}
+.tpc-stat-row{display:flex;justify-content:space-between;font-size:.74rem;margin-bottom:6px;color:var(--text-2)}
+.tpc-stat-row b{color:var(--text-1)}
+.tpc-sep{border:none;border-top:1px solid var(--border-2);margin:10px 0}
+.tpc-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:.76rem;color:var(--text-2)}
+.tpc-row select{padding:3px 6px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-1);color:var(--text-1);font-size:.74rem;flex:1}
+.tpc-actions{display:flex;gap:6px;justify-content:flex-end}
+.tpc-btn{padding:5px 12px;border-radius:6px;border:none;cursor:pointer;font-size:.75rem;font-weight:600}
+.tpc-btn-primary{background:var(--accent);color:#fff}
+.tpc-btn-primary:hover{background:var(--accent-h)}
+.tpc-btn-secondary{background:var(--bg-3);color:var(--text-2);border:1px solid var(--border-2)}
+.tpc-btn-secondary:hover{background:var(--bg-hover)}
+.tpc-close{position:absolute;top:8px;right:10px;background:none;border:none;cursor:pointer;color:var(--text-3);font-size:.9rem;line-height:1;padding:2px 5px}
+.tpc-close:hover{color:var(--text-1)}
+/* torrent parse trigger button in pagination */
+#torrent-parse-trigger{padding:4px 10px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:6px;cursor:pointer;font-size:.74rem;color:var(--text-2);font-weight:500;white-space:nowrap;flex-shrink:0}
+#torrent-parse-trigger:hover{background:var(--bg-hover);color:var(--text-1);border-color:var(--accent-soft)}
+#torrent-parse-trigger.active{background:var(--bg-info);border-color:var(--accent-soft);color:var(--accent-h)}
 
 /* ── Transfer Destinations ── */
 .td-list{display:flex;flex-direction:column;gap:7px}
@@ -1025,6 +1078,24 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .kv-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border-3);font-size:.76rem}
 .kv-row:last-child{border-bottom:none}
 .kv-key{color:var(--text-3)}.kv-val{font-weight:600;color:var(--text-1)}
+/* Bandwidth scheduling */
+.bw-status-badge{padding:2px 9px;border-radius:99px;font-size:.72rem;font-weight:700;letter-spacing:.03em}
+.bw-status-ok{background:#dcfce7;color:#15803d}
+.bw-status-wait{background:#fef9c3;color:#92400e}
+.bw-status-off{background:var(--bg-2);color:var(--text-3)}
+.bw-preset-btn{padding:5px 12px;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);color:var(--text-2);font-size:.78rem;cursor:pointer;transition:background .12s}
+.bw-preset-btn:hover{background:var(--bg-hover)}
+.bw-form-grid{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;align-items:center;margin-top:8px}
+.bw-form-label{font-size:.8rem;color:var(--text-3);font-weight:500}
+.bw-form-input{padding:5px 8px;border:1px solid var(--border-2);border-radius:5px;background:var(--bg-2);color:var(--text-1);font-size:.85rem;width:100%;box-sizing:border-box}
+.bw-rule-item{border:1px solid var(--border-2);border-radius:7px;background:var(--bg-3);padding:9px 12px;display:flex;align-items:center;gap:8px}
+.bw-rule-item.bw-rule-disabled{opacity:.55}
+.bw-rule-name{font-weight:600;font-size:.85rem;flex:1;min-width:0}
+.bw-rule-meta{font-size:.75rem;color:var(--text-3);white-space:nowrap}
+.bw-day-chk{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid var(--border-2);border-radius:5px;cursor:pointer;font-size:.78rem;background:var(--bg-2);user-select:none}
+.bw-day-chk input{accent-color:var(--accent);cursor:pointer}
+/* scheduled download badge */
+.dl-scheduled-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:.72rem;font-weight:600;background:#fef9c3;color:#92400e}
 </style>
 </head>
 <body>
@@ -1146,6 +1217,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
           <button class="sub-tab-btn"        data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
           <button class="sub-tab-btn"        data-stab="transfer" onclick="switchSettingsTab('transfer')" data-i18n="settings.subtab.transfer">📤 Transfer Hedefleri</button>
           <button class="sub-tab-btn"        data-stab="watches" onclick="switchSettingsTab('watches')"><span data-i18n="settings.subtab.notifications">🔔 Bildirimler</span> <span id="settings-watch-count" class="settings-tab-badge" style="display:none">0</span></button>
+          <button class="sub-tab-btn"        data-stab="bandwidth" onclick="switchSettingsTab('bandwidth')" data-i18n="settings.subtab.bandwidth">⏱ Zamanlama</button>
         </div>
 
         <div id="settings-tab-account" class="settings-tab-content">
@@ -1489,6 +1561,104 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
             <div id="notif-log"></div>
           </div>
         </div>
+
+        <!-- Bandwidth Scheduling tab -->
+        <div id="settings-tab-bandwidth" class="settings-tab-content">
+
+          <!-- Enable + clock card -->
+          <div class="settings-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <div>
+                <h3 data-i18n="bw.title">Bant Genişliği Zamanlaması</h3>
+                <p class="creds-hint" data-i18n="bw.hint">Etkinleştirildiğinde indirmeler yalnızca tanımlı zaman dilimlerinde başlar.</p>
+              </div>
+              <label class="toggle-label" style="flex-shrink:0">
+                <input type="checkbox" id="bw-enabled" onchange="bwToggleEnabled(this.checked)">
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div style="margin-top:10px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div>
+                <label class="creds-hint" data-i18n="bw.minSizeLabel">Minimum dosya boyutu (MB, 0 = tümü):</label>
+                <input id="bw-min-size" type="number" min="0" step="1" value="0" style="width:80px;margin-left:6px;padding:4px 6px;border:1px solid var(--border-2);border-radius:5px;background:var(--bg-2);color:var(--text-1);font-size:.85rem" onchange="bwSaveSettings()">
+              </div>
+              <div id="bw-clock-wrap" style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:.8rem;color:var(--text-3)" data-i18n="bw.now">Şu an:</span>
+                <span id="bw-clock" style="font-family:monospace;font-size:1rem;font-weight:600;color:var(--text-1)">--:--:--</span>
+                <span id="bw-status-badge" class="bw-status-badge bw-status-off" data-i18n="bw.statusOff">Devre dışı</span>
+              </div>
+            </div>
+            <div id="bw-next-window" style="font-size:.78rem;color:var(--text-3);margin-top:6px;display:none"></div>
+          </div>
+
+          <!-- Preset templates -->
+          <div class="settings-card">
+            <h3 data-i18n="bw.presetsTitle">Hazır Şablonlar</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              <button class="bw-preset-btn" onclick="bwAddPreset('night')"     data-i18n="bw.presetNight">🌙 Gece (00:00–08:00)</button>
+              <button class="bw-preset-btn" onclick="bwAddPreset('latenight')" data-i18n="bw.presetLateNight">🌃 Geç Gece (22:00–06:00)</button>
+              <button class="bw-preset-btn" onclick="bwAddPreset('weekend')"   data-i18n="bw.presetWeekend">📅 Hafta Sonu</button>
+              <button class="bw-preset-btn" onclick="bwAddPreset('offhours')"  data-i18n="bw.presetOffHours">🏢 İş Saati Dışı (20:00–08:00)</button>
+            </div>
+          </div>
+
+          <!-- Rules list + Add button -->
+          <div class="settings-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <h3 style="margin:0" data-i18n="bw.rulesTitle">Zaman Kuralları</h3>
+              <button class="td-btn" style="font-size:.8rem;padding:5px 12px" onclick="bwOpenAddRule()" data-i18n="bw.addRule">+ Kural Ekle</button>
+            </div>
+            <div id="bw-rules-list"><div style="font-size:.78rem;color:var(--text-4);padding:4px 0" data-i18n="bw.noRules">Henüz kural eklenmedi.</div></div>
+          </div>
+
+          <!-- Add/Edit rule form (hidden by default) -->
+          <div class="settings-card" id="bw-rule-form" style="display:none">
+            <h3 id="bw-rule-form-title" data-i18n="bw.ruleFormTitle">Yeni Kural</h3>
+            <div class="bw-form-grid">
+              <label class="bw-form-label" data-i18n="bw.labelName">Ad</label>
+              <input id="bw-rule-name" type="text" class="bw-form-input" placeholder="örn: Gece İndirme" data-i18n-ph="bw.namePh">
+
+              <label class="bw-form-label" data-i18n="bw.labelType">Tür</label>
+              <select id="bw-rule-type" class="bw-form-input" onchange="bwOnRuleTypeChange()">
+                <option value="weekly" data-i18n="bw.typeWeekly">Haftalık (günler)</option>
+                <option value="specific_date" data-i18n="bw.typeDate">Belirli Tarih</option>
+              </select>
+
+              <!-- Weekly: day checkboxes -->
+              <div id="bw-days-row" class="bw-form-label" data-i18n="bw.labelDays">Günler</div>
+              <div id="bw-days-wrap" style="display:flex;gap:6px;flex-wrap:wrap">
+                <label class="bw-day-chk"><input type="checkbox" data-day="0"><span data-i18n="bw.day0">Pzt</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="1"><span data-i18n="bw.day1">Sal</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="2"><span data-i18n="bw.day2">Çar</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="3"><span data-i18n="bw.day3">Per</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="4"><span data-i18n="bw.day4">Cum</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="5"><span data-i18n="bw.day5">Cmt</span></label>
+                <label class="bw-day-chk"><input type="checkbox" data-day="6"><span data-i18n="bw.day6">Paz</span></label>
+              </div>
+
+              <!-- Specific date -->
+              <label id="bw-date-label" class="bw-form-label" style="display:none" data-i18n="bw.labelDate">Tarih</label>
+              <input  id="bw-rule-date" type="date" class="bw-form-input" style="display:none">
+
+              <label class="bw-form-label" data-i18n="bw.labelStart">Başlangıç</label>
+              <input id="bw-rule-start" type="time" class="bw-form-input" value="02:00">
+
+              <label class="bw-form-label" data-i18n="bw.labelEnd">Bitiş</label>
+              <input id="bw-rule-end" type="time" class="bw-form-input" value="06:00">
+
+              <label class="bw-form-label" data-i18n="bw.labelEnabled">Etkin</label>
+              <label class="toggle-label" style="margin:0">
+                <input type="checkbox" id="bw-rule-enabled" checked>
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="creds-btn" onclick="bwSaveRule()" data-i18n="common.save">Kaydet</button>
+              <button class="creds-btn" style="background:var(--bg-2);color:var(--text-2)" onclick="bwCancelRule()" data-i18n="common.cancel">İptal</button>
+            </div>
+          </div>
+
+        </div>
       </div>
 
       <!-- Downloads tab -->
@@ -1710,6 +1880,36 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
       <div id="status-panel" style="display:none"></div>
 
       <div id="watch-banner" style="display:none"></div>
+
+      <div id="torrent-parse-bar" style="display:none">
+        <span class="tpb-label">📦</span>
+        <span class="tpb-text" id="tpb-text"></span>
+        <div class="tpb-progress"><div class="tpb-fill" id="tpb-fill" style="width:0%"></div></div>
+        <span class="tpb-pct" id="tpb-pct"></span>
+        <span class="tpb-flex"></span>
+        <button class="tpb-btn tpb-btn-danger" onclick="cancelTorrentParse()" data-i18n="common.cancel">İptal</button>
+      </div>
+
+      <div id="torrent-parse-ctrl" style="display:none">
+        <button class="tpc-close" onclick="torrentCtrlClose()">✕</button>
+        <h4 data-i18n="torrent.ctrlTitle">📦 Torrent Ayrıştırıcı</h4>
+        <div id="tpc-stats-area"></div>
+        <hr class="tpc-sep">
+        <div class="tpc-row">
+          <span data-i18n="torrent.concurrency">Eşzamanlı kanal</span>
+          <select id="tpc-concurrency">
+            <option value="1">1</option>
+            <option value="3">3</option>
+            <option value="5" selected>5</option>
+            <option value="8">8</option>
+            <option value="10">10</option>
+          </select>
+        </div>
+        <div class="tpc-actions">
+          <button class="tpc-btn tpc-btn-secondary" onclick="torrentCtrlClose()" data-i18n="common.close">Kapat</button>
+          <button class="tpc-btn tpc-btn-primary" onclick="startTorrentParse()" id="tpc-start-btn" data-i18n="torrent.startParse">🚀 Taramayı Başlat</button>
+        </div>
+      </div>
 
       <div id="table-wrap">
         <table id="files-table">

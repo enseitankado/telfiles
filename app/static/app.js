@@ -945,6 +945,8 @@ function switchSettingsTab(name) {
     loadTelemetrySettings();
   } else if (name === 'transfer') {
     loadTransferDestinations();
+  } else if (name === 'bandwidth') {
+    loadBandwidthTab();
   }
 }
 
@@ -1343,7 +1345,8 @@ function renderFiles(files, gFilter) {
     tbody.innerHTML = `<tr><td colspan="9" class="no-data">${esc(t("table.noFiles"))}</td></tr>`;
     return;
   }
-  tbody.innerHTML = files.map((f,i) => {
+  const rows = [];
+  files.forEach((f, i) => {
     const rowNum  = S.offset+i+1;
     const checked = S.selectedFiles.has(f.id) ? ' checked' : '';
     const ext     = (f.file_ext||'').toUpperCase();
@@ -1363,18 +1366,43 @@ function renderFiles(files, gFilter) {
     const dupBadge = (f.appearances && f.appearances > 1)
       ? `<span class="link-dup-badge" title="${esc(t('table.appearances', { n: f.appearances }))}">×${f.appearances}</span>`
       : '';
-    return `<tr${selRow} onclick="selectFileRow(event,${f.id})">
+
+    const isTorrent = (f.file_ext || '').toLowerCase() === 'torrent';
+    const tc = isTorrent ? _torrentCache[f.id] : null;
+    const toggleBtn = isTorrent
+      ? `<button class="torrent-toggle${tc?.open ? ' open' : ''}" onclick="toggleTorrentTree(event,${f.id})" title="${esc(t('torrent.toggle'))}">▶</button>`
+      : '';
+
+    rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
-      <td title="${esc(fName)}"><div class="fname-cell"><span class="fname-trunc">${esc(fName)}</span>${tg}${dupBadge}</div></td>
+      <td title="${esc(fName)}"><div class="fname-cell">${toggleBtn}<span class="fname-trunc">${esc(fName)}</span>${tg}${dupBadge}</div></td>
       <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''} title="${esc(ctxRaw)}">${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
       <td>${dlState(f)}</td>
-    </tr>`;
-  }).join('');
+    </tr>`);
+
+    if (isTorrent) {
+      const open = tc?.open;
+      let treeContent;
+      if (!open) {
+        treeContent = '';
+      } else if (tc?.state === 'done') {
+        treeContent = _buildTorrentPanelHtml(f.id, tc.data, tc.filter || '');
+      } else if (tc?.state === 'error') {
+        treeContent = `<div class="tt-error">⚠ ${esc(tc.error || t('torrent.error'))}</div>`;
+      } else {
+        treeContent = `<div class="tt-loading"><span class="hm-spinner"></span> ${esc(t('common.loadingData'))}</div>`;
+      }
+      rows.push(`<tr class="torrent-tree-row" id="torrent-tree-${f.id}"${open ? '' : ' style="display:none"'}>
+        <td colspan="9"><div class="torrent-tree-panel" id="torrent-tree-panel-${f.id}">${treeContent}</div></td>
+      </tr>`);
+    }
+  });
+  tbody.innerHTML = rows.join('');
   // Direct per-checkbox listeners — gives us a real DOM event with shiftKey.
   tbody.querySelectorAll('.row-chk').forEach(cb => {
     cb.addEventListener('click', _fileCbClick);
@@ -1383,11 +1411,239 @@ function renderFiles(files, gFilter) {
 }
 
 function selectFileRow(e, id) {
-  if (e.target.tagName === 'INPUT' || e.target.closest('a, .dl-link, .dl-done, .dl-prog, .ext-badge, .g-link')) return;
+  if (e.target.tagName === 'INPUT' || e.target.closest('a, .dl-link, .dl-done, .dl-prog, .ext-badge, .g-link, .torrent-toggle')) return;
   const was = _selectedFileId === id;
   _selectedFileId = was ? null : id;
-  document.querySelectorAll('#files-body tr').forEach(r => r.classList.remove('row-selected'));
+  document.querySelectorAll('#files-body tr:not(.torrent-tree-row)').forEach(r => r.classList.remove('row-selected'));
   if (!was) e.currentTarget.classList.add('row-selected');
+}
+
+// ── Torrent tree ──────────────────────────────────────────────────────────────
+
+const _torrentCache = {};   // file_id → {state, data, open, filter, error}
+let _torrentPollTimer = null;
+
+function _buildTorrentPanelHtml(fileId, data, filter) {
+  if (!data) return `<div class="tt-loading"><span class="hm-spinner"></span> ${esc(t('common.loadingData'))}</div>`;
+  if (data.error && !data.tree?.length) {
+    return `<div class="tt-error">⚠ ${esc(data.error)}</div>`;
+  }
+  const name  = data.torrent_name || data.name || '';
+  const total = data.total_size || 0;
+  const count = data.file_count || (data.tree || []).length;
+  return `<div class="torrent-tree-header">
+    <span class="torrent-tree-name" title="${esc(name)}">📦 ${esc(name)}</span>
+    <span class="torrent-tree-stats">${count.toLocaleString()} ${esc(t('torrent.files'))} · ${fmtSize(total)}</span>
+    <input class="torrent-tree-filter" type="text"
+      placeholder="${esc(t('torrent.filterPh'))}"
+      value="${esc(filter)}"
+      oninput="filterTorrentTree(${fileId},this.value)"
+      onclick="event.stopPropagation()">
+  </div>${_buildTorrentListHtml(data.tree || [], filter)}`;
+}
+
+function _buildTorrentListHtml(tree, filter) {
+  const term = (filter || '').toLowerCase().trim();
+  const filtered = term ? tree.filter(f => f.path.toLowerCase().includes(term)) : tree;
+  if (!filtered.length) {
+    return `<div class="torrent-tree-list"><div class="tt-empty">${esc(t('torrent.noMatch'))}</div></div>`;
+  }
+  const dirsSeen = new Set();
+  const rows = [];
+  for (const f of filtered) {
+    const parts = f.path.replace(/\\/g, '/').split('/');
+    const depth = parts.length - 1;
+    // Emit dir headers for each ancestor not yet shown
+    for (let d = 1; d < parts.length; d++) {
+      const dirKey = parts.slice(0, d).join('/');
+      if (!dirsSeen.has(dirKey)) {
+        dirsSeen.add(dirKey);
+        const indent = 8 + (d - 1) * 14;
+        rows.push(`<div class="tt-entry tt-dir" style="padding-left:${indent}px">
+          <span class="tt-icon">📁</span>
+          <span class="tt-path">${esc(parts[d - 1])}</span>
+        </div>`);
+      }
+    }
+    const fileName = parts[parts.length - 1];
+    const indent   = 8 + depth * 14;
+    rows.push(`<div class="tt-entry${term ? ' tt-match' : ''}" style="padding-left:${indent}px">
+      <span class="tt-icon">📄</span>
+      <span class="tt-path" title="${esc(f.path)}">${esc(fileName)}</span>
+      <span class="tt-size">${fmtSize(f.size)}</span>
+    </div>`);
+  }
+  return `<div class="torrent-tree-list">${rows.join('')}</div>`;
+}
+
+async function toggleTorrentTree(event, fileId) {
+  event.stopPropagation();
+  const row = document.getElementById(`torrent-tree-${fileId}`);
+  const btn = event.currentTarget;
+  if (!row) return;
+
+  const wasOpen = row.style.display !== 'none';
+  if (wasOpen) {
+    row.style.display = 'none';
+    btn.classList.remove('open');
+    if (_torrentCache[fileId]) _torrentCache[fileId].open = false;
+    return;
+  }
+
+  row.style.display = '';
+  btn.classList.add('open');
+  if (!_torrentCache[fileId]) _torrentCache[fileId] = {};
+  _torrentCache[fileId].open = true;
+
+  if (_torrentCache[fileId].state === 'done') {
+    _refreshTorrentPanel(fileId);
+    return;
+  }
+
+  _torrentCache[fileId].state = 'loading';
+  const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
+  if (panel) panel.innerHTML = `<div class="tt-loading"><span class="hm-spinner"></span> ${esc(t('common.loadingData'))}</div>`;
+
+  try {
+    const res = await fetch(`/api/files/${fileId}/torrent-tree`);
+    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+    const data = await res.json();
+    _torrentCache[fileId] = { state: 'done', data, open: true, filter: '' };
+    _refreshTorrentPanel(fileId);
+  } catch (err) {
+    _torrentCache[fileId] = { state: 'error', error: String(err), open: true };
+    const panel2 = document.getElementById(`torrent-tree-panel-${fileId}`);
+    if (panel2) panel2.innerHTML = `<div class="tt-error">⚠ ${esc(String(err))}</div>`;
+  }
+}
+
+function _refreshTorrentPanel(fileId) {
+  const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
+  if (!panel) return;
+  const c = _torrentCache[fileId];
+  if (!c || c.state !== 'done') return;
+  panel.innerHTML = _buildTorrentPanelHtml(fileId, c.data, c.filter || '');
+}
+
+function filterTorrentTree(fileId, term) {
+  const c = _torrentCache[fileId];
+  if (!c || c.state !== 'done') return;
+  c.filter = term;
+  const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
+  if (!panel) return;
+  const listEl = panel.querySelector('.torrent-tree-list');
+  if (listEl) listEl.outerHTML = _buildTorrentListHtml(c.data?.tree || [], term);
+}
+
+// ── Torrent parse controls ────────────────────────────────────────────────────
+
+let _torrentCtrlVisible = false;
+
+function torrentCtrlToggle() {
+  _torrentCtrlVisible ? torrentCtrlClose() : torrentCtrlOpen();
+}
+
+async function torrentCtrlOpen() {
+  _torrentCtrlVisible = true;
+  const ctrl = document.getElementById('torrent-parse-ctrl');
+  const btn  = document.getElementById('torrent-parse-trigger');
+  if (ctrl) ctrl.style.display = '';
+  if (btn)  btn.classList.add('active');
+  await _torrentCtrlRefresh();
+}
+
+function torrentCtrlClose() {
+  _torrentCtrlVisible = false;
+  const ctrl = document.getElementById('torrent-parse-ctrl');
+  const btn  = document.getElementById('torrent-parse-trigger');
+  if (ctrl) ctrl.style.display = 'none';
+  if (btn)  btn.classList.remove('active');
+}
+
+async function _torrentCtrlRefresh() {
+  try {
+    const res  = await fetch('/api/torrents/status');
+    const data = await res.json();
+    const area = document.getElementById('tpc-stats-area');
+    if (!area) return;
+    const counts  = data.counts || {};
+    const worker  = data.worker  || {};
+    area.innerHTML = `
+      <div class="tpc-stat-row"><span data-i18n="torrent.statTotal">${esc(t('torrent.statTotal'))}</span><b>${(counts.total||0).toLocaleString()}</b></div>
+      <div class="tpc-stat-row"><span data-i18n="torrent.statParsed">${esc(t('torrent.statParsed'))}</span><b>${(counts.parsed||0).toLocaleString()}</b></div>
+      <div class="tpc-stat-row"><span data-i18n="torrent.statPending">${esc(t('torrent.statPending'))}</span><b>${(counts.pending||0).toLocaleString()}</b></div>
+      ${counts.errors ? `<div class="tpc-stat-row"><span>${esc(t('torrent.statErrors'))}</span><b style="color:var(--danger)">${counts.errors.toLocaleString()}</b></div>` : ''}`;
+    const startBtn = document.getElementById('tpc-start-btn');
+    if (startBtn) startBtn.disabled = worker.running || counts.pending === 0;
+  } catch (_) {}
+}
+
+async function startTorrentParse() {
+  const conc = parseInt(document.getElementById('tpc-concurrency')?.value || '5', 10);
+  torrentCtrlClose();
+  try {
+    await fetch('/api/torrents/parse-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ concurrency: conc }),
+    });
+    _torrentPollStart();
+  } catch (err) {
+    showToast(String(err), 3000);
+  }
+}
+
+async function cancelTorrentParse() {
+  try {
+    await fetch('/api/torrents/cancel', { method: 'POST' });
+  } catch (_) {}
+}
+
+function _torrentPollStart() {
+  if (_torrentPollTimer) return;
+  _torrentPollTimer = setInterval(_torrentPollTick, 1200);
+  _torrentPollTick();
+}
+
+function _torrentPollStop() {
+  if (_torrentPollTimer) { clearInterval(_torrentPollTimer); _torrentPollTimer = null; }
+  const bar = document.getElementById('torrent-parse-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+async function _torrentPollTick() {
+  try {
+    const res  = await fetch('/api/torrents/status');
+    const data = await res.json();
+    const w    = data.worker || {};
+    if (!w.running && !_torrentPollTimer) return;
+    const bar  = document.getElementById('torrent-parse-bar');
+    const txt  = document.getElementById('tpb-text');
+    const fill = document.getElementById('tpb-fill');
+    const pct  = document.getElementById('tpb-pct');
+    if (!bar) return;
+
+    if (w.running) {
+      bar.style.display = 'flex';
+      const done  = w.done  || 0;
+      const total = w.total || 0;
+      const errs  = w.errors || 0;
+      const ratio = total > 0 ? done / total : 0;
+      if (txt)  txt.textContent  = t('torrent.parseProgress', { done, total, errors: errs });
+      if (fill) fill.style.width = `${Math.round(ratio * 100)}%`;
+      if (pct)  pct.textContent  = total > 0 ? `${Math.round(ratio * 100)}%` : '';
+    } else {
+      const done = w.done  || 0;
+      const errs = w.errors || 0;
+      if (txt)  txt.textContent  = t('torrent.parseDone', { done, errors: errs });
+      if (fill) fill.style.width = '100%';
+      if (pct)  pct.textContent  = '100%';
+      setTimeout(_torrentPollStop, 4000);
+      _torrentPollTimer && clearInterval(_torrentPollTimer);
+      _torrentPollTimer = null;
+      if (_torrentCtrlVisible) await _torrentCtrlRefresh();
+    }
+  } catch (_) {}
 }
 
 // ── File selection & bulk download ───────────────────────────────────────────
@@ -1618,6 +1874,8 @@ function pollDownload(fileId) {
   }, 2000);
 }
 
+let _scheduledDownloads = [];
+
 async function loadDownloadsList() {
   _paintGridLoading('dl-hist-tbody', 8);
   try {
@@ -1640,6 +1898,9 @@ async function loadDownloadsList() {
           }
         }
       }).catch(() => {}),
+      api('/api/downloads/scheduled').then(sched => {
+        _scheduledDownloads = sched || [];
+      }).catch(() => { _scheduledDownloads = []; }),
     ]);
   } catch (e) {
     _serverDownloads = [];
@@ -1676,6 +1937,17 @@ function renderDownloadsTab() {
   const inFlight = _dlHistory.filter(e => e.status === 'queued' || e.status === 'downloading')
     .map(e => ({...e, downloaded_at: null}));
 
+  const scheduledRows = (_scheduledDownloads || []).map(s => ({
+    id: s.file_id,
+    name: s.file_name || '',
+    size: s.file_size || 0,
+    group: s.group_name || '',
+    pct: 0,
+    status: 'scheduled',
+    downloaded_at: null,
+    queued_at: s.queued_at,
+  }));
+
   const completedRows = _serverDownloads.map(d => ({
     id: d.id,
     name: d.file_name || t('common.fileId', { n: d.id }),
@@ -1686,7 +1958,7 @@ function renderDownloadsTab() {
     downloaded_at: d.downloaded_at || null,
   }));
 
-  let all = [...inFlight, ...completedRows];
+  let all = [...inFlight, ...scheduledRows, ...completedRows];
 
   // Apply name/group filter from filter row
   const fName = (document.getElementById('dl-col-name')?.value || '').trim().toLowerCase();
@@ -1715,9 +1987,10 @@ function renderDownloadsTab() {
   all.sort(cmp);
   // Always promote in-flight downloads (queued + downloading) to the top,
   // regardless of the user's current sort column.
-  const _active = all.filter(e => e.status === 'queued' || e.status === 'downloading');
-  const _done   = all.filter(e => e.status === 'done');
-  all = _active.concat(_done);
+  const _active    = all.filter(e => e.status === 'queued' || e.status === 'downloading');
+  const _scheduled = all.filter(e => e.status === 'scheduled');
+  const _done      = all.filter(e => e.status === 'done');
+  all = _active.concat(_scheduled).concat(_done);
   _updateDlSortArrows();
 
   const notice = document.getElementById('dl-space-notice');
@@ -1744,20 +2017,26 @@ function renderDownloadsTab() {
   }
 
   tbody.innerHTML = all.map(e => {
-    const stCls = e.status === 'done' ? 'dl-st-done' : e.status === 'downloading' ? 'dl-st-active' : 'dl-st-queued';
-    const stTxt = e.status === 'done' ? t('downloads.completed') : e.status === 'downloading' ? t('downloads.downloading') : t('downloads.queued');
-    const progHtml = e.status !== 'done'
+    let stCls, stTxt;
+    if (e.status === 'done')        { stCls = 'dl-st-done';   stTxt = t('downloads.completed'); }
+    else if (e.status === 'downloading') { stCls = 'dl-st-active'; stTxt = t('downloads.downloading'); }
+    else if (e.status === 'scheduled') { stCls = 'dl-scheduled-badge'; stTxt = '⏱ ' + t('downloads.scheduled'); }
+    else                            { stCls = 'dl-st-queued'; stTxt = t('downloads.queued'); }
+    const progHtml = (e.status !== 'done' && e.status !== 'scheduled')
       ? `<div style="display:flex;align-items:center;gap:6px">
            <div class="dl-bar" style="flex:1;width:auto"><div class="dl-bar-fill" style="width:${e.pct}%"></div></div>
            <span style="font-size:.71rem;color:var(--text-3);width:32px;text-align:right">${e.pct}%</span>
          </div>`
       : '—';
     const isDone = e.status === 'done';
+    const isScheduled = e.status === 'scheduled';
     const checked = S.selectedDownloads.has(e.id) ? ' checked' : '';
     const chkCell = `<input type="checkbox" class="dl-row-chk" data-status="${e.status}"${checked} onchange="toggleDownloadSelect(${e.id},this.checked)">`;
     const actions = isDone
       ? `<button class="dl-act dl-act-dl" onclick="downloadBlob(${e.id})" title="${esc(t('dl.downloadTitle'))}">⬇</button>
          <button class="dl-act dl-act-del" onclick="deleteLocalFile(${e.id})" title="${esc(t('dl.deleteTitle'))}">🗑</button>`
+      : isScheduled
+      ? `<button class="dl-act dl-act-del" onclick="cancelScheduledDownload(${e.id})" title="${esc(t('dl.cancelTitle'))}">✕</button>`
       : `<button class="dl-act dl-act-del" onclick="cancelDownload(${e.id})" title="${esc(t('dl.cancelTitle'))}">✕</button>`;
     return `<tr>
       <td class="chk-cell">${chkCell}</td>
@@ -2198,6 +2477,7 @@ function renderPagination(total, limit, offset) {
   let html = '';
   if (S.activeTab === 'files') {
     html += `<button id="bulk-dl-btn" onclick="bulkDownloadSelected()"></button>`;
+    html += `<button id="torrent-parse-trigger" onclick="torrentCtrlToggle()" title="${esc(t('torrent.parseBtn'))}">📦</button>`;
   } else if (S.activeTab === 'links') {
     html += `<button id="bulk-copy-btn" onclick="copyLinksToClipboard()"><span class="i18n-bcopy">📋 Panoya Kopyala (</span><span id="bulk-copy-count">0</span>)</button>`;
   }
@@ -4346,4 +4626,241 @@ async function loadTelemetrySettings() {
 async function tlmToggle(checked) {
   try { await api('/api/telemetry/settings', { method: 'PUT', json: { enabled: !!checked } }); }
   catch (e) {}
+}
+
+
+// ── Bandwidth Scheduling ─────────────────────────────────────────────────────
+let _bwSchedules = [];
+let _bwSettings  = { enabled: false, min_size_mb: 0 };
+let _bwClockTimer = null;
+let _bwEditId = null;
+
+async function loadBandwidthTab() {
+  await Promise.all([loadBandwidthSettings(), loadBandwidthSchedules()]);
+  bwStartClock();
+}
+
+async function loadBandwidthSettings() {
+  try {
+    _bwSettings = await api('/api/bandwidth/settings');
+    const en = document.getElementById('bw-enabled');
+    const ms = document.getElementById('bw-min-size');
+    if (en) en.checked = !!_bwSettings.enabled;
+    if (ms) ms.value = _bwSettings.min_size_mb ?? 0;
+  } catch (e) {}
+  bwUpdateStatus();
+}
+
+async function loadBandwidthSchedules() {
+  try {
+    _bwSchedules = await api('/api/bandwidth/schedules') || [];
+  } catch (e) { _bwSchedules = []; }
+  renderBandwidthSchedules();
+}
+
+function bwStartClock() {
+  if (_bwClockTimer) clearInterval(_bwClockTimer);
+  bwTickClock();
+  _bwClockTimer = setInterval(bwTickClock, 1000);
+}
+
+async function bwTickClock() {
+  const el = document.getElementById('bw-clock');
+  if (!el) { clearInterval(_bwClockTimer); _bwClockTimer = null; return; }
+  const now = new Date();
+  el.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
+async function bwUpdateStatus() {
+  try {
+    const st = await api('/api/bandwidth/status');
+    const badge = document.getElementById('bw-status-badge');
+    const next  = document.getElementById('bw-next-window');
+    if (!badge) return;
+    if (!st.enabled) {
+      badge.className = 'bw-status-badge bw-status-off';
+      badge.textContent = t('bw.statusOff');
+      if (next) next.style.display = 'none';
+    } else if (st.allowed) {
+      badge.className = 'bw-status-badge bw-status-ok';
+      badge.textContent = t('bw.statusActive');
+      if (next) next.style.display = 'none';
+    } else {
+      badge.className = 'bw-status-badge bw-status-wait';
+      badge.textContent = t('bw.statusWaiting');
+      if (next && st.minutes_until_next != null) {
+        const h = Math.floor(st.minutes_until_next / 60);
+        const m = st.minutes_until_next % 60;
+        const str = h > 0 ? `${h} sa ${m} dk` : `${m} dk`;
+        next.textContent = t('bw.nextWindow', { time: str });
+        next.style.display = '';
+      } else if (next) {
+        next.style.display = 'none';
+      }
+    }
+  } catch (e) {}
+}
+
+async function bwToggleEnabled(checked) {
+  _bwSettings.enabled = checked;
+  await bwSaveSettings();
+  bwUpdateStatus();
+}
+
+async function bwSaveSettings() {
+  try {
+    await api('/api/bandwidth/settings', {
+      method: 'PUT',
+      json: { enabled: !!_bwSettings.enabled, min_size_mb: parseInt(document.getElementById('bw-min-size')?.value || '0') || 0 },
+    });
+    bwUpdateStatus();
+  } catch (e) { showToast(t('bw.saveError') + ' ' + esc(e.message), 4000); }
+}
+
+const _BW_DAYS_ALL = [0, 1, 2, 3, 4, 5, 6];
+const _BW_PRESETS = {
+  night:     { name: () => t('bw.presetNight'),     rule_type: 'weekly', days: _BW_DAYS_ALL, start_time: '00:00', end_time: '08:00' },
+  latenight: { name: () => t('bw.presetLateNight'), rule_type: 'weekly', days: _BW_DAYS_ALL, start_time: '22:00', end_time: '06:00' },
+  weekend:   { name: () => t('bw.presetWeekend'),   rule_type: 'weekly', days: [5, 6],       start_time: '00:00', end_time: '23:59' },
+  offhours:  { name: () => t('bw.presetOffHours'),  rule_type: 'weekly', days: _BW_DAYS_ALL, start_time: '20:00', end_time: '08:00' },
+};
+
+async function bwAddPreset(key) {
+  const p = _BW_PRESETS[key];
+  if (!p) return;
+  try {
+    await api('/api/bandwidth/schedules', {
+      method: 'POST',
+      json: { name: p.name(), rule_type: p.rule_type, days: p.days, start_time: p.start_time, end_time: p.end_time, enabled: true },
+    });
+    await loadBandwidthSchedules();
+    bwUpdateStatus();
+    showToast(t('bw.ruleAdded'), 2000);
+  } catch (e) { showToast(t('bw.saveError') + ' ' + esc(e.message), 4000); }
+}
+
+function _bwDayAbbr(d) {
+  return [t('bw.day0'), t('bw.day1'), t('bw.day2'), t('bw.day3'), t('bw.day4'), t('bw.day5'), t('bw.day6')][d] || d;
+}
+
+function _bwRuleDesc(s) {
+  const days = (s.days || []).map(_bwDayAbbr).join(', ') || '—';
+  if (s.rule_type === 'specific_date') return `${s.specific_date} · ${s.start_time}–${s.end_time}`;
+  if ((s.days || []).length === 7)     return `${t('bw.everyDay')} · ${s.start_time}–${s.end_time}`;
+  if (JSON.stringify((s.days||[]).sort()) === JSON.stringify([5,6])) return `${t('bw.weekends')} · ${s.start_time}–${s.end_time}`;
+  return `${days} · ${s.start_time}–${s.end_time}`;
+}
+
+function renderBandwidthSchedules() {
+  const list = document.getElementById('bw-rules-list');
+  if (!list) return;
+  if (!_bwSchedules.length) {
+    list.innerHTML = `<div style="font-size:.78rem;color:var(--text-4);padding:4px 0">${esc(t('bw.noRules'))}</div>`;
+    return;
+  }
+  list.innerHTML = _bwSchedules.map(s => `
+    <div class="bw-rule-item ${s.enabled ? '' : 'bw-rule-disabled'}" id="bw-rule-${s.id}">
+      <div class="bw-rule-name">${esc(s.name)}</div>
+      <div class="bw-rule-meta">${esc(_bwRuleDesc(s))}</div>
+      <button class="td-btn" style="font-size:.75rem;padding:3px 9px" onclick="bwOpenEditRule(${s.id})" data-i18n="common.edit">Düzenle</button>
+      <button class="td-btn td-btn-danger" style="font-size:.75rem;padding:3px 9px" onclick="bwDeleteRule(${s.id})" data-i18n="common.delete">Sil</button>
+    </div>`).join('');
+}
+
+function bwOpenAddRule() {
+  _bwEditId = null;
+  document.getElementById('bw-rule-form-title').textContent = t('bw.ruleFormTitle');
+  document.getElementById('bw-rule-name').value = '';
+  document.getElementById('bw-rule-type').value = 'weekly';
+  document.getElementById('bw-rule-start').value = '02:00';
+  document.getElementById('bw-rule-end').value = '06:00';
+  document.getElementById('bw-rule-enabled').checked = true;
+  document.getElementById('bw-rule-date').value = '';
+  document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => { c.checked = true; });
+  bwOnRuleTypeChange();
+  document.getElementById('bw-rule-form').style.display = '';
+  document.getElementById('bw-rule-name').focus();
+}
+
+function bwOpenEditRule(id) {
+  const s = _bwSchedules.find(x => x.id === id);
+  if (!s) return;
+  _bwEditId = id;
+  document.getElementById('bw-rule-form-title').textContent = t('bw.ruleEditTitle');
+  document.getElementById('bw-rule-name').value = s.name || '';
+  document.getElementById('bw-rule-type').value = s.rule_type || 'weekly';
+  document.getElementById('bw-rule-start').value = s.start_time || '02:00';
+  document.getElementById('bw-rule-end').value = s.end_time || '06:00';
+  document.getElementById('bw-rule-enabled').checked = !!s.enabled;
+  document.getElementById('bw-rule-date').value = s.specific_date || '';
+  const days = s.days || [];
+  document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => {
+    c.checked = days.includes(parseInt(c.dataset.day));
+  });
+  bwOnRuleTypeChange();
+  document.getElementById('bw-rule-form').style.display = '';
+  document.getElementById('bw-rule-name').focus();
+}
+
+function bwCancelRule() {
+  _bwEditId = null;
+  document.getElementById('bw-rule-form').style.display = 'none';
+}
+
+function bwOnRuleTypeChange() {
+  const type = document.getElementById('bw-rule-type').value;
+  const isWeekly = type === 'weekly';
+  document.getElementById('bw-days-row').style.display  = isWeekly ? '' : 'none';
+  document.getElementById('bw-days-wrap').style.display = isWeekly ? '' : 'none';
+  document.getElementById('bw-date-label').style.display = isWeekly ? 'none' : '';
+  document.getElementById('bw-rule-date').style.display  = isWeekly ? 'none' : '';
+}
+
+async function bwSaveRule() {
+  const name = document.getElementById('bw-rule-name').value.trim();
+  if (!name) { showToast(t('bw.errNameRequired')); return; }
+  const type = document.getElementById('bw-rule-type').value;
+  const days = type === 'weekly'
+    ? [...document.querySelectorAll('#bw-days-wrap input[type=checkbox]')]
+        .filter(c => c.checked).map(c => parseInt(c.dataset.day))
+    : [];
+  const body = {
+    name,
+    rule_type: type,
+    days,
+    start_time: document.getElementById('bw-rule-start').value,
+    end_time:   document.getElementById('bw-rule-end').value,
+    specific_date: type === 'specific_date' ? (document.getElementById('bw-rule-date').value || null) : null,
+    enabled: document.getElementById('bw-rule-enabled').checked,
+  };
+  if (type === 'specific_date' && !body.specific_date) { showToast(t('bw.errDateRequired')); return; }
+  try {
+    if (_bwEditId) {
+      await api(`/api/bandwidth/schedules/${_bwEditId}`, { method: 'PUT', json: body });
+    } else {
+      await api('/api/bandwidth/schedules', { method: 'POST', json: body });
+    }
+    bwCancelRule();
+    await loadBandwidthSchedules();
+    bwUpdateStatus();
+    showToast(t('bw.ruleSaved'), 2000);
+  } catch (e) { showToast(t('bw.saveError') + ' ' + esc(e.message), 4000); }
+}
+
+async function bwDeleteRule(id) {
+  if (!confirm(t('bw.deleteConfirm'))) return;
+  try {
+    await api(`/api/bandwidth/schedules/${id}`, { method: 'DELETE' });
+    await loadBandwidthSchedules();
+    bwUpdateStatus();
+    showToast(t('bw.ruleDeleted'), 2000);
+  } catch (e) { showToast(t('bw.saveError') + ' ' + esc(e.message), 4000); }
+}
+
+async function cancelScheduledDownload(fileId) {
+  try {
+    await api(`/api/downloads/scheduled/${fileId}`, { method: 'DELETE' });
+    _scheduledDownloads = _scheduledDownloads.filter(s => s.file_id !== fileId);
+    renderDownloadsTab();
+  } catch (e) { showToast(t('dl.cancelFail') + ' ' + esc(e.message)); }
 }

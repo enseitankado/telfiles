@@ -315,6 +315,44 @@ CREATE TABLE IF NOT EXISTS transfer_destinations (
     enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS bandwidth_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    enabled BOOLEAN DEFAULT FALSE,
+    min_size_mb INTEGER DEFAULT 0
+);
+INSERT INTO bandwidth_settings (id, enabled, min_size_mb) VALUES (1, FALSE, 0) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS bandwidth_schedules (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT TRUE,
+    rule_type TEXT NOT NULL DEFAULT 'weekly',
+    days INTEGER[] DEFAULT '{}',
+    start_time TEXT NOT NULL DEFAULT '02:00',
+    end_time TEXT NOT NULL DEFAULT '06:00',
+    specific_date TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_downloads (
+    id SERIAL PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    destination_ids JSONB DEFAULT '[]',
+    queued_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(file_id)
+);
+
+CREATE TABLE IF NOT EXISTS torrent_contents (
+    file_id BIGINT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    torrent_name TEXT,
+    total_size BIGINT DEFAULT 0,
+    file_count INTEGER DEFAULT 0,
+    tree JSONB DEFAULT '[]',
+    parsed_at TIMESTAMPTZ DEFAULT NOW(),
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_torrent_contents_parsed ON torrent_contents (parsed_at) WHERE error IS NULL;
 """
 
 
@@ -1979,3 +2017,182 @@ async def update_transfer_destination(dest_id: int, name: str, type_: str, confi
 async def delete_transfer_destination(dest_id: int) -> bool:
     result = await _exec("DELETE FROM transfer_destinations WHERE id=$1", dest_id)
     return "DELETE 1" in str(result)
+
+
+# ── Bandwidth Scheduling ───────────────────────────────────────────────────────
+
+async def get_bandwidth_settings() -> Dict:
+    row = await _qrow("SELECT enabled, min_size_mb FROM bandwidth_settings WHERE id = 1")
+    if not row:
+        return {"enabled": False, "min_size_mb": 0}
+    return dict(row)
+
+
+async def set_bandwidth_settings(enabled: bool, min_size_mb: int) -> None:
+    await _exec(
+        "UPDATE bandwidth_settings SET enabled=$1, min_size_mb=$2 WHERE id=1",
+        enabled, min_size_mb,
+    )
+
+
+async def list_bandwidth_schedules() -> List[Dict]:
+    rows = await _q("SELECT * FROM bandwidth_schedules ORDER BY created_at")
+    return [dict(r) for r in rows]
+
+
+async def create_bandwidth_schedule(data: Dict) -> Dict:
+    row = await _qrow(
+        """INSERT INTO bandwidth_schedules
+               (name, enabled, rule_type, days, start_time, end_time, specific_date)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *""",
+        data["name"],
+        bool(data.get("enabled", True)),
+        data.get("rule_type", "weekly"),
+        data.get("days") or [],
+        data.get("start_time", "02:00"),
+        data.get("end_time", "06:00"),
+        data.get("specific_date") or None,
+    )
+    return dict(row)
+
+
+async def update_bandwidth_schedule(id: int, data: Dict) -> Optional[Dict]:
+    row = await _qrow(
+        """UPDATE bandwidth_schedules
+           SET name=$1, enabled=$2, rule_type=$3, days=$4,
+               start_time=$5, end_time=$6, specific_date=$7
+           WHERE id=$8 RETURNING *""",
+        data["name"],
+        bool(data.get("enabled", True)),
+        data.get("rule_type", "weekly"),
+        data.get("days") or [],
+        data.get("start_time", "02:00"),
+        data.get("end_time", "06:00"),
+        data.get("specific_date") or None,
+        id,
+    )
+    return dict(row) if row else None
+
+
+async def delete_bandwidth_schedule(id: int) -> None:
+    await _exec("DELETE FROM bandwidth_schedules WHERE id=$1", id)
+
+
+async def list_scheduled_downloads() -> List[Dict]:
+    rows = await _q(
+        """SELECT sd.file_id, sd.destination_ids, sd.queued_at,
+                  f.file_name, f.file_size, f.file_ext,
+                  COALESCE(g.display_name, g.name) AS group_name
+           FROM scheduled_downloads sd
+           JOIN files f ON f.id = sd.file_id
+           JOIN groups g ON g.id = f.group_id
+           ORDER BY sd.queued_at"""
+    )
+    result = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("destination_ids"), str):
+            import json as _j
+            try:
+                d["destination_ids"] = _j.loads(d["destination_ids"])
+            except Exception:
+                d["destination_ids"] = []
+        result.append(d)
+    return result
+
+
+async def add_scheduled_download(file_id: int, destination_ids: List[int]) -> None:
+    import json as _j
+    await _exec(
+        """INSERT INTO scheduled_downloads (file_id, destination_ids)
+           VALUES ($1, $2::jsonb)
+           ON CONFLICT (file_id) DO UPDATE SET destination_ids=$2::jsonb, queued_at=NOW()""",
+        file_id,
+        _j.dumps(destination_ids),
+    )
+
+
+async def remove_scheduled_download(file_id: int) -> None:
+    await _exec("DELETE FROM scheduled_downloads WHERE file_id=$1", file_id)
+
+
+async def count_scheduled_downloads() -> int:
+    return (await _qval("SELECT COUNT(*) FROM scheduled_downloads")) or 0
+
+
+# ── Torrent contents ───────────────────────────────────────────────────────────
+
+async def get_torrent_tree(file_id: int) -> Optional[Dict]:
+    row = await _qrow(
+        "SELECT file_id, torrent_name, total_size, file_count, tree, parsed_at, error "
+        "FROM torrent_contents WHERE file_id = $1",
+        file_id,
+    )
+    if not row:
+        return None
+    d = dict(row)
+    if isinstance(d.get("tree"), str):
+        d["tree"] = _json.loads(d["tree"])
+    return d
+
+
+async def save_torrent_tree(
+    file_id: int,
+    name: Optional[str],
+    total_size: int,
+    file_count: int,
+    tree: list,
+    error: Optional[str] = None,
+) -> None:
+    await _exec(
+        """INSERT INTO torrent_contents
+               (file_id, torrent_name, total_size, file_count, tree, parsed_at, error)
+           VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), $6)
+           ON CONFLICT (file_id) DO UPDATE SET
+               torrent_name = EXCLUDED.torrent_name,
+               total_size   = EXCLUDED.total_size,
+               file_count   = EXCLUDED.file_count,
+               tree         = EXCLUDED.tree,
+               parsed_at    = NOW(),
+               error        = EXCLUDED.error""",
+        file_id,
+        name,
+        total_size,
+        file_count,
+        _json.dumps(tree, ensure_ascii=False),
+        error,
+    )
+
+
+async def get_unparsed_torrents(limit: int = 5000) -> List[Dict]:
+    """Return files with ext='torrent' that have no entry in torrent_contents."""
+    rows = await _q(
+        """SELECT f.id, f.group_id, f.message_id, f.file_name,
+                  f.discovered_by_account_id
+           FROM files f
+           LEFT JOIN torrent_contents tc ON tc.file_id = f.id
+           WHERE LOWER(f.file_ext) = 'torrent'
+             AND tc.file_id IS NULL
+           ORDER BY f.date DESC
+           LIMIT $1""",
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def count_torrents() -> Dict:
+    total = (await _qval(
+        "SELECT COUNT(*) FROM files WHERE LOWER(file_ext) = 'torrent'"
+    )) or 0
+    parsed = (await _qval(
+        "SELECT COUNT(*) FROM torrent_contents WHERE error IS NULL"
+    )) or 0
+    errors = (await _qval(
+        "SELECT COUNT(*) FROM torrent_contents WHERE error IS NOT NULL"
+    )) or 0
+    return {
+        "total": total,
+        "parsed": parsed,
+        "errors": errors,
+        "pending": max(0, total - parsed - errors),
+    }

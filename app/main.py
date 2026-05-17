@@ -17,6 +17,7 @@ import ui_auth
 
 import database
 import telegram_client
+import torrent_parse as _torrent_parse
 import transfer as _transfer
 from sync import (
     cancel_download,
@@ -50,6 +51,8 @@ _auto_sync_task: Optional[asyncio.Task] = None
 _hunter_loop_task: Optional[asyncio.Task] = None
 _link_probe_task: Optional[asyncio.Task] = None
 _join_queue_task: Optional[asyncio.Task] = None
+_bandwidth_checker_task: Optional[asyncio.Task] = None
+_torrent_worker = _torrent_parse.TorrentParseWorker()
 
 # ── App-level settings (persisted on the data volume) ─────────────────────────
 import json as _json
@@ -278,8 +281,97 @@ async def _hunter_scheduler_loop():
             logger.warning(f"Hunter scheduler error: {e}")
 
 
+# ── Bandwidth Scheduling ──────────────────────────────────────────────────────
+
+def _time_in_range(start: str, end: str, current: str) -> bool:
+    """True if current is within [start, end], handles overnight ranges like 22:00-06:00."""
+    if start <= end:
+        return start <= current <= end
+    return current >= start or current <= end
+
+
+def _schedule_allows_now(schedules: list, settings: dict) -> bool:
+    """Returns True if downloads are allowed right now per the schedule."""
+    if not settings.get("enabled"):
+        return True
+    now = datetime.now()
+    weekday = now.weekday()   # 0=Mon … 6=Sun
+    current_time = now.strftime("%H:%M")
+    today = now.strftime("%Y-%m-%d")
+    for s in schedules:
+        if not s.get("enabled"):
+            continue
+        start = s.get("start_time", "02:00")
+        end   = s.get("end_time",   "06:00")
+        if s.get("rule_type", "weekly") == "weekly":
+            if weekday in (s.get("days") or []) and _time_in_range(start, end, current_time):
+                return True
+        elif s.get("rule_type") == "specific_date":
+            if s.get("specific_date") == today and _time_in_range(start, end, current_time):
+                return True
+    return False
+
+
+def _minutes_until_next_window(schedules: list, settings: dict) -> Optional[int]:
+    """Returns minutes until the next open window, or None if none found within 7 days."""
+    if not settings.get("enabled"):
+        return None
+    active = [s for s in schedules if s.get("enabled")]
+    if not active:
+        return None
+    now = datetime.now()
+    for delta in range(5, 60 * 24 * 7, 5):
+        t = now + timedelta(minutes=delta)
+        t_str  = t.strftime("%H:%M")
+        t_day  = t.weekday()
+        t_date = t.strftime("%Y-%m-%d")
+        for s in active:
+            start = s.get("start_time", "02:00")
+            end   = s.get("end_time",   "06:00")
+            if s.get("rule_type", "weekly") == "weekly":
+                if t_day in (s.get("days") or []) and _time_in_range(start, end, t_str):
+                    return delta
+            elif s.get("rule_type") == "specific_date":
+                if s.get("specific_date") == t_date and _time_in_range(start, end, t_str):
+                    return delta
+    return None
+
+
+async def _bandwidth_checker_loop():
+    """Wake every 30 s; when a window opens, start all queued scheduled downloads."""
+    while True:
+        try:
+            await asyncio.sleep(30)
+            settings  = await database.get_bandwidth_settings()
+            if not settings.get("enabled"):
+                continue
+            schedules = await database.list_bandwidth_schedules()
+            if not _schedule_allows_now(schedules, settings):
+                continue
+            pending = await database.list_scheduled_downloads()
+            for entry in pending:
+                fid      = entry["file_id"]
+                dest_ids = entry.get("destination_ids") or []
+                if isinstance(dest_ids, str):
+                    import json as _j2
+                    try:
+                        dest_ids = _j2.loads(dest_ids)
+                    except Exception:
+                        dest_ids = []
+                await database.remove_scheduled_download(fid)
+                if dest_ids:
+                    asyncio.create_task(_download_and_transfer(fid, dest_ids))
+                else:
+                    asyncio.create_task(download_file(fid))
+                logger.info("Bandwidth scheduler: started download for file_id=%s", fid)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Bandwidth checker error: %s", e)
+
+
 def _start_background_tasks():
-    global _auto_sync_task, _next_sync_at, _hunter_loop_task, _link_probe_task, _join_queue_task
+    global _auto_sync_task, _next_sync_at, _hunter_loop_task, _link_probe_task, _join_queue_task, _bandwidth_checker_task
     asyncio.create_task(run_sync())
     if _auto_sync_task is None or _auto_sync_task.done():
         _next_sync_at = _time.time() + get_sync_interval()
@@ -296,6 +388,8 @@ def _start_background_tasks():
         _link_probe_task = asyncio.create_task(_link_probe_loop())
     if _join_queue_task is None or _join_queue_task.done():
         _join_queue_task = asyncio.create_task(_join_queue_loop())
+    if _bandwidth_checker_task is None or _bandwidth_checker_task.done():
+        _bandwidth_checker_task = asyncio.create_task(_bandwidth_checker_loop())
     # Pre-warm the Files grid cache so the first tab-click after boot is
     # instant. The dedupe rows query takes ~2s cold; running it once at
     # startup populates the in-process cache. Fire-and-forget; if it fails
@@ -907,6 +1001,17 @@ async def trigger_download(file_id: int, background_tasks: BackgroundTasks, body
     if f["downloading"]:
         return {"status": "downloading", "progress": f["download_progress"]}
 
+    # Check bandwidth scheduling
+    bw_settings = await database.get_bandwidth_settings()
+    if bw_settings.get("enabled"):
+        min_mb = bw_settings.get("min_size_mb", 0)
+        file_size = f.get("file_size") or 0
+        if min_mb == 0 or file_size >= min_mb * 1024 * 1024:
+            bw_schedules = await database.list_bandwidth_schedules()
+            if not _schedule_allows_now(bw_schedules, bw_settings):
+                await database.add_scheduled_download(file_id, body.destination_ids or [])
+                return {"status": "scheduled"}
+
     if body.destination_ids:
         background_tasks.add_task(_download_and_transfer, file_id, body.destination_ids)
     else:
@@ -1024,6 +1129,98 @@ async def list_downloads():
 @app.get("/api/downloads/active")
 async def list_active_downloads():
     return await database.list_downloading_files()
+
+
+@app.get("/api/downloads/scheduled")
+async def list_scheduled_downloads_endpoint():
+    return await database.list_scheduled_downloads()
+
+
+@app.delete("/api/downloads/scheduled/{file_id}")
+async def cancel_scheduled_download(file_id: int):
+    await database.remove_scheduled_download(file_id)
+    return {"ok": True}
+
+
+# ── Bandwidth Scheduling ───────────────────────────────────────────────────────
+
+class BandwidthSettingsBody(BaseModel):
+    enabled: bool = False
+    min_size_mb: int = 0
+
+
+class BandwidthScheduleBody(BaseModel):
+    name: str
+    enabled: bool = True
+    rule_type: str = "weekly"
+    days: list[int] = []
+    start_time: str = "02:00"
+    end_time: str = "06:00"
+    specific_date: Optional[str] = None
+
+
+@app.get("/api/bandwidth/settings")
+async def get_bw_settings():
+    return await database.get_bandwidth_settings()
+
+
+@app.put("/api/bandwidth/settings")
+async def set_bw_settings(body: BandwidthSettingsBody):
+    await database.set_bandwidth_settings(body.enabled, body.min_size_mb)
+    if not body.enabled:
+        # Scheduling disabled — release all pending scheduled downloads immediately
+        pending = await database.list_scheduled_downloads()
+        for entry in pending:
+            fid      = entry["file_id"]
+            dest_ids = entry.get("destination_ids") or []
+            await database.remove_scheduled_download(fid)
+            if dest_ids:
+                asyncio.create_task(_download_and_transfer(fid, dest_ids))
+            else:
+                asyncio.create_task(download_file(fid))
+    return {"ok": True}
+
+
+@app.get("/api/bandwidth/schedules")
+async def list_bw_schedules():
+    return await database.list_bandwidth_schedules()
+
+
+@app.post("/api/bandwidth/schedules")
+async def create_bw_schedule(body: BandwidthScheduleBody):
+    return await database.create_bandwidth_schedule(body.model_dump())
+
+
+@app.put("/api/bandwidth/schedules/{schedule_id}")
+async def update_bw_schedule(schedule_id: int, body: BandwidthScheduleBody):
+    result = await database.update_bandwidth_schedule(schedule_id, body.model_dump())
+    if not result:
+        raise HTTPException(404, "Schedule not found")
+    return result
+
+
+@app.delete("/api/bandwidth/schedules/{schedule_id}")
+async def delete_bw_schedule(schedule_id: int):
+    await database.delete_bandwidth_schedule(schedule_id)
+    return {"ok": True}
+
+
+@app.get("/api/bandwidth/status")
+async def get_bw_status():
+    settings  = await database.get_bandwidth_settings()
+    schedules = await database.list_bandwidth_schedules()
+    allowed   = _schedule_allows_now(schedules, settings)
+    now       = datetime.now()
+    minutes   = _minutes_until_next_window(schedules, settings) if not allowed else None
+    return {
+        "enabled":         settings.get("enabled", False),
+        "allowed":         allowed,
+        "current_time":    now.strftime("%H:%M:%S"),
+        "current_day":     now.weekday(),
+        "min_size_mb":     settings.get("min_size_mb", 0),
+        "scheduled_count": await database.count_scheduled_downloads(),
+        "minutes_until_next": minutes,
+    }
 
 
 # ── Links ─────────────────────────────────────────────────────────────────────
@@ -1520,6 +1717,46 @@ async def hunter_file_blob_delete(cid: int, msg_id: int):
     import hunter as _hunter
     _hunter.file_dl_status.pop((int(cid), int(msg_id)), None)
     return {"ok": True}
+
+
+# ── Torrent parse endpoints ───────────────────────────────────────────────────
+
+@app.post("/api/torrents/parse-all")
+async def start_torrent_parse(request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    concurrency = max(1, min(20, int(body.get("concurrency", 5))))
+    started = _torrent_worker.start(concurrency)
+    return {"started": started, "status": _torrent_worker.get_status()}
+
+
+@app.get("/api/torrents/status")
+async def get_torrent_status():
+    counts = await database.count_torrents()
+    return {"worker": _torrent_worker.get_status(), "counts": counts}
+
+
+@app.post("/api/torrents/cancel")
+async def cancel_torrent_parse():
+    _torrent_worker.cancel()
+    return {"ok": True}
+
+
+@app.get("/api/files/{file_id}/torrent-tree")
+async def get_file_torrent_tree(file_id: int):
+    """Return cached tree or download+parse on demand (synchronous)."""
+    try:
+        result = await _torrent_parse.parse_single(file_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    # Return from DB (includes parsed_at timestamp)
+    row = await database.get_torrent_tree(file_id)
+    return row or result
 
 
 # ── Static (must be last) ─────────────────────────────────────────────────────
