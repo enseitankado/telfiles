@@ -1,5 +1,10 @@
-const CACHE = 'telfiles-v1';
-const STATIC = ['/', '/app.js', '/i18n.js', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+// Cache name is bumped whenever the cache strategy or asset list changes so
+// previously-installed workers drop their stale entries on activate.
+const CACHE = 'telfiles-v2';
+const STATIC = ['/manifest.json', '/icon-192.png', '/icon-512.png'];
+// Frequently-changing assets — always go to network first, only fall back to
+// cache when offline. Prevents the "I refreshed and nothing updated" trap.
+const NETWORK_FIRST = new Set(['/', '/index.html', '/app.js', '/i18n.js', '/sw.js']);
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC)));
@@ -21,6 +26,20 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
 
+  if (NETWORK_FIRST.has(url.pathname)) {
+    // Network-first: prefer the live copy, fall back to cache only on failure.
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if (res.ok) {
+          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
+        }
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // Cache-first for the truly-static stuff (icons, manifest).
   e.respondWith(
     caches.match(e.request).then(cached => {
       const network = fetch(e.request).then(res => {

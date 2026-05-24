@@ -17,10 +17,12 @@ All stages honor user-configurable concurrency, request delays, and
 daily caps. A FloodWait raises a backoff that is logged and respected.
 """
 import asyncio
+import mimetypes
 import os
 import json
 import logging
 import re
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -1588,20 +1590,209 @@ def _file_group(ext: str) -> str:
     return "other"
 
 
-def _score_breakdown(file_count: int, sampled: int, members: int,
-                      diversity: int, days_since_last: float) -> float:
+def _count_keyword_hits(text: str, keywords: List[str]) -> int:
+    """Total times any of the user's keywords appears in `text`. Substring
+    match (case-insensitive). Each occurrence counts — a keyword mentioned
+    three times in three messages contributes 3."""
+    if not text or not keywords:
+        return 0
+    low = text.lower()
+    hits = 0
+    for kw in keywords:
+        k = kw.strip().lower()
+        if not k:
+            continue
+        # Cheap substring scan; for the short keyword lists users supply,
+        # this is materially faster than building per-keyword regexes.
+        idx = 0
+        while True:
+            idx = low.find(k, idx)
+            if idx < 0:
+                break
+            hits += 1
+            idx += len(k)
+    return hits
+
+
+def _score_breakdown(
+    file_count: int,
+    sampled: int,
+    members: int,
+    diversity: int,
+    days_since_last: float,
+    *,
+    keyword_hits: int = 0,
+    avg_size: int = 0,
+    duplicate_ratio: float = 0.0,
+    unnamed_ratio: float = 0.0,
+) -> float:
+    """Composite 0..100 channel score.
+
+    Base components (weighted sum, max 100):
+      - density       (0.36) file_count / sampled — what fraction of recent
+                              messages are media
+      - members       (0.16) capped at 50k subscribers
+      - recency       (0.16) decays linearly over 30 days since last post
+      - diversity     (0.12) how many of the file-type buckets are non-empty
+      - keyword_bonus (0.20) substring hits of the user's interest keywords
+                              against message text+caption+description
+
+    Penalties (each 0..1, applied multiplicatively, capped at 60% total cut):
+      - trivia      → many small files (sticker/chit-chat-style channels)
+      - duplicate   → same filename repeats (sticker.webp, photo_*.jpg)
+      - unnamed     → most documents are auto-generated names (forwards)
+    """
     if sampled <= 0:
         return 0.0
-    density = file_count / sampled       # 0..1
-    member_score = min(1.0, (members or 0) / 50000.0)
-    recency = max(0.0, 1.0 - (days_since_last / 30.0)) if days_since_last is not None else 0.0
+    density        = file_count / sampled
+    member_score   = min(1.0, (members or 0) / 50000.0)
+    recency        = max(0.0, 1.0 - (days_since_last / 30.0)) if days_since_last is not None else 0.0
     diversity_score = min(1.0, diversity / 5.0)
-    # weighted
-    return round(100 * (0.45 * density + 0.20 * member_score + 0.20 * recency + 0.15 * diversity_score), 2)
+    # Keyword bonus: ~33% hit ratio (1 hit per 3 sampled messages) saturates.
+    keyword_bonus  = min(1.0, (keyword_hits / max(1, sampled)) * 3.0)
+
+    # --- Penalties ---
+    # 1) Trivia channel: many tiny files (≤500 KB avg) → likely sticker/chat spam.
+    trivia_penalty = 0.0
+    if file_count >= 50 and 0 < avg_size < 500_000:
+        trivia_penalty = (500_000 - avg_size) / 500_000  # 0..1
+    # 2) Same filename repeats across many messages — sticker.webp pattern.
+    dup_penalty = min(1.0, duplicate_ratio)
+    # 3) Auto-named documents (no real filename). Mild penalty above 50%.
+    unnamed_penalty = max(0.0, (unnamed_ratio - 0.5) * 2.0)
+
+    base = (0.36 * density
+            + 0.16 * member_score
+            + 0.16 * recency
+            + 0.12 * diversity_score
+            + 0.20 * keyword_bonus)
+
+    # Average the three penalties, then cap the overall reduction at 60% so
+    # a really bad signal can't zero out an otherwise interesting channel.
+    penalty_factor = min(1.0, (trivia_penalty + dup_penalty + unnamed_penalty) / 2.0)
+    return round(100.0 * base * (1.0 - 0.60 * penalty_factor), 2)
+
+
+# Unicode mathematical bold/italic/script → ASCII mapping (covers most
+# Telegram "fancy text" abuse). Built once at import time.
+def _build_unicode_plain_map() -> dict:
+    ranges = [
+        (0x1D400, 0x1D419, 'A'), (0x1D41A, 0x1D433, 'a'),  # bold
+        (0x1D434, 0x1D44D, 'A'), (0x1D44E, 0x1D467, 'a'),  # italic
+        (0x1D468, 0x1D481, 'A'), (0x1D482, 0x1D49B, 'a'),  # bold italic
+        (0x1D49C, 0x1D4B5, 'A'), (0x1D4B6, 0x1D4CF, 'a'),  # script
+        (0x1D4D0, 0x1D4E9, 'A'), (0x1D4EA, 0x1D503, 'a'),  # bold script
+        (0x1D504, 0x1D51D, 'A'), (0x1D51E, 0x1D537, 'a'),  # fraktur
+        (0x1D538, 0x1D551, 'A'), (0x1D552, 0x1D56B, 'a'),  # double-struck
+        (0x1D56C, 0x1D585, 'A'), (0x1D586, 0x1D59F, 'a'),  # bold fraktur
+        (0x1D5A0, 0x1D5B9, 'A'), (0x1D5BA, 0x1D5D3, 'a'),  # sans
+        (0x1D5D4, 0x1D5ED, 'A'), (0x1D5EE, 0x1D607, 'a'),  # sans bold
+        (0x1D608, 0x1D621, 'A'), (0x1D622, 0x1D63B, 'a'),  # sans italic
+        (0x1D63C, 0x1D655, 'A'), (0x1D656, 0x1D66F, 'a'),  # sans bold italic
+        (0x1D670, 0x1D689, 'A'), (0x1D68A, 0x1D6A3, 'a'),  # monospace
+    ]
+    m: dict = {}
+    for start, end, base_char in ranges:
+        base_ord = ord(base_char)
+        for i, cp in enumerate(range(start, end + 1)):
+            m[cp] = chr(base_ord + i)
+    # Bold digits 𝟎–𝟗
+    for i in range(10):
+        m[0x1D7CE + i] = str(i)
+    # Zero-width / invisible chars
+    for cp in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x00AD, 0x2060):
+        m[cp] = ''
+    return m
+
+_UNICODE_PLAIN_MAP = _build_unicode_plain_map()
+
+
+def clean_title(text: str) -> str:
+    """Strip mathematical Unicode styling and invisible chars from a title."""
+    if not text:
+        return text
+    return ''.join(_UNICODE_PLAIN_MAP.get(ord(c), c) for c in text).strip()
+
+
+async def _sample_entity_messages(
+    client, entity, candidate_id: int, username: str, sample_limit: int
+):
+    """Walk entity's recent messages and collect file stats + text.
+
+    Returns:
+        (file_count, breakdown, last_message_at, sampled,
+         total_size, text_parts, fname_counts, unnamed_count)
+    """
+    file_count = 0
+    breakdown: Dict[str, int] = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
+    last_message_at = None
+    sampled = 0
+    total_size = 0
+    text_parts: List[str] = []
+    fname_counts: Dict[str, int] = {}
+    unnamed_count = 0
+    try:
+        async for msg in client.iter_messages(entity, limit=sample_limit):
+            sampled += 1
+            if msg.date and (last_message_at is None or msg.date > last_message_at):
+                last_message_at = msg.date
+            if getattr(msg, "text", None):
+                text_parts.append(msg.text)
+            cap = getattr(msg, "caption", None)
+            if cap:
+                text_parts.append(cap)
+
+            if msg.document:
+                doc = msg.document
+                file_count += 1
+                size = int(getattr(doc, "size", 0) or 0)
+                total_size += size
+                fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
+                grp = _file_group(ext)
+                breakdown[grp] += 1
+                fname_counts[fname] = fname_counts.get(fname, 0) + 1
+                if not is_named:
+                    unnamed_count += 1
+                msg_date = msg.date
+                if msg_date and msg_date.tzinfo is None:
+                    msg_date = msg_date.replace(tzinfo=timezone.utc)
+                try:
+                    await database.insert_candidate_file(
+                        candidate_id, msg.id, fname, ext, size, grp, msg_date,
+                        is_named=is_named,
+                    )
+                except Exception:
+                    pass
+            elif isinstance(msg.media, MessageMediaPhoto):
+                file_count += 1
+                breakdown[_file_group("jpg")] += 1
+                photo = getattr(msg, "photo", None)
+                size = _photo_size(photo) if photo else 0
+                total_size += size
+                fname = f"photo_{msg.id}.jpg"
+                unnamed_count += 1
+                fname_counts["__photo__"] = fname_counts.get("__photo__", 0) + 1
+                msg_date = msg.date
+                if msg_date and msg_date.tzinfo is None:
+                    msg_date = msg_date.replace(tzinfo=timezone.utc)
+                try:
+                    await database.insert_candidate_file(
+                        candidate_id, msg.id, fname, "jpg", size, "image", msg_date,
+                        is_named=False,
+                    )
+                except Exception:
+                    pass
+    except FloodWaitError:
+        raise
+    except Exception as e:
+        logger.debug(f"message sample failed for {username}: {e}")
+    return (file_count, breakdown, last_message_at, sampled,
+            total_size, text_parts, fname_counts, unnamed_count)
 
 
 async def _enrich_one(client, candidate_id: int, username: str, sample_limit: int,
-                       cand: Optional[dict] = None) -> bool:
+                       cand: Optional[dict] = None, temp_join_enabled: bool = False,
+                       skip_old_channels: bool = True) -> bool:
     # Prefer cached peer to avoid ResolveUsernameRequest (strict daily limit).
     entity = None
     if cand:
@@ -1640,7 +1831,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             return False
 
     is_channel = isinstance(entity, Channel)
-    title = getattr(entity, "title", None) or username
+    title = clean_title(getattr(entity, "title", None) or username)
 
     # member count via GetFullChannelRequest
     members = None
@@ -1652,66 +1843,37 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
     except Exception:
         pass
 
-    # Sample recent messages of any media kind. We deliberately do NOT pass
-    # filter=InputMessagesFilterDocument here: that filter is server-side and
-    # excludes documents tagged as video or audio. So a "movies channel" with
-    # 200 mp4 documents returns zero rows under the Document filter. Instead
-    # we walk all recent messages and classify each piece of media.
-    file_count = 0
-    breakdown: Dict[str, int] = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
-    last_message_at = None
-    sampled = 0
-    total_size = 0
-    try:
-        async for msg in client.iter_messages(entity, limit=sample_limit):
-            sampled += 1
-            if msg.date and (last_message_at is None or msg.date > last_message_at):
-                last_message_at = msg.date
+    # Sample recent messages. We deliberately do NOT use server-side
+    # InputMessagesFilterDocument because it excludes video/audio documents.
+    (file_count, breakdown, last_message_at, sampled,
+     total_size, text_parts, fname_counts, unnamed_count) = await _sample_entity_messages(
+        client, entity, candidate_id, username, sample_limit
+    )
 
-            if msg.document:
-                doc = msg.document
-                file_count += 1
-                size = int(getattr(doc, "size", 0) or 0)
-                total_size += size
-                fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
-                grp = _file_group(ext)
-                breakdown[grp] += 1
-                # Stage 3 örnekleminde gördüğümüz dosyaları DB'ye yaz —
-                # böylece kullanıcı adayın lightbox'ını açtığında dosya
-                # listesi anında dolu gelir, online tekrar çağrı gerekmez.
-                # Deep Scan daha sonra eksik geçmişi doldurur. ON CONFLICT
-                # DO NOTHING idempotent kılar.
-                msg_date = msg.date
-                if msg_date and msg_date.tzinfo is None:
-                    msg_date = msg_date.replace(tzinfo=timezone.utc)
+    # If no files came back and temp-join is permitted, join temporarily,
+    # re-sample, then leave. This handles channels that restrict history
+    # to members only.
+    if file_count == 0 and temp_join_enabled:
+        _temp_joined = False
+        try:
+            await client(JoinChannelRequest(entity))
+            _temp_joined = True
+            logger.info(f"Enrich: temp-joining @{username} (0 docs as non-member)")
+            (file_count, breakdown, last_message_at, sampled,
+             total_size, text_parts, fname_counts, unnamed_count) = await _sample_entity_messages(
+                client, entity, candidate_id, username, sample_limit
+            )
+        except FloodWaitError:
+            raise
+        except Exception as _tj_e:
+            logger.warning(f"Enrich: temp-join failed for @{username}: {_tj_e}")
+        finally:
+            if _temp_joined:
                 try:
-                    await database.insert_candidate_file(
-                        candidate_id, msg.id, fname, ext, size, grp, msg_date,
-                        is_named=is_named,
-                    )
-                except Exception:
-                    pass
-            elif isinstance(msg.media, MessageMediaPhoto):
-                file_count += 1
-                breakdown[_file_group("jpg")] += 1
-                photo = getattr(msg, "photo", None)
-                size = _photo_size(photo) if photo else 0
-                total_size += size
-                fname = f"photo_{msg.id}.jpg"
-                msg_date = msg.date
-                if msg_date and msg_date.tzinfo is None:
-                    msg_date = msg_date.replace(tzinfo=timezone.utc)
-                try:
-                    await database.insert_candidate_file(
-                        candidate_id, msg.id, fname, "jpg", size, "image", msg_date,
-                        is_named=False,
-                    )
-                except Exception:
-                    pass
-    except FloodWaitError:
-        raise
-    except Exception as e:
-        logger.debug(f"message sample failed for {username}: {e}")
+                    await client(LeaveChannelRequest(entity))
+                    logger.info(f"Enrich: left @{username} after temp scan")
+                except Exception as _lv_e:
+                    logger.warning(f"Enrich: leave failed for @{username}: {_lv_e}")
 
     avg_size = int(total_size / file_count) if file_count else 0
     diversity = sum(1 for v in breakdown.values() if v > 0)
@@ -1720,13 +1882,47 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
         if last_message_at.tzinfo is None:
             last_message_at = last_message_at.replace(tzinfo=timezone.utc)
         days_since = (datetime.now(timezone.utc) - last_message_at).total_seconds() / 86400
-    score = _score_breakdown(file_count, sampled or sample_limit, members or 0, diversity, days_since or 999)
+
+    # ── Derived signals for the new score ──
+    # 1) Keyword match — pull the user's interest keywords from settings and
+    #    scan the combined message text + caption + channel description.
+    settings_for_kw = await database.get_hunter_settings()
+    user_keywords = [k.strip() for k in (settings_for_kw.get("keywords") or "").split(",") if k.strip()]
+    combined_text = " ".join(text_parts) + " " + (description or "")
+    keyword_hits = _count_keyword_hits(combined_text, user_keywords)
+    # 2) Duplicate ratio — how many filenames repeat (sticker.webp style).
+    if file_count:
+        unique_fnames  = len(fname_counts)
+        duplicate_ratio = max(0.0, (file_count - unique_fnames) / file_count)
+        unnamed_ratio   = unnamed_count / file_count
+    else:
+        duplicate_ratio = unnamed_ratio = 0.0
+
+    score = _score_breakdown(
+        file_count, sampled or sample_limit, members or 0, diversity, days_since or 999,
+        keyword_hits=keyword_hits, avg_size=avg_size,
+        duplicate_ratio=duplicate_ratio, unnamed_ratio=unnamed_ratio,
+    )
 
     # Cache peer_id + access_hash so future API calls (deep_scan, join, …)
     # can build InputPeerChannel directly and skip ResolveUsernameRequest,
     # which has a very strict per-account daily limit.
     pid = getattr(entity, "id", None)
     ahash = getattr(entity, "access_hash", None)
+
+    # Skip channels whose most recent file is older than 1 year — only when
+    # we actually retrieved files (file_count > 0); if history was restricted
+    # and we got nothing, we skip this check to avoid false-positives.
+    if skip_old_channels and file_count > 0 and days_since is not None and days_since > 365:
+        logger.info(f"Enrich: @{username} skipped — last file {int(days_since)}d ago (>1 year)")
+        await database.update_hunter_candidate(candidate_id, {
+            "title": title, "description": (description or "")[:500],
+            "is_channel": is_channel, "members": members,
+            "peer_id": pid, "access_hash": ahash,
+            "status": "rejected",
+            "error": f"Son dosya {int(days_since)} gün önce (1 yıldan eski)",
+        })
+        return False
 
     await database.update_hunter_candidate(candidate_id, {
         "title": title,
@@ -1735,7 +1931,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
         "members": members,
         "sampled_messages": sampled,
         "file_count_sample": file_count,
-        "estimated_files": file_count,   # rough; full backfill would need pagination
+        "estimated_files": file_count,
         "avg_file_size": avg_size,
         "last_message_at": last_message_at,
         "file_type_breakdown": json.dumps(breakdown),
@@ -1787,6 +1983,8 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
     rows, _ = await database.list_hunter_candidates(status="discovered", limit=budget, offset=0, sort="discovered_at")
     enriched, failed = 0, 0
     sample_limit = int(settings.get("tg_messages_to_sample") or 200)
+    temp_join_enabled = bool(settings.get("tg_temp_join_enabled"))
+    skip_old_channels = bool(settings.get("skip_old_channels", True))
     cached_only_mode = False
     skipped_no_cache = 0
 
@@ -1820,7 +2018,7 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
         status["current"] = username
         status["progress"] += 1
         try:
-            ok = await _enrich_one(client, r["id"], username, sample_limit, cand=dict(r))
+            ok = await _enrich_one(client, r["id"], username, sample_limit, cand=dict(r), temp_join_enabled=temp_join_enabled, skip_old_channels=skip_old_channels)
             if ok:
                 enriched += 1
                 _emit_event("stage3", f"@{username}: enriched ✓", key="hl.stage3.enriched", params={"username": username})
@@ -1844,13 +2042,17 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
                 if not cached_only_mode:
                     cached_only_mode = True
                     msg = (
-                        f"Telegram username çözümleme limiti dolu (FloodWait {hrs}s {mins}d). "
-                        f"Cache'siz adaylar atlanacak; cache'li adaylar işlenmeye devam ediyor."
+                        f"Telegram @username çözümleme kotası tükendi (FloodWait {hrs}s {mins}d). "
+                        f"Bu turda yalnızca 'önbellekli' adaylar (peer_id + access_hash bilgisi "
+                        f"daha önce DB'ye yazılmış olanlar) zenginleştirilecek; bunlara erişmek "
+                        f"yeni bir ResolveUsername çağrısı gerektirmez. 'Önbelleksiz' adaylar "
+                        f"(yalnızca @username ile bilinen ve henüz peer'i çözülmemiş olanlar) "
+                        f"atlanır; kota yenilenince bir sonraki turda otomatik denenir."
                     )
                     logger.warning(
                         f"Hunter: ResolveUsername limit hit ({backoff}s) — switching to cached-only"
                     )
-                    _emit_event("stage3", msg, "warn")
+                    _emit_event("stage3", msg, "warn", key="hl.stage3.cacheOnlyMode", params={"hrs": hrs, "mins": mins})
                     status["error"] = None  # not a fatal error anymore
                 # Skip THIS candidate (it had no cache and triggered the limit)
                 # but continue processing the rest of the queue
@@ -1867,7 +2069,18 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
         await asyncio.sleep(delay_ms / 1000)
 
     if skipped_no_cache > 0:
-        _emit_event("stage3", f"{skipped_no_cache} aday cache yokluğundan atlandı; ResolveUsername limiti yenilenince işlenecek", "warn", key="hl.stage3.cacheSkip", params={"n": skipped_no_cache})
+        _emit_event(
+            "stage3",
+            (
+                f"{skipped_no_cache} aday 'önbelleksiz' olduğu için bu turda atlandı: "
+                f"bu adayların yalnızca @username'i biliniyordu ve zenginleştirme için "
+                f"Telegram'a yeni bir ResolveUsername çağrısı gerekiyordu, ancak kota dolu. "
+                f"Kota yenilendiğinde sıradaki turda otomatik işlenecekler."
+            ),
+            "warn",
+            key="hl.stage3.cacheSkip",
+            params={"n": skipped_no_cache},
+        )
     return enriched, failed
 
 
@@ -1918,6 +2131,80 @@ async def run_hunter_once():
             seeds_found += await stage2_crawl_web(settings)
             status["seeds_found"] = seeds_found
             _emit_event("stage2", f"Stage 2 done: {seeds_found} seeds total", key="hl.stage2.done", params={"n": seeds_found})
+        if status.get("cancel_requested"):
+            _emit_event("run", "Cancelled before magnet hunt", "warn", key="hl.run.cancelledMagnetHunt"); raise asyncio.CancelledError
+        if status.get("skip_stage_requested"):
+            status["skip_stage_requested"] = False
+        # Magnet hunt — sits between Stage 2 (seed discovery via web) and
+        # Stage 3 (Telegram enrichment). Discovers magnet URIs via search-
+        # engine dorks and persists them under the "web magnets" synthetic
+        # group. Honored as a pipeline phase so the standalone toolbar button
+        # is no longer needed.
+        if settings.get("magnethunt_enabled", True):
+            status["stage"] = "magnethunt"
+            status["stage_started_at"] = datetime.utcnow().isoformat()
+            status["stage_detail"] = {}
+            _emit_event("magnethunt", "Magnet avı: web'de magnet URI'leri taranıyor", key="hl.magnetHunt.pipelineStart")
+            try:
+                await run_magnet_hunt()
+                mh_new = int(magnet_hunt_status.get("magnets_new") or 0)
+                mh_found = int(magnet_hunt_status.get("magnets_found") or 0)
+                _emit_event(
+                    "magnethunt",
+                    f"Magnet avı tamamlandı: {mh_new} yeni / {mh_found} bulunan",
+                    key="hl.magnetHunt.pipelineDone",
+                    params={"new": mh_new, "found": mh_found},
+                )
+            except Exception as mh_err:
+                _emit_event("magnethunt", f"Magnet avı hata: {mh_err}", "warn",
+                             key="hl.magnetHunt.pipelineErr",
+                             params={"err": str(mh_err)[:120]})
+        if status.get("cancel_requested"):
+            _emit_event("run", "Cancelled before magnet backfill", "warn", key="hl.run.cancelledMagnetBackfill"); raise asyncio.CancelledError
+        if status.get("skip_stage_requested"):
+            status["skip_stage_requested"] = False
+        # Magnet Backfill — fills in missing file lists for magnets and catches
+        # any magnet URIs that were posted to groups historically but never
+        # captured by the live handler. Replaces the old Settings → "Geçmiş
+        # Veri Tarama" card.
+        if settings.get("magnet_backfill_enabled", True):
+            status["stage"] = "magnetbackfill"
+            status["stage_started_at"] = datetime.utcnow().isoformat()
+            status["stage_detail"] = {}
+            _emit_event(
+                "magnetbackfill",
+                "Magnet Backfill: geçmiş magnet'ler taranıyor + eksik dosya listeleri çekiliyor",
+                key="hl.magnetBackfill.start",
+            )
+            try:
+                import sync as _sync
+                if _sync.magnet_backfill_status.get("running"):
+                    _emit_event(
+                        "magnetbackfill",
+                        "Önceki magnet backfill devam ediyor, atlanıyor",
+                        "warn", key="hl.magnetBackfill.skipBusy",
+                    )
+                else:
+                    await _sync.run_magnet_backfill()
+                    s = _sync.magnet_backfill_status
+                    _emit_event(
+                        "magnetbackfill",
+                        f"Magnet Backfill tamamlandı: {s.get('new_magnets', 0)} yeni magnet, "
+                        f"{s.get('enrich_success', 0)} dosya listesi eklendi, "
+                        f"{s.get('enrich_fail', 0)} başarısız",
+                        key="hl.magnetBackfill.done",
+                        params={
+                            "new":     int(s.get("new_magnets", 0)),
+                            "ok":      int(s.get("enrich_success", 0)),
+                            "fail":    int(s.get("enrich_fail", 0)),
+                        },
+                    )
+            except Exception as mb_err:
+                _emit_event(
+                    "magnetbackfill", f"Magnet backfill hata: {mb_err}", "warn",
+                    key="hl.magnetBackfill.err",
+                    params={"err": str(mb_err)[:120]},
+                )
         if status.get("cancel_requested"):
             _emit_event("run", "Cancelled before stage 3", "warn", key="hl.run.cancelledStage3"); raise asyncio.CancelledError
         if status.get("skip_stage_requested"):
@@ -2077,6 +2364,10 @@ async def join_candidate(candidate_id: int) -> dict:
         )
         await database.upsert_account_group(account_id, gid)
         await database.update_hunter_candidate(candidate_id, {"status": "joined", "decided_at": datetime.utcnow()})
+        _emit_event(
+            "join", f"@{cand['username']}: üye olundu ✓", "info",
+            key="hl.join.ok", params={"username": cand["username"]},
+        )
         return {"ok": True, "group_id": gid}
     except FloodWaitError as e:
         # Persist for the retry worker to pick up later. Return ok=True so
@@ -2086,14 +2377,72 @@ async def join_candidate(candidate_id: int) -> dict:
             candidate_id, account_id, int(e.seconds),
             last_error=f"flood wait {e.seconds}s",
         )
+        wait_s = int(e.seconds)
+        _emit_event(
+            "join",
+            f"@{cand['username']}: FloodWait — {wait_s}sn sonra otomatik tekrar denenecek",
+            "warn",
+            key="hl.join.floodwait",
+            params={"username": cand["username"], "wait": wait_s},
+        )
         return {
             "ok": True,
             "queued": True,
-            "wait_s": int(e.seconds),
+            "wait_s": wait_s,
             "candidate_id": candidate_id,
         }
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        # Surface the exact Telegram error class + message so future debug
+        # doesn't need to instrument the handler again. Common cases we
+        # decode specially:
+        #   - InviteRequestSentError       → channel requires admin approval;
+        #                                    Telegram already queued our request.
+        #   - ChannelsTooMuchError         → account is at the 500-channel cap.
+        #   - InviteHashEmpty/Expired      → public channel turned private.
+        err_cls  = type(e).__name__
+        err_msg  = str(e)[:300]
+        logger.warning(
+            f"join_candidate failed for @{cand['username']} (cid={candidate_id}): "
+            f"{err_cls}: {err_msg}"
+        )
+        # Special: InviteRequestSentError is actually a "soft success" — the
+        # server accepted our join request and is waiting for an admin to
+        # approve it. Distinct from FloodWait so the UI doesn't say "0s
+        # sonra tekrar denenecek" (which is meaningless — there's no retry,
+        # we're waiting on a human).
+        if err_cls in ("InviteRequestSentError", "InviteRequestSent"):
+            await database.update_hunter_candidate(candidate_id, {
+                "error": "Admin approval pending (request sent)",
+            })
+            _emit_event(
+                "join",
+                f"@{cand['username']}: katılım isteği gönderildi, admin onayı bekleniyor",
+                "info",
+                key="hl.join.pendingApproval",
+                params={"username": cand["username"]},
+            )
+            return {
+                "ok": True,
+                "pending_approval": True,
+                "candidate_id": candidate_id,
+            }
+        # Persist the error on the candidate so the UI can show it next time
+        # the user opens the detail (instead of "joinFail" with a stale
+        # toast that disappears in 5s).
+        try:
+            await database.update_hunter_candidate(candidate_id, {
+                "error": f"{err_cls}: {err_msg}"[:200],
+            })
+        except Exception:
+            pass
+        _emit_event(
+            "join",
+            f"@{cand['username']}: üye olunamadı — {err_cls}: {err_msg[:120]}",
+            "warn",
+            key="hl.join.fail",
+            params={"username": cand["username"], "err_cls": err_cls, "err": err_msg[:120]},
+        )
+        return {"ok": False, "error": f"{err_cls}: {err_msg}"}
 
 
 async def reject_candidate(candidate_id: int) -> dict:
@@ -2147,13 +2496,17 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                                  username: str, delay_ms: float,
                                  starting_n: int = 0):
     """Walk all document messages of an entity into hunter_candidate_files,
-    resuming from offset_id on FloodWait. Returns (n, breakdown, total_size, last_at)."""
+    resuming from offset_id on FloodWait.
+    Returns (n, breakdown, total_size, last_at, fname_counts, unnamed_count) —
+    the last two feed the duplicate-name + unnamed-ratio scoring penalties."""
     n = starting_n
     breakdown = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
     total_size = 0
     last_at = None
     offset_id = 0
     consecutive_floodwaits = 0
+    fname_counts: Dict[str, int] = {}
+    unnamed_count = 0
     while True:
         try:
             # No server-side filter: FilterDocument excludes mp4/mp3 documents
@@ -2166,6 +2519,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                     size = int(getattr(doc, "size", 0) or 0)
                     fname, ext, _is_video, _is_audio, is_named = _doc_filename(doc, msg.id)
                     grp = _file_group(ext)
+                    dup_key = fname
                 elif isinstance(msg.media, MessageMediaPhoto):
                     photo = getattr(msg, "photo", None)
                     size = _photo_size(photo) if photo else 0
@@ -2173,11 +2527,18 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
                     ext = "jpg"
                     grp = "image"
                     is_named = False
+                    # All photos share one dedup bucket — every photo_*.jpg
+                    # already has a per-message id; counting them as distinct
+                    # filenames would mask sticker-spam patterns.
+                    dup_key = "__photo__"
                 else:
                     continue
                 n += 1
                 total_size += size
                 breakdown[grp] += 1
+                fname_counts[dup_key] = fname_counts.get(dup_key, 0) + 1
+                if not is_named:
+                    unnamed_count += 1
                 date = msg.date
                 if date and date.tzinfo is None:
                     date = date.replace(tzinfo=timezone.utc)
@@ -2213,7 +2574,7 @@ async def _scan_iter_documents(client, entity, candidate_id: int,
             }
             await asyncio.sleep(wait)
             continue
-    return n, breakdown, total_size, last_at
+    return n, breakdown, total_size, last_at, fname_counts, unnamed_count
 
 
 async def deep_scan_candidate(candidate_id: int):
@@ -2224,6 +2585,7 @@ async def deep_scan_candidate(candidate_id: int):
     settings = await database.get_hunter_settings()
     account_id = int(settings.get("tg_account_id") or 1)
     temp_join_enabled = bool(settings.get("tg_temp_join_enabled"))
+    skip_old_channels = bool(settings.get("skip_old_channels", True))
 
     deep_scan_status[candidate_id] = {"state": "running", "processed": 0, "total": 0, "error": None}
     await database.update_hunter_candidate(candidate_id, {
@@ -2305,40 +2667,43 @@ async def deep_scan_candidate(candidate_id: int):
         delay_ms = int(settings.get("tg_request_delay_ms") or 1500) / 1000
 
         # First attempt: scan as a non-member.
-        n, breakdown, total_size, last_at = await _scan_iter_documents(
+        n, breakdown, total_size, last_at, fname_counts, unnamed_count = await _scan_iter_documents(
             client, entity, candidate_id, username, delay_ms,
         )
 
         temp_joined = False
-        # Heuristic: if we got 0 documents but the channel reports many members,
-        # it's likely a private/restricted-history channel. With user opt-in,
-        # try a temporary join → re-scan → leave.
-        members_hint = cand.get("members") or 0
-        if n == 0 and temp_join_enabled and members_hint > 50:
-            logger.info(
-                f"Hunter: 0 docs from @{username} but {members_hint} members — temp-joining for scan"
-            )
+        temp_join_err: Optional[str] = None
+        left_after_temp = False
+        # If 0 documents came back the channel likely restricts history to
+        # members. With user opt-in, try a temporary join → re-scan → leave.
+        if n == 0 and temp_join_enabled:
+            logger.info(f"Hunter: 0 docs from @{username} as non-member — temp-joining for scan")
             try:
                 await client(JoinChannelRequest(entity))
                 temp_joined = True
                 deep_scan_status[candidate_id] = {
                     "state": "running", "processed": 0, "total": 0,
                     "error": "joined temporarily; rescanning…",
+                    "temp_joined": True, "temp_join_error": None,
                 }
                 # Re-scan after joining
-                n, breakdown, total_size, last_at = await _scan_iter_documents(
+                n, breakdown, total_size, last_at, fname_counts, unnamed_count = await _scan_iter_documents(
                     client, entity, candidate_id, username, delay_ms,
                 )
-            except FloodWaitError:
-                # Couldn't join right now; surface and stop temp-join attempt.
-                pass
+            except FloodWaitError as e:
+                wait = int(getattr(e, "seconds", 0))
+                temp_join_err = f"FloodWait {wait}s"
             except Exception as e:
+                temp_join_err = str(e)[:120]
                 logger.warning(f"Temp-join failed for @{username}: {e}")
             finally:
                 # Always leave if we joined — user makes the real "join" call.
+                # User explicitly asked: even if files can't be pulled, ensure
+                # we don't stay a member.
                 if temp_joined:
                     try:
                         await client(LeaveChannelRequest(entity))
+                        left_after_temp = True
                         logger.info(f"Hunter: left @{username} after temp scan")
                     except Exception as e:
                         logger.warning(f"Hunter: leave-after-tempjoin failed for @{username}: {e}")
@@ -2349,12 +2714,53 @@ async def deep_scan_candidate(candidate_id: int):
         days_since = None
         if last_at:
             days_since = (datetime.now(timezone.utc) - last_at).total_seconds() / 86400
-        # Re-score using full data (more reliable than 200-msg sample)
-        # Using same formula but density now is 1.0 (we only counted files)
-        member_score = min(1.0, (cand.get("members") or 0) / 50000.0)
-        recency = max(0.0, 1.0 - (days_since / 30.0)) if days_since is not None else 0.0
-        diversity_score = min(1.0, diversity / 5.0)
-        score = round(100 * (0.45 * 1.0 + 0.20 * member_score + 0.20 * recency + 0.15 * diversity_score), 2)
+        # Re-score using full data (much more reliable than a 200-msg sample).
+        # density=1.0 here because every counted message was a media item.
+        # Deep scan doesn't collect message text, so keyword_hits stays 0 —
+        # the enrichment-pass score already factored keywords in.
+        if n:
+            unique_fnames  = len(fname_counts)
+            duplicate_ratio = max(0.0, (n - unique_fnames) / n)
+            unnamed_ratio   = unnamed_count / n
+        else:
+            duplicate_ratio = unnamed_ratio = 0.0
+        score = _score_breakdown(
+            file_count=n,
+            sampled=n if n else 1,
+            members=cand.get("members") or 0,
+            diversity=diversity,
+            days_since_last=days_since if days_since is not None else 999,
+            keyword_hits=0,
+            avg_size=avg_size,
+            duplicate_ratio=duplicate_ratio,
+            unnamed_ratio=unnamed_ratio,
+        )
+
+        # Reject channels whose newest file is older than 1 year (deep-scan confirmed).
+        if skip_old_channels and n > 0 and days_since is not None and days_since > 365:
+            logger.info(f"Deep scan: @{username} rejected — last file {int(days_since)}d ago (>1 year)")
+            await database.update_hunter_candidate(candidate_id, {
+                "estimated_files": n,
+                "avg_file_size": avg_size,
+                "file_type_breakdown": json.dumps(breakdown),
+                "last_message_at": last_at,
+                "score": score,
+                "status": "rejected",
+                "error": f"Son dosya {int(days_since)} gün önce (1 yıldan eski)",
+                "deep_scan_status": "done",
+                "deep_scan_progress": n,
+                "deep_scan_total": n,
+                "deep_scan_at": datetime.utcnow(),
+                "deep_scan_error": None,
+            })
+            deep_scan_status[candidate_id] = {
+                "state": "done", "processed": n, "total": n,
+                "error": f"Kanal reddedildi: son dosya {int(days_since)} gün önce",
+                "temp_joined": bool(temp_joined),
+                "temp_join_error": temp_join_err,
+                "left_after_temp": bool(left_after_temp),
+            }
+            return
 
         await database.update_hunter_candidate(candidate_id, {
             "estimated_files": n,
@@ -2368,7 +2774,14 @@ async def deep_scan_candidate(candidate_id: int):
             "deep_scan_at": datetime.utcnow(),
             "deep_scan_error": None,
         })
-        deep_scan_status[candidate_id] = {"state": "done", "processed": n, "total": n, "error": None}
+        # Carry temp-join outcome through to the status response so the UI
+        # can show "joined+left+still empty" vs "join itself failed".
+        deep_scan_status[candidate_id] = {
+            "state": "done", "processed": n, "total": n, "error": None,
+            "temp_joined": bool(temp_joined),
+            "temp_join_error": temp_join_err,
+            "left_after_temp": bool(left_after_temp),
+        }
     except asyncio.CancelledError:
         deep_scan_status[candidate_id] = {"state": "cancelled", "processed": 0, "total": 0, "error": "cancelled"}
         await database.update_hunter_candidate(candidate_id, {
@@ -2585,3 +2998,488 @@ async def cancel_candidate_file_download(cid: int, msg_id: int) -> bool:
         file_dl_status[key] = {"state": "error", "error": "cancelled"}
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Media preview (no-save, no-join)
+# ---------------------------------------------------------------------------
+
+_PREVIEW_MAX_BYTES = 150 * 1024 * 1024   # 150 MB hard limit for previews
+# Cache: (cid, msg_id) → temp_file_path (survives for the process lifetime)
+_preview_cache: Dict[tuple, str] = {}
+
+
+async def preview_candidate_file(cid: int, msg_id: int) -> tuple:
+    """Download the media to a temp file (or reuse cached) and return
+    (local_path, mime_type, file_name).  Raises ValueError / PermissionError
+    on soft failures so the caller can surface them as HTTP errors."""
+    key = (int(cid), int(msg_id))
+
+    # Return cached temp file if it still exists on disk
+    cached = _preview_cache.get(key)
+    if cached and os.path.exists(cached):
+        cfile = await database.get_candidate_file(cid, msg_id)
+        fname = (cfile or {}).get("file_name") or os.path.basename(cached)
+        mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+        return cached, mime, fname
+
+    cand = await database.get_hunter_candidate(cid)
+    if not cand:
+        raise ValueError("candidate not found")
+    cfile = await database.get_candidate_file(cid, msg_id)
+    if not cfile:
+        raise ValueError("file row not found")
+
+    # If already fully downloaded to its permanent path, serve that directly
+    perm = cfile.get("local_path")
+    if perm and os.path.exists(perm):
+        fname = cfile.get("file_name") or os.path.basename(perm)
+        mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+        return perm, mime, fname
+
+    file_size = cfile.get("file_size") or 0
+    if file_size > _PREVIEW_MAX_BYTES:
+        raise ValueError(f"too_large:{file_size}")
+
+    settings = await database.get_hunter_settings()
+    account_id = int(settings.get("tg_account_id") or 1)
+    client = await get_client(account_id)
+    if not client.is_connected():
+        await client.connect()
+
+    pid = cand.get("peer_id"); ah = cand.get("access_hash")
+    if not (pid and ah is not None):
+        raise ValueError("no cached peer; run Tam Tara first")
+    entity = await client.get_entity(InputPeerChannel(int(pid), int(ah)))
+
+    msg = await _try_fetch_message(client, entity, msg_id)
+    if msg is None:
+        raise PermissionError("needs_join")
+    if not msg or not getattr(msg, "media", None):
+        raise ValueError("no media on message")
+
+    fname = cfile.get("file_name") or f"preview_{msg_id}"
+    fname = fname.replace("/", "_").replace("\\", "_")
+    suffix = os.path.splitext(fname)[1] or ""
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="telf_preview_")
+    os.close(tmp_fd)
+    try:
+        await client.download_media(msg, tmp_path)
+    except Exception:
+        try: os.remove(tmp_path)
+        except OSError: pass
+        raise
+
+    _preview_cache[key] = tmp_path
+    mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+    return tmp_path, mime, fname
+
+
+# ── Magnet Dork Hunt (Google-dork search for magnet: URIs) ──────────────────
+# Uses the same headless-Chromium fetch path as Stage 2's channel discovery,
+# but the queries target plain-text magnet URIs on public pages and the
+# extractor pulls magnet:?xt=urn:btih:… instead of t.me/{user}. Discoveries
+# land in the existing `links` table under a synthetic groups row (id=-1)
+# so they show up in the regular Links grid with platform='Magnet'.
+
+_WEB_MAGNET_GROUP_ID = -1
+_WEB_MAGNET_GROUP_NAME = "Web Magnet Avı"
+_WEB_MAGNET_GROUP_DISPLAY = "🧲 Web'den Bulunan Magnet'ler"
+
+magnet_hunt_status: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "engines_done": 0,
+    "engines_total": 0,
+    "current_engine": None,
+    "queries_done": 0,
+    "queries_total": 0,
+    "current_query": None,
+    "magnets_found": 0,
+    "magnets_new": 0,
+    "pages_fetched": 0,
+    "error": None,
+}
+_magnet_hunt_task: Optional[asyncio.Task] = None
+
+# Capture full magnet URIs. Must include xt=urn:btih: payload to be valid.
+_MH_MAGNET_RE = re.compile(
+    r"magnet:\?[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+
+# Strict BitTorrent v1 info-hash format. SERP snippets sometimes splice their
+# own query text after `xt=urn:btih:` (e.g. `xt=urn:btih:%22%20database&…`);
+# without this gate those bogus magnets pollute the links table with rows
+# whose only "file" is the magnet's URL-encoded display name.
+_BTIH_HEX_RE = re.compile(r"^[A-Fa-f0-9]{40}$")
+_BTIH_B32_RE = re.compile(r"^[A-Z2-7]{32}$")
+_BTIH_PARAM_RE = re.compile(r"xt=urn:btih:([^&]+)", re.IGNORECASE)
+
+
+def _is_valid_magnet_btih(uri: str) -> bool:
+    """True when xt=urn:btih:<hash> is a real BitTorrent info-hash (40 hex
+    or 32 base32 chars). URL-decodes the value first so percent-encoded
+    junk like `%22%20database` is rejected even though it slips past a
+    naive `r"[A-Za-z0-9]"` check."""
+    m = _BTIH_PARAM_RE.search(uri or "")
+    if not m:
+        return False
+    import urllib.parse as _ul
+    raw = _ul.unquote(m.group(1)).strip()
+    if _BTIH_HEX_RE.match(raw):
+        return True
+    if _BTIH_B32_RE.match(raw.upper()):
+        return True
+    return False
+
+# Sites known to host plain-text magnet URIs in pages — productive dork targets
+# even when the search-engine snippet truncates the URI itself.
+_MAGNET_DORK_SITES = [
+    "pastebin.com", "gist.github.com", "rentry.co",
+    "justpaste.it", "paste.ee", "dpaste.org",
+    "old.reddit.com", "github.com",
+]
+
+# Search engines that tolerate scraping without aggressive CAPTCHA. Google is
+# omitted on purpose — its CAPTCHA wall is too aggressive for an unattended
+# crawl. Each tuple: (name, home_url, query_url_tpl, page_offsets, host).
+_MAGNET_ENGINES: List[Tuple[str, str, str, List[str], str]] = [
+    ("duckduckgo", "https://duckduckgo.com/",     "https://duckduckgo.com/html/?q={q}",       [""],             "duckduckgo.com"),
+    ("brave",      "https://search.brave.com/",   "https://search.brave.com/search?q={q}",    ["", "&offset=1"], "search.brave.com"),
+    ("bing",       "https://www.bing.com/",       "https://www.bing.com/search?q={q}",        ["", "&first=11"], "www.bing.com"),
+    ("mojeek",     "https://www.mojeek.com/",     "https://www.mojeek.com/search?q={q}",      ["", "&s=11"],     "www.mojeek.com"),
+    ("startpage",  "https://www.startpage.com/",  "https://www.startpage.com/do/search?q={q}", [""],             "www.startpage.com"),
+]
+
+
+def _build_magnet_dork_queries(keywords: List[str], max_q: int = 40) -> List[str]:
+    """Compose Google-dork-style queries that surface plain-text magnet URIs.
+    Layered patterns from generic-bait phrases through site-restricted dorks
+    and time-tagged dorks for freshness."""
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def push(q: str) -> bool:
+        k = q.lower()
+        if k in seen:
+            return len(out) >= max_q
+        seen.add(k); out.append(q)
+        return len(out) >= max_q
+
+    base = keywords or _DEFAULT_FILE_CATEGORIES[:8]
+
+    # Pattern A: bare bait — engine snippet may already contain a magnet URI
+    for kw in base[:8]:
+        if push(f'"magnet:?xt=urn:btih:" {kw}'): return out
+    # Pattern B: intext: dork — encourages engines to match within page body
+    for kw in base[:6]:
+        if push(f'intext:"magnet:?xt=urn:btih:" {kw}'): return out
+    # Pattern C: torrent-flavoured bait
+    for kw in base[:5]:
+        if push(f'"magnet:" {kw} torrent'): return out
+    # Pattern D: site-restricted dorks for paste/code/forum hosts
+    for site in _MAGNET_DORK_SITES:
+        for kw in base[:3]:
+            if push(f'site:{site} "magnet:?xt=urn:btih:" {kw}'): return out
+    # Pattern E: time-window dorks for freshness
+    year = datetime.now().year
+    for kw in base[:4]:
+        if push(f'"magnet:?xt=urn:btih:" {kw} {year}'): return out
+
+    return out
+
+
+def _extract_magnets_from_html(html: str) -> List[str]:
+    """Yield deduped magnet URIs from raw HTML. Decodes common entity escapes
+    (&amp; → &) so query-string delimiters aren't mangled. Drops anything that
+    isn't a urn:btih magnet (urn:tree/urn:ed2k are out of scope here)."""
+    if not html:
+        return []
+    text = html.replace("&amp;", "&").replace("&#38;", "&")
+    seen: Set[str] = set()
+    out: List[str] = []
+    for m in _MH_MAGNET_RE.finditer(text):
+        uri = m.group(0).strip().rstrip(",.;) ”’")
+        low = uri.lower()
+        if "xt=urn:btih:" not in low:
+            continue
+        # Cut at any HTML/JSON syntax char that snuck in via the page source
+        for ch in ("\\", "<", ">", "[", "]"):
+            if ch in uri:
+                uri = uri.split(ch, 1)[0]
+        # Reject anything whose info-hash isn't a real 40-hex or 32-base32
+        # string (SERP query bleed-through, accidental captures, …).
+        if not _is_valid_magnet_btih(uri):
+            continue
+        low = uri.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(uri)
+    return out
+
+
+def _extract_external_urls_from_serp(html: str, serp_host: str) -> List[str]:
+    """Pull anchor hrefs from a SERP that point outside the engine itself.
+    Strips engine click-tracker wrappers (DDG /l/?uddg=, Bing /aclk?, etc.)
+    so we get the actual destination URL."""
+    if not html:
+        return []
+    urls: List[str] = []
+    seen: Set[str] = set()
+    for m in re.finditer(r'href=["\']?(https?://[^"\'<>\s]+)', html, re.IGNORECASE):
+        u = m.group(1)
+        # Unwrap common SERP redirector formats
+        if "/url?" in u or "/l/?" in u or "/aclk?" in u or "uddg=" in u:
+            inner = re.search(r"(?:uddg|q|u|url)=([^&]+)", u)
+            if inner:
+                try:
+                    u = aiohttp.helpers.unquote(inner.group(1))
+                except Exception:
+                    pass
+        host = u.split("//", 1)[-1].split("/", 1)[0].lower()
+        if not host or host == serp_host:
+            continue
+        # Skip search-engine self-links, ad networks, social feeds (too noisy)
+        if any(x in host for x in [
+            "google.com", "googleadservices", "doubleclick.net",
+            "duckduckgo.com", "bing.com", "yandex.com", "search.brave.com",
+            "mojeek.com", "startpage.com", "ecosia.org", "w3.org",
+            "schema.org", "fonts.googleapis", "gstatic", "facebook.com",
+            "twitter.com", "x.com", "youtube.com", "instagram.com",
+        ]):
+            continue
+        low = u.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        urls.append(u)
+    return urls
+
+
+def _mh_parse_magnet(uri: str) -> dict:
+    """Lightweight magnet parser — returns {infohash, name, size}."""
+    info = {"infohash": "", "name": "", "size": 0}
+    if "?" not in uri:
+        return info
+    qs_str = uri.split("?", 1)[1]
+    for p in qs_str.split("&"):
+        if "=" not in p:
+            continue
+        k, _, v = p.partition("=")
+        kl = k.lower()
+        if kl == "xt" and "urn:btih:" in v.lower():
+            info["infohash"] = v.lower().split("urn:btih:", 1)[1].split("&", 1)[0]
+        elif kl == "dn":
+            try:
+                info["name"] = aiohttp.helpers.unquote(v)
+            except Exception:
+                info["name"] = v
+        elif kl == "xl":
+            try:
+                info["size"] = int(v)
+            except (ValueError, TypeError):
+                info["size"] = 0
+    return info
+
+
+async def _persist_web_magnet(uri: str, engine: str, query: str) -> bool:
+    """Insert a discovered magnet URI as a 'Magnet' link in the synthetic
+    web-magnet group. Returns True if newly inserted, False if duplicate or
+    invalid."""
+    info = _mh_parse_magnet(uri)
+    if not info.get("infohash"):
+        return False
+    name = info.get("name") or f"Magnet {info['infohash'][:8].upper()}…"
+    size = int(info.get("size") or 0)
+    files_json = [{"name": name, "size": size}]
+    context = f"[magnet-dork] engine={engine} query={query}"[:300]
+    return await database.insert_link(
+        group_id=_WEB_MAGNET_GROUP_ID,
+        message_id=0,
+        platform="Magnet",
+        url=uri,
+        context=context,
+        date=datetime.utcnow().isoformat(),
+        discovered_by_account_id=None,
+        files_json=files_json,
+        available=True,
+        file_count=1,
+        file_size_total=size,
+    )
+
+
+def kick_magnet_hunt() -> bool:
+    """Launch the magnet-dork hunt in the background. Returns False if a hunt
+    is already running."""
+    global _magnet_hunt_task
+    if magnet_hunt_status.get("running"):
+        return False
+    _magnet_hunt_task = asyncio.create_task(run_magnet_hunt())
+    return True
+
+
+def cancel_magnet_hunt() -> bool:
+    """Request the running hunt to stop at the next checkpoint."""
+    if not magnet_hunt_status.get("running"):
+        return False
+    magnet_hunt_status["running"] = False
+    return True
+
+
+async def run_magnet_hunt():
+    """Discover magnet URIs via search-engine dorks and persist them as
+    Magnet links under the synthetic 'web magnets' group."""
+    magnet_hunt_status.update({
+        "running": True,
+        "started_at": datetime.utcnow().isoformat(),
+        "finished_at": None,
+        "engines_done": 0,
+        "queries_done": 0,
+        "queries_total": 0,
+        "magnets_found": 0,
+        "magnets_new": 0,
+        "pages_fetched": 0,
+        "current_engine": None,
+        "current_query": None,
+        "error": None,
+    })
+    try:
+        await database.ensure_synthetic_group(
+            _WEB_MAGNET_GROUP_ID, _WEB_MAGNET_GROUP_NAME, _WEB_MAGNET_GROUP_DISPLAY,
+        )
+
+        settings = await database.get_hunter_settings()
+        keywords = _smart_keywords(settings.get("keywords") or "")
+        delay_ms = int(settings.get("web_request_delay_ms") or 2500)
+        queries_per_engine = 10
+        results_per_query  = 5
+
+        all_queries = _build_magnet_dork_queries(keywords)
+        magnet_hunt_status["queries_total"] = min(queries_per_engine, len(all_queries)) * len(_MAGNET_ENGINES)
+        magnet_hunt_status["engines_total"] = len(_MAGNET_ENGINES)
+
+        _emit_event(
+            "magnethunt",
+            f"Magnet avı başladı — {len(all_queries)} sorgu × {len(_MAGNET_ENGINES)} motor",
+            key="hl.magnetHunt.start",
+            params={"q": len(all_queries), "e": len(_MAGNET_ENGINES)},
+        )
+
+        all_found: Set[str] = set()
+        for eng_name, home, tpl, offsets, host in _MAGNET_ENGINES:
+            if not magnet_hunt_status["running"]:
+                break
+            magnet_hunt_status["current_engine"] = eng_name
+            _emit_event(
+                "magnethunt", f"motor: {eng_name}",
+                key="hl.magnetHunt.engine", params={"engine": eng_name},
+            )
+
+            # Warm up so first-party cookies stick
+            try:
+                _ = await _pw_get(home)
+                await _interruptible_sleep(delay_ms / 1000)
+            except Exception:
+                pass
+
+            engine_fails = 0
+            for q in all_queries[:queries_per_engine]:
+                if not magnet_hunt_status["running"]:
+                    break
+                magnet_hunt_status["current_query"] = q
+                magnet_hunt_status["queries_done"] += 1
+
+                serp_magnets: Set[str] = set()
+                serp_urls: List[str] = []
+
+                for off in offsets:
+                    if not magnet_hunt_status["running"]:
+                        break
+                    url = tpl.format(q=aiohttp.helpers.quote(q)) + off
+                    html = await _pw_get(url, referer=home)
+                    if not html:
+                        engine_fails += 1
+                        if engine_fails >= 3:
+                            _emit_event(
+                                "magnethunt",
+                                f"{eng_name}: 3 ardışık hata, motor atlanıyor",
+                                "warn",
+                                key="hl.magnetHunt.engineFail",
+                                params={"engine": eng_name},
+                            )
+                            break
+                        await _interruptible_sleep(delay_ms / 1000)
+                        continue
+                    engine_fails = 0
+                    magnet_hunt_status["pages_fetched"] += 1
+                    for uri in _extract_magnets_from_html(html):
+                        serp_magnets.add(uri)
+                    serp_urls.extend(_extract_external_urls_from_serp(html, host))
+                    await _interruptible_sleep(delay_ms / 1000)
+
+                if engine_fails >= 3:
+                    break
+
+                # Follow up to N result links to mine magnets from the actual
+                # target pages (the SERP snippet alone is rarely enough)
+                seen_urls: Set[str] = set()
+                followed = 0
+                for ru in serp_urls:
+                    if followed >= results_per_query:
+                        break
+                    if not magnet_hunt_status["running"]:
+                        break
+                    if ru.lower() in seen_urls:
+                        continue
+                    seen_urls.add(ru.lower())
+                    page_html = await _pw_get(ru)
+                    if page_html:
+                        magnet_hunt_status["pages_fetched"] += 1
+                        for uri in _extract_magnets_from_html(page_html):
+                            serp_magnets.add(uri)
+                    followed += 1
+                    await _interruptible_sleep(delay_ms / 1000)
+
+                # Persist
+                for uri in serp_magnets:
+                    if uri in all_found:
+                        continue
+                    all_found.add(uri)
+                    magnet_hunt_status["magnets_found"] += 1
+                    try:
+                        inserted = await _persist_web_magnet(uri, eng_name, q)
+                        if inserted:
+                            magnet_hunt_status["magnets_new"] += 1
+                    except Exception as e:
+                        logger.warning(f"magnet persist failed: {e}")
+
+            magnet_hunt_status["engines_done"] += 1
+
+        _emit_event(
+            "magnethunt",
+            (f"Magnet avı tamamlandı: {magnet_hunt_status['magnets_new']} yeni, "
+             f"{magnet_hunt_status['magnets_found']} toplam bulundu"),
+            key="hl.magnetHunt.done",
+            params={
+                "new":   magnet_hunt_status["magnets_new"],
+                "found": magnet_hunt_status["magnets_found"],
+            },
+        )
+    except asyncio.CancelledError:
+        magnet_hunt_status["error"] = "cancelled"
+        raise
+    except Exception as e:
+        logger.exception("magnet hunt fatal")
+        magnet_hunt_status["error"] = str(e)
+        _emit_event(
+            "magnethunt", f"hata: {str(e)[:200]}", "warn",
+            key="hl.magnetHunt.fatal", params={"err": str(e)[:200]},
+        )
+    finally:
+        magnet_hunt_status["running"] = False
+        magnet_hunt_status["finished_at"] = datetime.utcnow().isoformat()
+        magnet_hunt_status["current_engine"] = None
+        magnet_hunt_status["current_query"] = None

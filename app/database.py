@@ -1,3 +1,4 @@
+import json as _json
 import os
 import asyncpg
 from datetime import datetime, timedelta
@@ -241,6 +242,9 @@ ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_total INTEGER D
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_at TIMESTAMPTZ;
 ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS deep_scan_error TEXT;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS tg_temp_join_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS skip_old_channels BOOLEAN DEFAULT TRUE;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS magnethunt_enabled  BOOLEAN DEFAULT TRUE;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS magnet_backfill_enabled BOOLEAN DEFAULT TRUE;
 -- Otomatik anahtar-kelime havuzu: Stage 3 başarılı zenginleştirmeden sonra
 -- kanal açıklamasından / başlığından çıkarılan anlamlı kelimeler buraya
 -- birikiyor. Stage 2 bir sonraki koşuda user keywords + bunları birleştiriyor
@@ -307,6 +311,15 @@ CREATE TABLE IF NOT EXISTS watch_notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notif_watch_active ON watch_notifications (watch_id) WHERE dismissed_at IS NULL;
 
+-- Singleton row holding watch-related global toggles. Currently used by the
+-- "İzlem eşleşmesi → kendi Telegram Saved Messages'a anlık push" özelliği.
+CREATE TABLE IF NOT EXISTS notify_settings (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    tg_push_enabled BOOLEAN DEFAULT FALSE,
+    last_push_at TIMESTAMPTZ
+);
+INSERT INTO notify_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS transfer_destinations (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -367,13 +380,203 @@ CREATE INDEX IF NOT EXISTS idx_tf_torrent ON torrent_files (torrent_id);
 CREATE INDEX IF NOT EXISTS idx_tf_path_trgm ON torrent_files USING GIN (path gin_trgm_ops);
 """
 
+# Optional pgvector setup — applied separately so failures (extension not
+# installed in Postgres, etc.) degrade gracefully to "semantic search off".
+_VECTOR_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS name_embedding vector(384);
+CREATE INDEX IF NOT EXISTS idx_files_name_emb
+  ON files USING hnsw (name_embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64)
+  WHERE name_embedding IS NOT NULL;
+"""
+
+# Flag toggled at init_db; readers use it to decide if hybrid path is
+# even attempted.
+_VECTOR_AVAILABLE = False
+
+# Materialized view for the dedupe path. Replaces the per-request window
+# function over ~750k rows with an indexed lookup. Refreshed periodically
+# and after mutations via refresh_files_canonical().
+_MV_SCHEMA = """
+-- Drop+recreate so we can add new columns (share_count, share_count_7d,
+-- share_count_30d). PostgreSQL has no ALTER MATERIALIZED VIEW ADD COLUMN;
+-- DROP IF EXISTS keeps the upgrade path idempotent across restarts.
+DROP MATERIALIZED VIEW IF EXISTS files_canonical CASCADE;
+CREATE MATERIALIZED VIEW files_canonical AS
+WITH share_stats AS (
+  SELECT file_name, file_size,
+         COUNT(DISTINCT group_id)::int AS share_count,
+         COUNT(DISTINCT CASE WHEN COALESCE(synced_at, date) >= NOW() - INTERVAL '7 days'
+                              THEN group_id END)::int AS share_count_7d,
+         COUNT(DISTINCT CASE WHEN COALESCE(synced_at, date) >= NOW() - INTERVAL '30 days'
+                              THEN group_id END)::int AS share_count_30d
+  FROM files
+  WHERE file_name IS NOT NULL AND file_name <> ''
+  GROUP BY file_name, file_size
+),
+ranked AS (
+  SELECT f.id, f.group_id, f.message_id, f.file_name, f.file_ext,
+         f.mime_type, f.file_size, f.date, f.local_path,
+         f.downloading, f.download_progress, f.context,
+         {emb_proj_inner}
+         COUNT(*) OVER (PARTITION BY f.file_name, f.file_size)::int AS appearances,
+         COALESCE(s.share_count, 1)      AS share_count,
+         COALESCE(s.share_count_7d, 0)   AS share_count_7d,
+         COALESCE(s.share_count_30d, 0)  AS share_count_30d,
+         ROW_NUMBER() OVER (
+           PARTITION BY f.file_name, f.file_size
+           ORDER BY (f.local_path IS NULL), f.date DESC
+         ) AS _rn
+  FROM files f
+  LEFT JOIN share_stats s ON s.file_name = f.file_name AND s.file_size = f.file_size
+)
+SELECT id, group_id, message_id, file_name, file_ext, mime_type,
+       file_size, date, local_path, downloading, download_progress,
+       context, {emb_proj_outer}
+       appearances, share_count, share_count_7d, share_count_30d
+FROM ranked WHERE _rn = 1
+WITH NO DATA;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fc_id        ON files_canonical (id);
+CREATE INDEX        IF NOT EXISTS idx_fc_date      ON files_canonical (date DESC);
+CREATE INDEX        IF NOT EXISTS idx_fc_size      ON files_canonical (file_size DESC);
+CREATE INDEX        IF NOT EXISTS idx_fc_ext       ON files_canonical (file_ext);
+CREATE INDEX        IF NOT EXISTS idx_fc_group     ON files_canonical (group_id);
+CREATE INDEX        IF NOT EXISTS idx_fc_ext_date  ON files_canonical (file_ext, date DESC);
+CREATE INDEX        IF NOT EXISTS idx_fc_grp_date  ON files_canonical (group_id, date DESC);
+CREATE INDEX        IF NOT EXISTS idx_fc_name_size ON files_canonical (file_name, file_size);
+CREATE INDEX        IF NOT EXISTS idx_fc_name_trgm ON files_canonical USING GIN (file_name gin_trgm_ops);
+CREATE INDEX        IF NOT EXISTS idx_fc_shares    ON files_canonical (share_count DESC);
+"""
+
+# HNSW index on the MV's embedding column, applied separately because
+# the column type depends on the optional pgvector extension.
+_MV_VECTOR_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_fc_name_emb
+  ON files_canonical USING hnsw (name_embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64)
+  WHERE name_embedding IS NOT NULL;
+"""
+
+
+async def _register_vector_on_conn(conn):
+    """Pool init callback — registers pgvector codecs so we can bind/return
+    `vector` typed values from Python. Silent no-op if pgvector lib or the
+    extension isn't installed; semantic search degrades, app keeps running."""
+    try:
+        from pgvector.asyncpg import register_vector
+        await register_vector(conn)
+    except Exception:
+        pass
+
 
 async def init_db():
-    global _pool
-    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    global _pool, _VECTOR_AVAILABLE
+    import logging as _lg
+    log = _lg.getLogger(__name__)
+
+    # Phase 1: ensure pgvector extension exists AND the Python adapter is
+    # importable. Both are needed: the extension provides the `vector` type
+    # in Postgres; the adapter teaches asyncpg how to encode/decode it.
+    try:
+        from pgvector.asyncpg import register_vector as _rv  # noqa: F401
+        _have_pgvector_lib = True
+    except Exception as e:
+        _have_pgvector_lib = False
+        log.warning("pgvector Python lib missing (%s) — semantic search disabled.", e)
+    if _have_pgvector_lib:
+        try:
+            _tmp = await asyncpg.connect(DATABASE_URL)
+            try:
+                await _tmp.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                _VECTOR_AVAILABLE = True
+                log.info("pgvector extension + adapter ready.")
+            except Exception as e:
+                log.warning("pgvector extension unavailable (%s) — semantic search disabled.", e)
+            finally:
+                await _tmp.close()
+        except Exception as e:
+            log.warning("pre-init connection failed: %s", e)
+
+    _pool = await asyncpg.create_pool(
+        DATABASE_URL, min_size=2, max_size=10,
+        init=_register_vector_on_conn if _VECTOR_AVAILABLE else None,
+    )
     async with _pool.acquire() as conn:
         await conn.execute(_SCHEMA)
+        # Vector column + HNSW index on raw `files` (skipped if extension missing)
+        if _VECTOR_AVAILABLE:
+            try:
+                await conn.execute(_VECTOR_SCHEMA)
+            except Exception as e:
+                log.warning("vector schema apply failed: %s", e)
+                _VECTOR_AVAILABLE = False
+        # The MV's DROP+CREATE+REFRESH is ~9 min on a 750k+ row dataset, so
+        # we skip it when the existing MV already matches the expected schema
+        # (column set + populated flag). Detect drift via the column list —
+        # vector column comes/goes with pgvector, share_count_* etc. with code
+        # changes — and only rebuild on mismatch.
+        _MV_EXPECTED_COLS = {
+            "id","group_id","message_id","file_name","file_ext","mime_type",
+            "file_size","date","local_path","downloading","download_progress",
+            "context","appearances","share_count","share_count_7d","share_count_30d",
+        }
+        if _VECTOR_AVAILABLE:
+            _MV_EXPECTED_COLS = _MV_EXPECTED_COLS | {"name_embedding"}
+        existing_rows = await conn.fetch(
+            """SELECT a.attname
+                 FROM pg_attribute a
+                 JOIN pg_class c ON c.oid = a.attrelid
+                WHERE c.relname = 'files_canonical' AND c.relkind = 'm'
+                  AND a.attnum > 0 AND NOT a.attisdropped"""
+        )
+        existing_cols = {r["attname"] for r in existing_rows}
+        mv_populated = bool(await conn.fetchval(
+            "SELECT relispopulated FROM pg_class WHERE relname = 'files_canonical'"
+        ))
+        if existing_cols == _MV_EXPECTED_COLS and mv_populated:
+            log.info(
+                "files_canonical: schema match (%d cols, populated), "
+                "skipping rebuild.", len(existing_cols)
+            )
+        else:
+            log.info(
+                "files_canonical: rebuilding "
+                "(schema_match=%s, was_populated=%s, expected=%d, found=%d)",
+                existing_cols == _MV_EXPECTED_COLS, mv_populated,
+                len(_MV_EXPECTED_COLS), len(existing_cols),
+            )
+            mv_sql = _MV_SCHEMA.format(
+                emb_proj_inner="f.name_embedding," if _VECTOR_AVAILABLE else "",
+                emb_proj_outer="name_embedding," if _VECTOR_AVAILABLE else "",
+            )
+            await conn.execute(mv_sql)
+            # HNSW index on the MV's embedding column (after MV exists)
+            if _VECTOR_AVAILABLE:
+                try:
+                    await conn.execute(_MV_VECTOR_INDEX)
+                except Exception as e:
+                    log.warning("MV vector index apply failed: %s", e)
     await _migrate_to_multi_account()
+    # Populate the dedupe MV on first run AND after a schema rebuild (DROP+CREATE
+    # leaves the MV in "not populated" state, where SELECT raises). We probe
+    # via pg_catalog so we don't trip the not-populated error before deciding
+    # whether to refresh.
+    try:
+        import logging as _lg, time as _t
+        log = _lg.getLogger(__name__)
+        is_populated = await _qval(
+            "SELECT relispopulated FROM pg_class WHERE relname = 'files_canonical'"
+        )
+        if not is_populated:
+            log.info("files_canonical: initial population starting…")
+            t0 = _t.time()
+            await _exec("REFRESH MATERIALIZED VIEW files_canonical")
+            log.info("files_canonical: populated in %.2fs", _t.time() - t0)
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning("files_canonical init refresh failed: %s", e)
 
 
 async def _migrate_to_multi_account():
@@ -472,6 +675,20 @@ async def upsert_group(group_id: int, name: str, username: Optional[str], is_cha
     )
 
 
+async def ensure_synthetic_group(group_id: int, name: str, display_name: Optional[str] = None) -> None:
+    """Insert a synthetic (non-Telegram) group row for storing web-discovered
+    links. Uses a negative id so it cannot collide with a real Telegram chat.
+    No-op if the row already exists with a matching name."""
+    await _exec(
+        """INSERT INTO groups (id, name, username, is_channel, display_name)
+           VALUES ($1, $2, NULL, FALSE, $3)
+           ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               display_name = COALESCE(EXCLUDED.display_name, groups.display_name)""",
+        group_id, name, display_name,
+    )
+
+
 async def set_group_settings(
     group_id: int,
     display_name: Optional[str] = None,
@@ -532,16 +749,46 @@ async def reset_group_watermark(group_id: int):
     )
 
 
+def _ext_list_sql(group: str) -> str:
+    # Render the _EXT_GROUPS[group] list as a parenthesised SQL literal so it
+    # can be inlined into a COUNT(... FILTER (WHERE ext IN (...))) expression.
+    exts = _EXT_GROUPS.get(group, [])
+    return "(" + ",".join("'" + e.replace("'", "''") + "'" for e in exts) + ")" if exts else "(NULL)"
+
+
 async def get_groups() -> List[Dict]:
+    audio_l  = _ext_list_sql("audio")
+    video_l  = _ext_list_sql("video")
+    image_l  = _ext_list_sql("image")
+    archv_l  = _ext_list_sql("archive")
+    docu_l   = _ext_list_sql("document")
+    soft_l   = _ext_list_sql("software")
+    torr_l   = _ext_list_sql("torrent")
     rows = await _q(
-        """SELECT g.id, g.name, g.username, g.is_channel,
+        f"""SELECT g.id, g.name, g.username, g.is_channel,
                   g.excluded, g.hidden,
-                  COALESCE(g.display_name, g.name) AS display_name,
+                  COALESCE(g.display_name, g.name)                AS display_name,
                   g.last_synced_at,
-                  COUNT(f.id)                          AS file_count,
-                  COALESCE(SUM(f.file_size), 0)        AS total_size
+                  g.member_count,
+                  g.member_count_updated_at,
+                  COUNT(f.id)                                     AS file_count,
+                  COALESCE(SUM(f.file_size), 0)                   AS total_size,
+                  MAX(f.date)                                     AS last_message_at,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {audio_l}) AS type_audio,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {video_l}) AS type_video,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {image_l}) AS type_image,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {archv_l}) AS type_archive,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {docu_l})  AS type_document,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {soft_l})  AS type_software,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {torr_l})  AS type_torrent,
+                  COUNT(f.id) FILTER (WHERE f.file_ext IS NULL OR LOWER(f.file_ext) NOT IN
+                      ({audio_l[1:-1]}, {video_l[1:-1]}, {image_l[1:-1]},
+                       {archv_l[1:-1]}, {docu_l[1:-1]}, {soft_l[1:-1]}, {torr_l[1:-1]}))
+                                                                  AS type_other
            FROM groups g
            LEFT JOIN files f ON f.group_id = g.id
+           WHERE g.id < 0
+              OR EXISTS (SELECT 1 FROM account_groups ag WHERE ag.group_id = g.id)
            GROUP BY g.id
            ORDER BY g.name"""
     )
@@ -582,18 +829,19 @@ async def insert_file(
     date: str,
     context: Optional[str] = None,
     discovered_by_account_id: Optional[int] = None,
-) -> bool:
+) -> Optional[int]:
     try:
         date_ts = datetime.fromisoformat(date.replace("Z", "+00:00")) if date else datetime.utcnow()
-        await _exec(
+        row = await _qrow(
             """INSERT INTO files
                (group_id, message_id, file_name, file_ext, mime_type, file_size, date, synced_at, context, discovered_by_account_id)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)""",
+               VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),$8,$9)
+               RETURNING id""",
             group_id, message_id, file_name, file_ext, mime_type, file_size, date_ts, context, discovered_by_account_id,
         )
-        return True
+        return row["id"] if row else None
     except asyncpg.UniqueViolationError:
-        return False
+        return None
 
 
 async def insert_link(
@@ -604,13 +852,21 @@ async def insert_link(
     context: Optional[str],
     date: str,
     discovered_by_account_id: Optional[int] = None,
+    files_json: Optional[list] = None,
+    available: Optional[bool] = None,
+    file_count: Optional[int] = None,
+    file_size_total: Optional[int] = None,
 ) -> bool:
     try:
         date_ts = datetime.fromisoformat(date.replace("Z", "+00:00")) if date else datetime.utcnow()
+        probed_at = datetime.utcnow() if files_json is not None else None
+        fj_str = _json.dumps(files_json) if files_json is not None else None
         await _exec(
-            """INSERT INTO links (group_id, message_id, platform, url, context, date, discovered_by_account_id)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)""",
+            """INSERT INTO links (group_id, message_id, platform, url, context, date, discovered_by_account_id,
+                                  files_json, available, file_count, file_size_total, probed_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)""",
             group_id, message_id, platform, url, context, date_ts, discovered_by_account_id,
+            fj_str, available, file_count, file_size_total, probed_at,
         )
         return True
     except asyncpg.UniqueViolationError:
@@ -618,18 +874,38 @@ async def insert_link(
 
 
 # ── Link probe helpers ────────────────────────────────────────────────────────
-import json as _json
 
 async def get_links_due_for_probe(limit: int = 50, stale_days: int = 7) -> List[Dict]:
-    """Pick up unprobed links first, then ones stale enough to recheck."""
+    """Pick up unprobed links first, then ones stale enough to recheck. Magnet links are excluded — their info is parsed from the URI at insert time."""
     rows = await _q(
         """SELECT id, url, platform
              FROM links
-            WHERE probed_at IS NULL
-               OR probed_at < NOW() - INTERVAL '1 day' * $1
+            WHERE (platform IS NULL OR platform != 'Magnet')
+              AND (probed_at IS NULL
+               OR probed_at < NOW() - INTERVAL '1 day' * $1)
             ORDER BY probed_at NULLS FIRST, id DESC
             LIMIT $2""",
         stale_days, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def list_magnet_links_needing_enrich(limit: int = 500) -> List[Dict]:
+    """Magnet links whose `files_json` only carries the magnet's display name
+    (file_count <= 1) — i.e. metadata has not been fetched from the swarm yet.
+
+    Ordered oldest-first so the backfill processes the longest-waiting links
+    before recently-discovered ones.
+    """
+    rows = await _q(
+        """SELECT id, url
+             FROM links
+            WHERE platform = 'Magnet'
+              AND (file_count IS NULL OR file_count <= 1)
+              AND (probe_error IS NULL OR probe_error NOT LIKE 'magnet-enrich:%')
+            ORDER BY id ASC
+            LIMIT $1""",
+        limit,
     )
     return [dict(r) for r in rows]
 
@@ -656,7 +932,7 @@ async def record_probe_result(
     )
 
 
-_SORT_COLS = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "group": "g.name"}
+_SORT_COLS = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "group": "g.name", "shares": "share_count"}
 _SORT_DIRS = {"asc": "ASC", "desc": "DESC"}
 
 _EXT_GROUPS: Dict[str, List[str]] = {
@@ -666,7 +942,135 @@ _EXT_GROUPS: Dict[str, List[str]] = {
     "archive":  ["zip","rar","7z","tar","gz","bz2","xz","zst","cab","ace","lzh","lz4","iso"],
     "document": ["pdf","doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","txt","epub","rtf","csv","md"],
     "software": ["exe","apk","dmg","deb","rpm","msi","pkg","bin","jar","sh","bat","ps1"],
+    "torrent":  ["torrent"],
 }
+
+
+async def _search_files_hybrid(
+    *, query: str, mode: str,
+    ext: str, ext_group: str,
+    group_id: Optional[int], group_ids: Optional[List[int]],
+    file_ids: Optional[List[int]],
+    date_from: Optional[str], date_to: Optional[str],
+    size_min: Optional[int], size_max: Optional[int],
+    limit: int, offset: int,
+) -> Optional[Tuple[List[Dict], Dict]]:
+    """Hybrid (lexical + semantic) search using Reciprocal Rank Fusion.
+    Returns None if no embedding can be computed for the query (caller
+    should fall back to the lexical path)."""
+    import embed as _embed
+    qvec = await _embed.embed_query(query)
+    if qvec is None:
+        return None
+
+    # Build the "non-query" filter clauses, all referencing fc.* (MV alias).
+    extra: List[str] = []
+    args: List[Any] = []
+    idx = 3  # $1=query LIKE, $2=qvec, fillers start at $3
+    if ext:
+        extra.append(f"LOWER(fc.file_ext) = LOWER(${idx})")
+        args.append(ext.lstrip(".")); idx += 1
+    elif ext_group:
+        exts = _EXT_GROUPS.get(ext_group, [])
+        if exts:
+            extra.append(f"LOWER(fc.file_ext) = ANY(${idx}::text[])")
+            args.append(exts); idx += 1
+    if file_ids:
+        extra.append(f"fc.id = ANY(${idx}::bigint[])"); args.append(file_ids); idx += 1
+    if group_ids:
+        extra.append(f"fc.group_id = ANY(${idx}::bigint[])"); args.append(group_ids); idx += 1
+    elif group_id is not None:
+        extra.append(f"fc.group_id = ${idx}"); args.append(group_id); idx += 1
+    if date_from:
+        extra.append(f"fc.date >= ${idx}"); args.append(date_from); idx += 1
+    if date_to:
+        extra.append(f"fc.date <= ${idx}"); args.append(date_to + "T23:59:59"); idx += 1
+    if size_min is not None:
+        extra.append(f"fc.file_size >= ${idx}"); args.append(size_min); idx += 1
+    if size_max is not None:
+        extra.append(f"fc.file_size <= ${idx}"); args.append(size_max); idx += 1
+    extra_where = (" AND " + " AND ".join(extra)) if extra else ""
+
+    like_pat = f"%{query.strip()}%"
+    # $1 = like pattern (used by exact CTE), $2 = query embedding vector,
+    # $idx, $idx+1 = limit/offset (added at the end).
+    # k=60 in 1/(k+r) is the standard RRF damping constant.
+    sql = f"""
+        WITH
+        exact_hits AS (
+          SELECT fc.id,
+                 ROW_NUMBER() OVER (ORDER BY fc.date DESC) AS r
+          FROM files_canonical fc
+          WHERE fc.file_name ILIKE $1 {extra_where}
+          LIMIT 300
+        ),
+        sem_hits AS (
+          SELECT fc.id,
+                 ROW_NUMBER() OVER (ORDER BY fc.name_embedding <=> $2::vector) AS r
+          FROM files_canonical fc
+          WHERE fc.name_embedding IS NOT NULL {extra_where}
+          ORDER BY fc.name_embedding <=> $2::vector
+          LIMIT 300
+        ),
+        fused AS (
+          SELECT id, SUM(1.0 / (60.0 + r))::float AS s
+          FROM (
+            SELECT id, r FROM exact_hits
+            UNION ALL
+            SELECT id, r FROM sem_hits
+          ) u
+          GROUP BY id
+        )
+        SELECT fc.id, fc.group_id, fc.message_id, fc.file_name, fc.file_ext,
+               fc.mime_type, fc.file_size, fc.date,
+               fl.local_path, fl.downloading, fl.download_progress,
+               fc.context, fc.appearances,
+               fc.share_count, fc.share_count_7d, fc.share_count_30d,
+               COALESCE(g.display_name, g.name) AS group_name,
+               g.username AS group_username,
+               fused.s AS rrf_score
+        FROM fused
+        JOIN files_canonical fc ON fc.id = fused.id
+        JOIN files          fl ON fl.id = fc.id
+        JOIN groups         g  ON g.id  = fc.group_id
+        ORDER BY fused.s DESC, fc.date DESC
+        LIMIT ${idx} OFFSET ${idx+1}
+    """
+    rows = await _q(sql, like_pat, qvec, *args, limit, offset)
+    result = [dict(r) for r in rows]
+
+    # Stats: count of fused candidates (post-filter). For consistency with the
+    # lexical path's virtual_total + total_size we still compute these via
+    # the existing helper, applying the same `like OR semantic` filter.
+    cnt_sql = f"""
+        WITH fused AS (
+          SELECT id FROM (
+            SELECT fc.id FROM files_canonical fc
+            WHERE fc.file_name ILIKE $1 {extra_where}
+            UNION
+            SELECT fc.id FROM files_canonical fc
+            WHERE fc.name_embedding IS NOT NULL {extra_where}
+            ORDER BY 1 LIMIT 600
+          ) u
+        )
+        SELECT COUNT(*)::bigint AS total,
+               COALESCE(SUM(CASE WHEN fc.file_ext='torrent' AND tc.file_count IS NOT NULL
+                                 THEN tc.file_count ELSE 1 END), 0)::bigint AS virtual_total,
+               COALESCE(SUM(fc.file_size), 0)::bigint AS total_size
+        FROM fused
+        JOIN files_canonical fc ON fc.id = fused.id
+        LEFT JOIN torrent_contents tc ON tc.file_id = fc.id AND tc.error IS NULL
+    """
+    try:
+        srow = await _qrow(cnt_sql, like_pat, qvec, *args)
+        stats = {
+            "total":         int(srow["total"] or 0)         if srow else 0,
+            "virtual_total": int(srow["virtual_total"] or 0) if srow else 0,
+            "total_size":    int(srow["total_size"] or 0)    if srow else 0,
+        }
+    except Exception:
+        stats = {"total": len(result), "virtual_total": len(result), "total_size": 0}
+    return result, stats
 
 
 async def search_files(
@@ -685,7 +1089,30 @@ async def search_files(
     limit: int = 50,
     offset: int = 0,
     dedupe: bool = True,
-) -> Tuple[List[Dict], int]:
+    mode: str = "exact",
+    search_caption: bool = False,
+) -> Tuple[List[Dict], Dict]:
+    # Hybrid / semantic dispatch — only valid with dedupe path, a real
+    # query string, and pgvector available. Falls through to lexical on
+    # any miss so the user never sees an empty grid because of embedding
+    # subsystem issues.
+    if dedupe and mode in ("semantic", "hybrid") and (query or "").strip() and _VECTOR_AVAILABLE:
+        try:
+            res = await _search_files_hybrid(
+                query=query, mode=mode, ext=ext, ext_group=ext_group,
+                group_id=group_id, group_ids=group_ids, file_ids=file_ids,
+                date_from=date_from, date_to=date_to,
+                size_min=size_min, size_max=size_max,
+                limit=limit, offset=offset,
+            )
+            if res is not None:
+                return res
+        except Exception as _hybrid_err:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "hybrid search failed (%s) — falling back to lexical.", _hybrid_err
+            )
+
     col       = _SORT_COLS.get(sort_by, "f.date")
     direction = _SORT_DIRS.get(sort_dir, "DESC")
 
@@ -694,13 +1121,14 @@ async def search_files(
     idx = 1
 
     for word in query.split():
-        # Match file name OR any path inside a torrent's indexed content.
-        # Using the same $idx twice is valid in PostgreSQL — one arg in args list.
-        conditions.append(
-            f"(f.file_name ILIKE ${idx} OR "
+        or_parts = [f"f.file_name ILIKE ${idx}"]
+        if search_caption:
+            or_parts.append(f"f.context ILIKE ${idx}")
+        or_parts.append(
             f"EXISTS (SELECT 1 FROM torrent_files tf "
-            f"        WHERE tf.torrent_id = f.id AND tf.path ILIKE ${idx}))"
+            f"        WHERE tf.torrent_id = f.id AND tf.path ILIKE ${idx})"
         )
+        conditions.append("(" + " OR ".join(or_parts) + ")")
         args.append(f"%{word}%"); idx += 1
     if ext:
         conditions.append(f"LOWER(f.file_ext) = LOWER(${idx})")
@@ -736,6 +1164,7 @@ async def search_files(
                        f.mime_type, f.file_size, f.date, f.local_path,
                        f.downloading, f.download_progress, f.context,
                        1 AS appearances,
+                       1 AS share_count, 0 AS share_count_7d, 0 AS share_count_30d,
                        COALESCE(g.display_name, g.name) AS group_name,
                        g.username AS group_username
                 FROM files f
@@ -745,68 +1174,59 @@ async def search_files(
                 LIMIT ${idx} OFFSET ${idx+1}""",
             *args,
         )
-        total = await _qval(
-            f"SELECT COUNT(*) FROM files f JOIN groups g ON g.id = f.group_id {where}",
+        row = await _qrow(
+            f"""SELECT COUNT(*)::bigint AS total,
+                       COALESCE(SUM(f.file_size),0)::bigint AS total_size
+                FROM files f JOIN groups g ON g.id = f.group_id {where}""",
             *c_args,
         )
-        return [dict(r) for r in rows], total or 0
+        stats = {
+            "total":         int(row["total"] or 0)      if row else 0,
+            "virtual_total": int(row["total"] or 0)      if row else 0,
+            "total_size":    int(row["total_size"] or 0) if row else 0,
+        }
+        return [dict(r) for r in rows], stats
 
-    # Dedupe by (file_name, file_size) using a single window-function pass:
-    #  - COUNT() OVER tells us how many rows share that (name,size) pair
-    #  - ROW_NUMBER() OVER picks the canonical row, preferring a downloaded
-    #    copy so triggerDownload/blob still works, otherwise the newest msg.
-    # One scan beats the two-CTE approach (which became O(N²) in practice
-    # because the IS NOT DISTINCT FROM join couldn't use an index).
-    # Outer ORDER BY runs against the un-prefixed projection.
-    outer_col = col.replace("f.", "").replace("g.name", "group_name")
+    # Dedupe path — served from the files_canonical materialized view.
+    # The MV pre-computes the window functions (COUNT/ROW_NUMBER over
+    # PARTITION BY (file_name, file_size)) so the runtime query is a plain
+    # indexed scan: ms-scale on first page, regardless of total row count.
+    # Rewrite the file alias `f.` → `fc.` in the WHERE/ORDER clauses, but
+    # use a word-boundary so we don't also rewrite `tf.torrent_id` (the
+    # torrent_files alias) into the bogus `tfc.torrent_id`.
+    import re as _re_alias
+    where_fc = _re_alias.sub(r"\bf\.", "fc.", where)
+    col_fc   = _re_alias.sub(r"\bf\.", "fc.", col)
     args += [limit, offset]
 
-    cache_key = _dedupe_rows_key(where, args, outer_col, direction)
+    cache_key = _dedupe_rows_key(where_fc, args, col_fc, direction)
     cached_rows = _dedupe_rows_get(cache_key)
     if cached_rows is not None:
-        total = await _files_dedupe_count_cached(where, c_args)
-        return cached_rows, total or 0
+        stats = await _files_dedupe_stats_cached(where_fc, c_args)
+        return cached_rows, stats
 
-    sql = f"""WITH ranked AS (
-                SELECT f.id, f.group_id, f.message_id, f.file_name, f.file_ext,
-                       f.mime_type, f.file_size, f.date, f.local_path,
-                       f.downloading, f.download_progress, f.context,
-                       COALESCE(g.display_name, g.name) AS group_name,
-                       g.username AS group_username,
-                       COUNT(*) OVER (PARTITION BY f.file_name, f.file_size)::int AS appearances,
-                       ROW_NUMBER() OVER (
-                         PARTITION BY f.file_name, f.file_size
-                         ORDER BY (f.local_path IS NULL), f.date DESC
-                       ) AS _rn
-                FROM files f
-                JOIN groups g ON g.id = f.group_id
-                {where}
-            )
-            SELECT id, group_id, message_id, file_name, file_ext, mime_type,
-                   file_size, date, local_path, downloading, download_progress,
-                   context, group_name, group_username, appearances
-            FROM ranked
-            WHERE _rn = 1
-            ORDER BY {outer_col} {direction}
-            LIMIT ${idx} OFFSET ${idx+1}"""
+    # Live overlay JOIN to files: keeps local_path / downloading /
+    # download_progress current between MV refreshes (PK lookup on the
+    # 100-row page is sub-ms).
+    sql = f"""SELECT fc.id, fc.group_id, fc.message_id, fc.file_name, fc.file_ext,
+                     fc.mime_type, fc.file_size, fc.date,
+                     fl.local_path, fl.downloading, fl.download_progress,
+                     fc.context, fc.appearances,
+                     fc.share_count, fc.share_count_7d, fc.share_count_30d,
+                     COALESCE(g.display_name, g.name) AS group_name,
+                     g.username AS group_username
+              FROM files_canonical fc
+              JOIN groups g ON g.id = fc.group_id
+              JOIN files  fl ON fl.id = fc.id
+              {where_fc}
+              ORDER BY {col_fc} {direction}
+              LIMIT ${idx} OFFSET ${idx+1}"""
 
-    # Force the parallel plan + give workers enough work_mem to keep the
-    # sort in-RAM. Postgres' default cost model picks a slower serial plan
-    # for this query because it overestimates parallel setup cost. Tested:
-    # ~2.0s default → ~1.3s with these locals. SET LOCAL only affects this
-    # transaction so it doesn't leak to other queries.
-    async with _pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute("SET LOCAL min_parallel_table_scan_size = '0'")
-            await conn.execute("SET LOCAL parallel_setup_cost = 0")
-            await conn.execute("SET LOCAL parallel_tuple_cost = 0")
-            await conn.execute("SET LOCAL work_mem = '64MB'")
-            rows = await conn.fetch(sql, *args)
-
+    rows = await _q(sql, *args)
     result = [dict(r) for r in rows]
     _dedupe_rows_set(cache_key, result)
-    total = await _files_dedupe_count_cached(where, c_args)
-    return result, total or 0
+    stats = await _files_dedupe_stats_cached(where_fc, c_args)
+    return result, stats
 
 
 # Tiny TTL cache for the dedupe COUNT — slow query, slow-changing answer.
@@ -847,9 +1267,164 @@ def _dedupe_rows_set(key: str, rows: List[Dict]) -> None:
 
 def invalidate_files_caches() -> None:
     """Drop both rows + count caches. Call after bulk insert/delete or
-    when local_path / downloading state changes for many rows."""
+    when local_path / downloading state changes for many rows. Also
+    schedules a throttled background refresh of files_canonical."""
     _DEDUPE_ROWS_CACHE.clear()
     _DEDUPE_COUNT_CACHE.clear()
+    _schedule_fc_refresh()
+
+
+# Materialized view refresh — serialized via lock so concurrent invalidations
+# don't pile up REFRESH commands. CONCURRENTLY keeps readers unblocked.
+import asyncio as _asyncio
+_FC_REFRESH_LOCK = _asyncio.Lock()
+_FC_LAST_REFRESH_TS = 0.0
+_FC_REFRESH_THROTTLE = 3.0  # min seconds between invalidation-triggered refreshes
+
+
+async def refresh_files_canonical(force: bool = False) -> None:
+    """Refresh the files_canonical materialized view. Idempotent and
+    re-entrant via _FC_REFRESH_LOCK. force=True bypasses the throttle."""
+    global _FC_LAST_REFRESH_TS
+    import time as _t
+    now = _t.time()
+    if not force and (now - _FC_LAST_REFRESH_TS) < _FC_REFRESH_THROTTLE:
+        return
+    async with _FC_REFRESH_LOCK:
+        # Re-check inside the lock: another waiter may have just refreshed.
+        if not force and (_t.time() - _FC_LAST_REFRESH_TS) < _FC_REFRESH_THROTTLE:
+            return
+        try:
+            await _exec("REFRESH MATERIALIZED VIEW CONCURRENTLY files_canonical")
+        except Exception:
+            # CONCURRENTLY requires the MV to have data. If we somehow lost it
+            # (manual TRUNCATE etc.), fall back to a regular refresh.
+            try:
+                await _exec("REFRESH MATERIALIZED VIEW files_canonical")
+            except Exception as e:
+                import logging as _lg
+                _lg.getLogger(__name__).warning("refresh files_canonical: %s", e)
+                return
+        _FC_LAST_REFRESH_TS = _t.time()
+
+
+def _schedule_fc_refresh() -> None:
+    """Fire-and-forget background refresh. Safe to call without an active
+    event loop (no-op then). Throttled via refresh_files_canonical()."""
+    try:
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(refresh_files_canonical())
+    except Exception:
+        pass
+
+
+# ── Trend / "Most Shared" feature (option b+c) ────────────────────────────
+# Returns the top-N files ranked by `share_count` (number of distinct groups
+# that have shared them). For each item, also returns a 7-day per-day
+# "share velocity" series so the UI can draw a sparkline and badge fast risers.
+
+async def get_top_shared_files(
+    window: str = "all",
+    limit: int = 30,
+    min_shares: int = 2,
+) -> List[Dict]:
+    """Top-N most-shared (file_name, file_size) pairs.
+
+    window: 'all' (share_count), '7d' (share_count_7d), '30d' (share_count_30d)
+            — determines both the ranking metric AND the floor (min_shares).
+    """
+    sort_col = {
+        "all": "share_count",
+        "7d":  "share_count_7d",
+        "30d": "share_count_30d",
+    }.get(window, "share_count")
+
+    rows = await _q(
+        f"""SELECT fc.id, fc.file_name, fc.file_ext, fc.mime_type,
+                   fc.file_size, fc.date, fc.local_path,
+                   fc.share_count, fc.share_count_7d, fc.share_count_30d,
+                   fc.appearances,
+                   COALESCE(g.display_name, g.name) AS group_name,
+                   g.username AS group_username,
+                   fc.group_id, fc.message_id
+              FROM files_canonical fc
+              LEFT JOIN groups g ON g.id = fc.group_id
+              WHERE fc.file_name IS NOT NULL AND fc.file_name <> ''
+                AND {sort_col} >= $1
+              ORDER BY {sort_col} DESC, fc.date DESC
+              LIMIT $2""",
+        min_shares, limit,
+    )
+    items = [dict(r) for r in rows]
+    if not items:
+        return []
+
+    # Spark series: per-day distinct group count for the last 7 days, keyed
+    # by canonical (file_name, file_size). Pass two parallel arrays through
+    # unnest() so PostgreSQL infers parameter types correctly (text + bigint)
+    # — a literal VALUES list infers both columns as text and the join then
+    # fails with "operator does not exist: text = bigint".
+    names_arg = [it["file_name"] for it in items]
+    sizes_arg = [int(it["file_size"] or 0) for it in items]
+    spark_rows = await _q(
+        """WITH targets AS (
+             SELECT t.file_name, t.file_size
+               FROM unnest($1::text[], $2::bigint[]) AS t(file_name, file_size)
+           )
+           SELECT f.file_name, f.file_size,
+                  (date_trunc('day', COALESCE(f.synced_at, f.date)))::date AS d,
+                  COUNT(DISTINCT f.group_id)::int AS n
+             FROM files f
+             JOIN targets t ON t.file_name = f.file_name
+                           AND t.file_size = f.file_size
+            WHERE COALESCE(f.synced_at, f.date) >= NOW() - INTERVAL '7 days'
+            GROUP BY f.file_name, f.file_size, d
+            ORDER BY d""",
+        names_arg, sizes_arg,
+    )
+    by_key: Dict[Tuple[str, int], List[Dict]] = {}
+    for r in spark_rows:
+        k = (r["file_name"], int(r["file_size"] or 0))
+        by_key.setdefault(k, []).append({"d": r["d"].isoformat(), "n": int(r["n"])})
+
+    # Top groups currently sharing each file — same unnest pattern.
+    top_grp_rows = await _q(
+        """WITH targets AS (
+             SELECT t.file_name, t.file_size
+               FROM unnest($1::text[], $2::bigint[]) AS t(file_name, file_size)
+           )
+           SELECT f.file_name, f.file_size, g.id AS group_id,
+                  COALESCE(g.display_name, g.name) AS group_name,
+                  g.username AS group_username
+             FROM files f
+             JOIN groups g ON g.id = f.group_id
+             JOIN targets t ON t.file_name = f.file_name
+                           AND t.file_size = f.file_size
+            GROUP BY f.file_name, f.file_size, g.id, g.display_name, g.name, g.username""",
+        names_arg, sizes_arg,
+    )
+    groups_by_key: Dict[Tuple[str, int], List[Dict]] = {}
+    for r in top_grp_rows:
+        k = (r["file_name"], int(r["file_size"] or 0))
+        groups_by_key.setdefault(k, []).append({
+            "id": int(r["group_id"]),
+            "name": r["group_name"],
+            "username": r["group_username"],
+        })
+
+    for it in items:
+        k = (it["file_name"], int(it["file_size"] or 0))
+        it["spark_7d"] = by_key.get(k, [])
+        it["sharing_groups"] = groups_by_key.get(k, [])[:8]
+        # Rising = recent share velocity outpaces 30-day average.
+        # Using week*4 vs month so equally-active files compare cleanly;
+        # the floor (week >= 2) prevents single-share false positives.
+        wk  = int(it.get("share_count_7d") or 0)
+        mo  = int(it.get("share_count_30d") or 0)
+        it["is_rising"] = wk >= 2 and wk * 4 > mo
+
+    return items
 
 
 def _dedupe_count_key(where: str, c_args: List) -> str:
@@ -859,31 +1434,46 @@ def _dedupe_count_key(where: str, c_args: List) -> str:
 
 
 async def _files_dedupe_count_cached(where: str, c_args: List) -> int:
+    stats = await _files_dedupe_stats_cached(where, c_args)
+    return stats["total"]
+
+
+async def _files_dedupe_stats_cached(where: str, c_args: List) -> Dict:
+    """Returns {total, virtual_total, total_size} for the filtered dedupe set.
+    - total:         deduped file rows count (one per file_name/file_size pair)
+    - virtual_total: same, but each parsed torrent contributes its inner file_count
+                     instead of 1 (parallel to total_virtual_files in get_stats)
+    - total_size:    sum of fc.file_size across the filtered set (already
+                     includes torrent content sizes — save_torrent_tree updates
+                     the torrent row's file_size to the inner total)."""
     import time as _t
     key = _dedupe_count_key(where, c_args)
     now = _t.time()
     cached = _DEDUPE_COUNT_CACHE.get(key)
     if cached and now - cached[0] < _DEDUPE_COUNT_TTL:
         return cached[1]
-    # The WHERE clause only references f.* (verified across all filter
-    # branches), so the JOIN groups is dead weight here. GROUP BY agg over
-    # the (file_name, file_size) index is ~5× faster than COUNT(DISTINCT (a,b))
-    # which forces a sort.
-    total = await _qval(
-        f"""SELECT COUNT(*) FROM (
-              SELECT 1 FROM files f
-              {where}
-              GROUP BY f.file_name, f.file_size
-            ) t""",
+    row = await _qrow(
+        f"""SELECT
+                COUNT(*)::bigint AS total,
+                COALESCE(SUM(CASE WHEN fc.file_ext = 'torrent' AND tc.file_count IS NOT NULL
+                                  THEN tc.file_count ELSE 1 END), 0)::bigint AS virtual_total,
+                COALESCE(SUM(fc.file_size), 0)::bigint AS total_size
+            FROM files_canonical fc
+            LEFT JOIN torrent_contents tc
+                   ON tc.file_id = fc.id AND tc.error IS NULL
+            {where}""",
         *c_args,
     )
-    total = int(total or 0)
-    _DEDUPE_COUNT_CACHE[key] = (now, total)
+    stats = {
+        "total":         int(row["total"] or 0)         if row else 0,
+        "virtual_total": int(row["virtual_total"] or 0) if row else 0,
+        "total_size":    int(row["total_size"] or 0)    if row else 0,
+    }
+    _DEDUPE_COUNT_CACHE[key] = (now, stats)
     if len(_DEDUPE_COUNT_CACHE) > 64:
-        # Bound the cache; under default load we have <10 distinct keys.
         oldest = min(_DEDUPE_COUNT_CACHE, key=lambda k: _DEDUPE_COUNT_CACHE[k][0])
         _DEDUPE_COUNT_CACHE.pop(oldest, None)
-    return total
+    return stats
 
 
 _LINK_SORT_COLS = {
@@ -971,6 +1561,7 @@ async def search_links(
         rows = await _q(
             f"""SELECT l.id, l.group_id, l.message_id, l.platform, l.url, l.context, l.date,
                        l.available, l.file_count, l.file_size_total, l.files_json, l.probed_at,
+                       l.probe_error,
                        1 AS appearances,
                        COALESCE(g.display_name, g.name) AS group_name,
                        g.username AS group_username
@@ -996,6 +1587,7 @@ async def search_links(
                 SELECT DISTINCT ON (l.url)
                     l.id, l.group_id, l.message_id, l.platform, l.url, l.context, l.date,
                     l.available, l.file_count, l.file_size_total, l.files_json, l.probed_at,
+                    l.probe_error,
                     COALESCE(g.display_name, g.name) AS group_name,
                     g.username AS group_username
                 FROM links l
@@ -1024,12 +1616,21 @@ async def search_links(
 
 
 async def get_file_by_id(file_id: int) -> Optional[Dict]:
+    # Explicit column list — never expose `name_embedding` (pgvector 384-dim
+    # float array) to the JSON encoder. FastAPI's jsonable_encoder calls
+    # `dict(obj)` / `vars(obj)` on it and fails, returning 500 to every poller
+    # (download progress, deep-scan status, etc.). Also avoids the per-row
+    # kilobyte bandwidth hit on every poll.
     row = await _qrow(
-        """SELECT f.*, COALESCE(g.display_name, g.name) AS group_name,
+        """SELECT f.id, f.group_id, f.message_id, f.file_name, f.file_ext,
+                  f.mime_type, f.file_size, f.date, f.local_path,
+                  f.downloading, f.download_progress, f.context,
+                  f.downloaded_at, f.synced_at, f.discovered_by_account_id,
+                  COALESCE(g.display_name, g.name) AS group_name,
                   g.username AS group_username
-           FROM files f
-           JOIN groups g ON g.id = f.group_id
-           WHERE f.id = $1""",
+             FROM files f
+             JOIN groups g ON g.id = f.group_id
+            WHERE f.id = $1""",
         file_id,
     )
     return dict(row) if row else None
@@ -1169,35 +1770,181 @@ async def get_status_stats() -> Dict:
 
 
 async def get_stats() -> Dict:
-    total_files      = await _qval("SELECT COUNT(*) FROM files")
+    # Scalar queries that don't need torrent expansion
     downloaded       = await _qval("SELECT COUNT(*) FROM files WHERE local_path IS NOT NULL")
     total_groups     = await _qval("SELECT COUNT(*) FROM groups")
     total_links      = await _qval("SELECT COUNT(*) FROM links")
     max_file_size    = await _qval("SELECT COALESCE(MAX(file_size),0) FROM files")
     excluded_grps    = await _qval("SELECT COUNT(*) FROM groups WHERE excluded=TRUE")
-    total_size       = await _qval("SELECT COALESCE(SUM(file_size),0) FROM files")
     downloaded_size  = await _qval("SELECT COALESCE(SUM(file_size),0) FROM files WHERE local_path IS NOT NULL")
-    recent           = await _qrow(
-        """SELECT COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours')                        AS cnt24,
-                  COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours'),0)      AS sz24,
-                  COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days')                          AS cnt7,
-                  COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days'),0)        AS sz7
-           FROM files"""
+
+    # Single pass: expand parsed torrents (file_count) into virtual file counts.
+    # file_size for parsed torrents is already set to content total_size by save_torrent_tree(),
+    # so all SUM(file_size) values are correct without extra joins.
+    row = await _qrow(
+        """WITH parsed AS (
+               SELECT file_id, file_count
+               FROM torrent_contents
+               WHERE error IS NULL
+           ),
+           fe AS (
+               SELECT f.file_ext, f.synced_at, f.file_size,
+                      p.file_count AS tc_count
+               FROM files f
+               LEFT JOIN parsed p ON p.file_id = f.id
+           )
+           SELECT
+             -- raw row counts (one per Telegram message)
+             COUNT(*)::bigint AS total_files,
+             COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours')::bigint AS real_24h,
+             COUNT(*) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days')::bigint  AS real_7d,
+             -- virtual counts (each parsed torrent → its file_count instead of 1)
+             SUM(CASE WHEN file_ext='torrent' AND tc_count IS NOT NULL
+                      THEN tc_count ELSE 1 END)::bigint AS virtual_all,
+             SUM(CASE WHEN synced_at >= NOW()-INTERVAL '24 hours'
+                      THEN CASE WHEN file_ext='torrent' AND tc_count IS NOT NULL
+                                THEN tc_count ELSE 1 END
+                      ELSE 0 END)::bigint AS cnt24,
+             SUM(CASE WHEN synced_at >= NOW()-INTERVAL '7 days'
+                      THEN CASE WHEN file_ext='torrent' AND tc_count IS NOT NULL
+                                THEN tc_count ELSE 1 END
+                      ELSE 0 END)::bigint AS cnt7,
+             -- sizes (already correct: file_size = content total for parsed torrents)
+             COALESCE(SUM(file_size),0)::bigint AS total_size,
+             COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '24 hours'),0)::bigint AS sz24,
+             COALESCE(SUM(file_size) FILTER (WHERE synced_at >= NOW()-INTERVAL '7 days'),0)::bigint AS sz7,
+             -- torrent breakdown for the UI note
+             COUNT(*) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL)::bigint AS parsed_count,
+             COALESCE(SUM(tc_count) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL),0)::bigint AS content_files,
+             COALESCE(SUM(tc_count) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL
+                                             AND synced_at >= NOW()-INTERVAL '24 hours'),0)::bigint AS content_24h,
+             COALESCE(SUM(tc_count) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL
+                                             AND synced_at >= NOW()-INTERVAL '7 days'),0)::bigint  AS content_7d,
+             COUNT(*) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL
+                              AND synced_at >= NOW()-INTERVAL '24 hours')::bigint AS parsed_24h,
+             COUNT(*) FILTER (WHERE file_ext='torrent' AND tc_count IS NOT NULL
+                              AND synced_at >= NOW()-INTERVAL '7 days')::bigint  AS parsed_7d
+           FROM fe"""
     )
+    mrow = await _qrow(
+        """SELECT COALESCE(SUM(file_count), 0)::bigint     AS magnet_count,
+                  COALESCE(SUM(file_size_total), 0)::bigint AS magnet_size
+           FROM links
+           WHERE platform = 'Magnet' AND file_count > 0 AND available IS NOT FALSE"""
+    )
+    # Deduped (unique-file) counts straight from the canonical MV — matches
+    # the figures the Files-tab pill computes from /api/files, so the bottom
+    # status bar can show the same "library size" instead of the raw cross-
+    # channel duplicate count.
+    drow = await _qrow(
+        """SELECT
+              COUNT(*)::bigint                                  AS unique_files,
+              COALESCE(SUM(fc.file_size), 0)::bigint            AS unique_total_size,
+              COALESCE(SUM(CASE WHEN fc.file_ext = 'torrent' AND tc.file_count IS NOT NULL
+                                THEN tc.file_count ELSE 1 END), 0)::bigint AS unique_virtual_files
+           FROM files_canonical fc
+           LEFT JOIN torrent_contents tc
+                  ON tc.file_id = fc.id AND tc.error IS NULL"""
+    )
+    mr = mrow or {}
+    r  = row  or {}
+    dr = drow or {}
     return {
-        "total_files":     total_files or 0,
-        "downloaded":      downloaded or 0,
-        "total_groups":    total_groups or 0,
-        "total_links":     total_links or 0,
-        "max_file_size":   max_file_size or 0,
-        "excluded_groups": excluded_grps or 0,
-        "total_size":      int(total_size or 0),
-        "downloaded_size": int(downloaded_size or 0),
-        "recent_24h":      int(recent["cnt24"] or 0) if recent else 0,
-        "recent_24h_size": int(recent["sz24"]  or 0) if recent else 0,
-        "recent_7d":       int(recent["cnt7"]  or 0) if recent else 0,
-        "recent_7d_size":  int(recent["sz7"]   or 0) if recent else 0,
+        "total_files":              int(r.get("total_files")    or 0),
+        "total_virtual_files":      int(r.get("virtual_all")    or 0),
+        "torrent_parsed_count":     int(r.get("parsed_count")   or 0),
+        "torrent_content_files":    int(r.get("content_files")  or 0),
+        "torrent_content_24h":      int(r.get("content_24h")    or 0),
+        "torrent_parsed_24h":       int(r.get("parsed_24h")     or 0),
+        "torrent_content_7d":       int(r.get("content_7d")     or 0),
+        "torrent_parsed_7d":        int(r.get("parsed_7d")      or 0),
+        "magnet_file_count":        int(mr.get("magnet_count")  or 0),
+        "magnet_file_size":         int(mr.get("magnet_size")   or 0),
+        "downloaded":               downloaded or 0,
+        "total_groups":             total_groups or 0,
+        "total_links":              total_links or 0,
+        "max_file_size":            max_file_size or 0,
+        "excluded_groups":          excluded_grps or 0,
+        "total_size":               int(r.get("total_size")     or 0),
+        "downloaded_size":          int(downloaded_size or 0),
+        "recent_24h":               int(r.get("real_24h")       or 0),
+        "recent_24h_size":          int(r.get("sz24")           or 0),
+        "recent_7d":                int(r.get("real_7d")        or 0),
+        "recent_7d_size":           int(r.get("sz7")            or 0),
+        "recent_24h_virtual":       int(r.get("cnt24")          or 0),
+        "recent_7d_virtual":        int(r.get("cnt7")           or 0),
+        # Deduped (unique-file) counts — see drow above. The Files-tab pill
+        # uses these via /api/files; exposing them here lets the status bar
+        # match the same library-size narrative.
+        "unique_files":             int(dr.get("unique_files")         or 0),
+        "unique_virtual_files":     int(dr.get("unique_virtual_files") or 0),
+        "unique_total_size":        int(dr.get("unique_total_size")    or 0),
     }
+
+
+async def export_files_cursor():
+    """Async generator yielding the full library as rows
+    (file_name, file_size, username, group_name, source_type).
+    Server-side cursor — no in-memory buffering of the full table.
+
+    Three sources are concatenated so the export row count matches the
+    figure shown in the status bar's "Tümü" pill:
+      • telegram      — Telegram message attachments (parsed torrents skipped,
+                        their inner files come from torrent_inner instead so we
+                        don't double-count the torrent's content size).
+      • torrent_inner — every file inside a parsed .torrent (one row per
+                        torrent_files entry; the .torrent message itself is
+                        suppressed in the telegram pass).
+      • magnet_inner  — every file listed in a magnet's `links.files_json`
+                        (populated by aria2c+DHT during magnet backfill).
+    """
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            # 1. Telegram message attachments, excluding parsed-torrent rows
+            #    so we don't ship both a torrent + its inner files (their
+            #    file_size sums would overlap).
+            async for row in conn.cursor(
+                """SELECT f.file_name, f.file_size,
+                          g.username, g.name AS group_name,
+                          'telegram'::text AS source_type
+                     FROM files f
+                     JOIN groups g ON g.id = f.group_id
+                LEFT JOIN torrent_contents tc
+                       ON tc.file_id = f.id AND tc.error IS NULL
+                    WHERE NOT (f.file_ext = 'torrent' AND tc.file_id IS NOT NULL)
+                    ORDER BY g.name, f.file_name"""
+            ):
+                yield row
+            # 2. Files inside parsed torrents
+            async for row in conn.cursor(
+                """SELECT tf.path AS file_name,
+                          tf.size AS file_size,
+                          g.username, g.name AS group_name,
+                          'torrent_inner'::text AS source_type
+                     FROM torrent_files tf
+                     JOIN files f  ON f.id = tf.torrent_id
+                     JOIN groups g ON g.id = f.group_id
+                    ORDER BY g.name, tf.path"""
+            ):
+                yield row
+            # 3. Files announced inside magnet `files_json` payloads (set by
+            #    the magnet-backfill enrich pass). Empty payloads contribute
+            #    no rows; the WHERE filters them out at the cursor level.
+            async for row in conn.cursor(
+                """SELECT COALESCE(entry->>'name', '?')::text AS file_name,
+                          COALESCE((entry->>'size')::bigint, 0) AS file_size,
+                          g.username, g.name AS group_name,
+                          'magnet_inner'::text AS source_type
+                     FROM links l
+                     JOIN groups g ON g.id = l.group_id
+                CROSS JOIN LATERAL jsonb_array_elements(l.files_json) AS entry
+                    WHERE l.platform = 'Magnet'
+                      AND l.files_json IS NOT NULL
+                      AND jsonb_typeof(l.files_json) = 'array'
+                      AND jsonb_array_length(l.files_json) > 0
+                    ORDER BY g.name"""
+            ):
+                yield row
 
 
 # ── Watch terms & notifications ───────────────────────────────────────────────
@@ -1234,16 +1981,18 @@ async def delete_watch(watch_id: int):
     await _exec("DELETE FROM watch_terms WHERE id = $1", watch_id)
 
 
-async def check_watches() -> int:
+async def check_watches() -> Tuple[int, List[Dict]]:
     """For each watch term, find new matching files since last check and accumulate
-    them into the active notification (creating one if none exists). Returns total
-    new file matches across all watches."""
+    them into the active notification (creating one if none exists). Returns
+    (total_new_matches, per_watch_payload) where the payload describes the new
+    rows so the sync layer can push them to the user's Saved Messages."""
     watches = await _q("SELECT id, keywords, last_checked_file_id FROM watch_terms")
     if not watches:
-        return 0
+        return 0, []
 
     cur_max = await _qval("SELECT COALESCE(MAX(id), 0) FROM files") or 0
     total_new = 0
+    per_watch: List[Dict] = []
 
     for w in watches:
         keywords = (w["keywords"] or "").strip()
@@ -1292,13 +2041,60 @@ async def check_watches() -> int:
                     w["id"], new_ids,
                 )
             total_new += len(new_ids)
+            per_watch.append({
+                "watch_id": int(w["id"]),
+                "keywords": keywords,
+                "file_ids": new_ids,
+            })
 
         await _exec(
             "UPDATE watch_terms SET last_checked_file_id = $1 WHERE id = $2",
             cur_max, w["id"],
         )
 
-    return total_new
+    return total_new, per_watch
+
+
+async def get_files_for_notification(file_ids: List[int]) -> List[Dict]:
+    """Resolve a list of file ids to the fields a notification message needs:
+    file name, file size, group name + username (for the t.me/ link), Telegram
+    message id."""
+    if not file_ids:
+        return []
+    rows = await _q(
+        """SELECT f.id, f.file_name, f.file_size, f.message_id, f.group_id,
+                  COALESCE(g.display_name, g.name) AS group_name,
+                  g.username AS group_username
+             FROM files f
+             JOIN groups g ON g.id = f.group_id
+            WHERE f.id = ANY($1::bigint[])
+         ORDER BY f.id DESC""",
+        list(file_ids),
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_notify_settings() -> Dict:
+    row = await _qrow("SELECT * FROM notify_settings WHERE id = 1")
+    if not row:
+        await _exec("INSERT INTO notify_settings (id) VALUES (1) ON CONFLICT DO NOTHING")
+        row = await _qrow("SELECT * FROM notify_settings WHERE id = 1")
+    return dict(row) if row else {"id": 1, "tg_push_enabled": False, "last_push_at": None}
+
+
+async def set_notify_settings(*, tg_push_enabled: Optional[bool] = None,
+                               last_push_at: Optional[datetime] = None):
+    parts: List[str] = []
+    args: List[Any] = []
+    idx = 1
+    if tg_push_enabled is not None:
+        parts.append(f"tg_push_enabled = ${idx}"); args.append(bool(tg_push_enabled)); idx += 1
+    if last_push_at is not None:
+        parts.append(f"last_push_at = ${idx}"); args.append(last_push_at); idx += 1
+    if not parts:
+        return
+    await _exec("INSERT INTO notify_settings (id) VALUES (1) ON CONFLICT DO NOTHING")
+    await _exec(f"UPDATE notify_settings SET {', '.join(parts)} WHERE id = 1", *args)
 
 
 async def list_active_notifications() -> List[Dict]:
@@ -1405,6 +2201,22 @@ async def upsert_account_group(account_id: int, group_id: int):
            ON CONFLICT (account_id, group_id) DO NOTHING""",
         account_id, group_id,
     )
+
+
+async def prune_account_groups(account_id: int, keep_gids: set) -> int:
+    """Remove account_groups rows for groups that are no longer in the
+    account's Telegram dialogs (i.e. the user left them since last sync).
+    Returns the number of rows deleted."""
+    if not keep_gids:
+        return 0
+    tag = await _exec(
+        "DELETE FROM account_groups WHERE account_id = $1 AND NOT (group_id = ANY($2::bigint[]))",
+        account_id, list(keep_gids),
+    )
+    try:
+        return int(tag.split()[-1])
+    except Exception:
+        return 0
 
 
 async def find_account_group_by_username(account_id: int, username: str) -> Optional[Dict]:
@@ -1536,6 +2348,17 @@ DEFAULT_HUNTER_SETTINGS = {
     "sources": "",  # empty = run every adapter registered in hunter._STAGE2_SOURCES
     "anthropic_api_key": "",
     "tg_temp_join_enabled": True,
+    "skip_old_channels": True,
+    # Magnet hunt — discovers magnet URIs via search engine dorks. Now part
+    # of the main pipeline as a step between Stage 2 (web seed harvest) and
+    # Stage 3 (Telegram enrichment). Disable to skip it without disabling
+    # the rest of the run.
+    "magnethunt_enabled": True,
+    # Magnet backfill — re-walks group history for magnet URIs the live handler
+    # may have missed, then enriches magnets that still lack a file list via
+    # aria2c+DHT. Used to live in Settings → "Geçmiş Veri Tarama"; now a
+    # pipeline stage between Magnet Hunt and Stage 3 enrichment.
+    "magnet_backfill_enabled": True,
     # Auto-learned keyword pool, comma-separated. Grown by Stage 3 after
     # each successful enrichment; merged into the Stage 2 keyword list on
     # the next run.
@@ -1588,6 +2411,39 @@ async def update_hunter_settings(patch: Dict):
         f"INSERT INTO hunter_settings (id) VALUES (1) ON CONFLICT DO NOTHING"
     )
     await _exec(f"UPDATE hunter_settings SET {', '.join(parts)} WHERE id = 1", *args)
+
+
+async def check_hunter_candidates_bulk(usernames: list) -> dict:
+    """Return {lowercase_username: 'blacklisted'|'joined'|'queued'} for
+    usernames that already exist in hunter_blacklist or hunter_candidates.
+    Channels absent from both tables are not in the result (→ truly new).
+    """
+    if not usernames:
+        return {}
+    lower = [u.lower() for u in usernames]
+    result: dict = {}
+    # hunter_blacklist covers auto-blacklisted channels not yet in candidates.
+    rows = await _q(
+        "SELECT username FROM hunter_blacklist WHERE username = ANY($1::text[])", lower
+    )
+    for r in rows:
+        result[r["username"]] = "blacklisted"
+    remaining = [u for u in lower if u not in result]
+    if remaining:
+        rows = await _q(
+            "SELECT username, COALESCE(status, 'discovered') AS status "
+            "FROM hunter_candidates WHERE username = ANY($1::text[])",
+            remaining,
+        )
+        for r in rows:
+            st = r["status"]
+            if st == "blacklisted":
+                result[r["username"]] = "blacklisted"
+            elif st == "joined":
+                result[r["username"]] = "joined"
+            else:
+                result[r["username"]] = "queued"
+    return result
 
 
 async def upsert_hunter_candidate(username: str) -> int:
@@ -1649,14 +2505,57 @@ async def list_blacklist() -> List[Dict]:
 _HUNTER_DECIDED_STATUSES = ("joined", "rejected", "blacklisted")
 
 
+async def sync_hunter_joined_from_groups() -> int:
+    # Bring candidates that the user joined outside the hunter flow (manual
+    # Telegram join, account import, etc.) in sync with reality so they stop
+    # cluttering the review queue.
+    rows = await _q(
+        """UPDATE hunter_candidates c
+              SET status = 'joined',
+                  decided_at = COALESCE(c.decided_at, NOW())
+             FROM groups g
+             JOIN account_groups ag ON ag.group_id = g.id
+            WHERE LOWER(g.username) = LOWER(c.username)
+              AND (c.status IS NULL OR c.status NOT IN ('joined','rejected','blacklisted'))
+            RETURNING c.id"""
+    )
+    return len(rows)
+
+
 async def list_hunter_candidates(
     status: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    sort: str = "score",
+    sort_by: str = "score",
+    sort_dir: str = "desc",
 ) -> Tuple[List[Dict], int]:
-    sort_col = {"score": "score DESC NULLS LAST", "discovered_at": "discovered_at DESC",
-                "members": "members DESC NULLS LAST"}.get(sort, "score DESC NULLS LAST")
+    # Reconcile externally-joined channels before reading so the review queue
+    # never shows rows the user has already added through another path.
+    try:
+        await sync_hunter_joined_from_groups()
+    except Exception as e:
+        import logging as _lg
+        _lg.getLogger("database").warning(
+            "sync_hunter_joined_from_groups failed: %s", e
+        )
+    _d = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    _SORT_MAP = {
+        "score":           f"score {_d} NULLS LAST",
+        "username":        f"username {_d}",
+        "members":         f"members {_d} NULLS LAST",
+        "estimated_files": f"estimated_files {_d} NULLS LAST",
+        "last_message_at": f"last_message_at {_d} NULLS LAST",
+        "discovered_at":   f"discovered_at {_d} NULLS LAST",
+        "status":          f"status {_d}",
+        "type_video":      f"(file_type_breakdown->>'video')::int {_d} NULLS LAST",
+        "type_audio":      f"(file_type_breakdown->>'audio')::int {_d} NULLS LAST",
+        "type_image":      f"(file_type_breakdown->>'image')::int {_d} NULLS LAST",
+        "type_archive":    f"(file_type_breakdown->>'archive')::int {_d} NULLS LAST",
+        "type_document":   f"(file_type_breakdown->>'document')::int {_d} NULLS LAST",
+        "type_software":   f"(file_type_breakdown->>'software')::int {_d} NULLS LAST",
+        "type_other":      f"(file_type_breakdown->>'other')::int {_d} NULLS LAST",
+    }
+    sort_col = _SORT_MAP.get(sort_by, f"score DESC NULLS LAST")
     where = ""
     args: List[Any] = []
     if status:
@@ -1742,6 +2641,16 @@ async def get_hunter_candidate(candidate_id: int) -> Optional[Dict]:
                         FROM hunter_sources s WHERE s.candidate_id = c.id) AS sources
            FROM hunter_candidates c WHERE c.id = $1""",
         candidate_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_hunter_candidate_by_username(username: str) -> Optional[Dict]:
+    row = await _qrow(
+        """SELECT c.*, (SELECT array_agg(DISTINCT s.source ORDER BY s.source)
+                        FROM hunter_sources s WHERE s.candidate_id = c.id) AS sources
+           FROM hunter_candidates c WHERE LOWER(c.username) = LOWER($1)""",
+        username,
     )
     return dict(row) if row else None
 
@@ -1910,6 +2819,73 @@ async def candidate_file_summary(candidate_id: int) -> Dict:
 
 async def delete_hunter_candidate(candidate_id: int):
     await _exec("DELETE FROM hunter_candidates WHERE id = $1", candidate_id)
+
+
+# ── Channel files — serves the unified detail lightbox from the Channels tab ──
+
+_EXT_TO_GROUP: Dict[str, str] = {e: g for g, exts in _EXT_GROUPS.items() for e in exts}
+
+
+async def list_channel_files(
+    group_id: int,
+    q: str = "",
+    ext: str = "",
+    sort_by: str = "date",
+    sort_dir: str = "desc",
+    limit: int = 500,
+    offset: int = 0,
+) -> Tuple[List[Dict], int]:
+    col_map = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "ext": "f.file_ext"}
+    col = col_map.get(sort_by, "f.date")
+    direction = "ASC" if sort_dir == "asc" else "DESC"
+    where_parts = ["f.group_id = $1"]
+    args: List[Any] = [group_id]
+    idx = 2
+    if q:
+        where_parts.append(f"f.file_name ILIKE ${idx}"); args.append(f"%{q}%"); idx += 1
+    if ext:
+        where_parts.append(f"LOWER(f.file_ext) = LOWER(${idx})"); args.append(ext.lstrip(".")); idx += 1
+    wsql = " AND ".join(where_parts)
+    total = await _qval(f"SELECT COUNT(*) FROM files f WHERE {wsql}", *args) or 0
+    args.extend([limit, offset])
+    rows = await _q(
+        f"""SELECT f.id AS message_id, f.file_name, f.file_ext, f.file_size, f.date, f.local_path,
+                   CASE
+                     WHEN f.file_name IS NULL OR f.file_name = '' THEN FALSE
+                     WHEN f.file_name ~ '^(video|audio|image|archive|document|app)_[0-9]' THEN FALSE
+                     ELSE TRUE
+                   END AS is_named
+            FROM files f
+            WHERE {wsql}
+            ORDER BY {col} {direction} NULLS LAST
+            LIMIT ${idx} OFFSET ${idx+1}""",
+        *args,
+    )
+    result = []
+    for r in rows:
+        d = dict(r)
+        fext = (d.get("file_ext") or "").lower().lstrip(".")
+        d["file_group"] = _EXT_TO_GROUP.get(fext, "other")
+        result.append(d)
+    return result, int(total)
+
+
+async def channel_file_summary(group_id: int) -> Dict:
+    row = await _qrow(
+        """SELECT COUNT(*) AS total,
+                  COALESCE(SUM(file_size), 0) AS total_size,
+                  COUNT(*) FILTER (WHERE file_name IS NOT NULL AND file_name != ''
+                    AND NOT (file_name ~ '^(video|audio|image|archive|document|app)_[0-9]')) AS named_count,
+                  COUNT(*) FILTER (WHERE file_name IS NULL OR file_name = ''
+                    OR file_name ~ '^(video|audio|image|archive|document|app)_[0-9]') AS ephemeral_count,
+                  COALESCE(SUM(file_size) FILTER (WHERE file_name IS NOT NULL AND file_name != ''
+                    AND NOT (file_name ~ '^(video|audio|image|archive|document|app)_[0-9]')), 0) AS named_size,
+                  COALESCE(SUM(file_size) FILTER (WHERE file_name IS NULL OR file_name = ''
+                    OR file_name ~ '^(video|audio|image|archive|document|app)_[0-9]'), 0) AS ephemeral_size
+           FROM files WHERE group_id = $1""",
+        group_id,
+    )
+    return dict(row) if row else {}
 
 
 # ── Telemetry ────────────────────────────────────────────────────────────────
@@ -2320,3 +3296,24 @@ async def search_torrent_files(q: str, limit: int = 100) -> List[Dict]:
             d["matched_paths"] = _json.loads(d["matched_paths"])
         result.append(d)
     return result
+
+
+async def get_activity_heatmap(group_id: int = None) -> list:
+    """Return file counts bucketed by day-of-week (0=Sun) and hour-of-day (UTC)."""
+    if group_id is not None:
+        rows = await _q(
+            "SELECT EXTRACT(DOW FROM date AT TIME ZONE 'UTC')::int AS dow,"
+            "       EXTRACT(HOUR FROM date AT TIME ZONE 'UTC')::int AS hour,"
+            "       COUNT(*)::int AS cnt"
+            "  FROM files WHERE group_id = $1"
+            "  GROUP BY dow, hour",
+            group_id,
+        )
+    else:
+        rows = await _q(
+            "SELECT EXTRACT(DOW FROM date AT TIME ZONE 'UTC')::int AS dow,"
+            "       EXTRACT(HOUR FROM date AT TIME ZONE 'UTC')::int AS hour,"
+            "       COUNT(*)::int AS cnt"
+            "  FROM files GROUP BY dow, hour"
+        )
+    return [dict(r) for r in rows]

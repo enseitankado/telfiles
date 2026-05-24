@@ -242,6 +242,29 @@ async def _probe_mega(session: aiohttp.ClientSession, url: str) -> Dict:
     return _shape(None, error="unexpected mega response")
 
 
+# ── Magnet URI ───────────────────────────────────────────────────────────────
+async def _probe_magnet(session: aiohttp.ClientSession, url: str) -> Dict:
+    """Parse magnet URI metadata — no network request needed."""
+    from urllib.parse import parse_qs
+    if '?' not in url:
+        return _shape(False, error="invalid magnet uri")
+    qs_str = url.split('?', 1)[1]
+    qs = parse_qs(qs_str, keep_blank_values=False)
+    xt = (qs.get('xt') or [''])[0]
+    infohash = ''
+    if 'urn:btih:' in xt.lower():
+        raw = xt.lower().split('urn:btih:', 1)[1]
+        infohash = raw.split('&')[0].strip()
+    if not infohash:
+        return _shape(False, error="no infohash in magnet uri")
+    name = (qs.get('dn') or [''])[0] or f"Magnet {infohash[:8].upper()}…"
+    try:
+        size = int((qs.get('xl') or ['0'])[0])
+    except (ValueError, TypeError):
+        size = 0
+    return _shape(True, [{'name': name, 'size': size}])
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 def _meta(html: str, prop: str) -> Optional[str]:
     m = re.search(
@@ -276,6 +299,7 @@ _DISPATCH = {
     "MediaFire":      _probe_mediafire,
     "Dropbox":        _probe_dropbox,
     "Mega":           _probe_mega,
+    "Magnet":         _probe_magnet,
 }
 
 

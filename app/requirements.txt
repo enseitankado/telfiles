@@ -9,5 +9,10 @@ python-dotenv==1.0.1
 aiohttp==3.10.11
 brotli==1.1.0
 cloakbrowser>=0.3.28
+# Optional — semantic file-name search (pgvector + sentence-transformers).
+# If either fails to install (e.g. no pgvector Postgres extension on host),
+# the app gracefully falls back to the lexical search path.
+pgvector>=0.3.0
+sentence-transformers>=3.0.0
 # Note: playwright is pulled in transitively by cloakbrowser (CloakBrowser
 # wraps Playwright's API around its patched Chromium binary).

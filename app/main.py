@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
@@ -22,6 +22,8 @@ import transfer as _transfer
 from sync import (
     cancel_download,
     download_file,
+    kick_magnet_backfill,
+    magnet_backfill_status,
     run_sync,
     setup_realtime_handler,
     sync_status,
@@ -424,6 +426,28 @@ def _start_background_tasks():
     # startup populates the in-process cache. Fire-and-forget; if it fails
     # the user just pays the usual cold cost.
     asyncio.create_task(_prewarm_files_cache())
+    # Periodic refresh of the files_canonical materialized view — keeps the
+    # dedupe MV within ~60s of live state without blocking readers.
+    asyncio.create_task(_files_canonical_refresh_loop())
+    # Background embedder for semantic file search. No-op if pgvector or
+    # sentence-transformers aren't available; logs and idles in that case.
+    if getattr(database, "_VECTOR_AVAILABLE", False):
+        try:
+            import embed_worker
+            embed_worker.start()
+        except Exception as e:
+            logger.warning(f"embed_worker start failed: {e}")
+
+
+async def _files_canonical_refresh_loop():
+    while True:
+        try:
+            await asyncio.sleep(60)
+            await database.refresh_files_canonical(force=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"files_canonical refresh loop: {e}")
 
 
 async def _prewarm_files_cache():
@@ -742,6 +766,8 @@ class AccountCreateRequest(BaseModel):
 class AccountUpdateRequest(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
+    api_id: Optional[int] = None
+    api_hash: Optional[str] = None
 
 
 @app.get("/api/accounts")
@@ -763,6 +789,7 @@ async def list_accounts():
             "group_count": r.get("group_count", 0),
             "file_count": r.get("file_count", 0),
             "api_id": r.get("api_id"),
+            "api_hash": r.get("api_hash") or "",
             "api_hash_masked": _mask_hash(r.get("api_hash") or ""),
             "authorized": authed,
         })
@@ -782,7 +809,8 @@ async def update_account(account_id: int, req: AccountUpdateRequest):
     a = await database.get_account(account_id)
     if not a:
         raise HTTPException(404, "Account not found")
-    await database.update_account(account_id, name=req.name, is_active=req.is_active)
+    await database.update_account(account_id, name=req.name, is_active=req.is_active,
+                                   api_id=req.api_id, api_hash=req.api_hash or None)
     return {"ok": True}
 
 
@@ -943,6 +971,284 @@ async def leave_group(group_id: int, purge: bool = Query(False), account_id: int
     return {"ok": True, "group_id": group_id, "name": g.get("name"), "purged": purge}
 
 
+# ── Channels: per-channel detail (hunter-shaped, used by the Channels grid) ──
+
+@app.get("/api/channels/{group_id}/detail")
+async def channels_detail(group_id: int):
+    """Return a hunter-candidate-shaped JSON for an already-joined group so the
+    Channels tab can reuse the same detail popup as the Channel Hunter. If the
+    group's username matches an existing hunter_candidate, overlay its richer
+    fields (score, sampled messages, sources from external discovery) on top
+    of the group's own counts."""
+    g = await database.get_group_by_id(group_id)
+    if not g:
+        raise HTTPException(404, "Group not found")
+
+    rows = await database._q(
+        """SELECT
+              COUNT(*)::bigint                                            AS file_count,
+              COALESCE(SUM(file_size), 0)::bigint                         AS total_size,
+              MAX(date)                                                   AS last_message_at,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('mp3','flac','wav','aac','ogg','m4a','opus','wma','ape','alac','mid','midi')) AS type_audio,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('mp4','mkv','avi','mov','wmv','flv','webm','m4v','ts','vob','rm','rmvb','3gp')) AS type_video,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('jpg','jpeg','png','gif','bmp','webp','svg','tiff','tif','heic','ico','raw')) AS type_image,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('zip','rar','7z','tar','gz','bz2','xz','zst','cab','ace','lzh','lz4','iso')) AS type_archive,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','txt','epub','rtf','csv','md')) AS type_document,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) IN ('exe','apk','dmg','deb','rpm','msi','pkg','bin','jar','sh','bat','ps1')) AS type_software,
+              COUNT(*) FILTER (WHERE LOWER(file_ext) = 'torrent') AS type_torrent
+           FROM files WHERE group_id = $1""",
+        group_id,
+    )
+    f = dict(rows[0]) if rows else {}
+    file_count = int(f.get("file_count") or 0)
+    total_size = int(f.get("total_size") or 0)
+    breakdown = {
+        "audio":    int(f.get("type_audio")    or 0),
+        "video":    int(f.get("type_video")    or 0),
+        "image":    int(f.get("type_image")    or 0),
+        "archive":  int(f.get("type_archive")  or 0),
+        "document": int(f.get("type_document") or 0),
+        "software": int(f.get("type_software") or 0),
+        "torrent":  int(f.get("type_torrent")  or 0),
+    }
+    accounted = sum(breakdown.values())
+    breakdown["other"] = max(0, file_count - accounted)
+
+    # If the channel was previously seen by the hunter, surface its discovery
+    # metadata + sources alongside the live group stats.
+    cand = None
+    if g.get("username"):
+        cand = await database.get_hunter_candidate_by_username(g["username"])
+
+    sources = (cand.get("sources") if cand else None) or ["internal:owned"]
+
+    return {
+        "kind":                "channel",   # discriminator for the frontend
+        "group_id":            group_id,
+        "id":                  cand.get("id") if cand else None,
+        "title":               g.get("display_name") or g.get("name"),
+        "username":            g.get("username") or "",
+        "description":         (cand or {}).get("description"),
+        "members":             g.get("member_count"),
+        "score":               (cand or {}).get("score") or 0,
+        "file_count_sample":   file_count,
+        "sampled_messages":    file_count,
+        "avg_file_size":       int(total_size / file_count) if file_count else 0,
+        "total_size":          total_size,
+        "last_message_at":     f.get("last_message_at"),
+        "discovered_at":       (cand or {}).get("discovered_at") or g.get("last_synced_at"),
+        "last_synced_at":      g.get("last_synced_at"),
+        "sources":             sources,
+        "status":              "joined",
+        "hidden":              bool(g.get("hidden")),
+        "excluded":            bool(g.get("excluded")),
+        "file_type_breakdown": breakdown,
+        "error":               None,
+    }
+
+
+@app.get("/api/channels/{group_id}/files")
+async def channel_files_list(
+    group_id: int,
+    q: str = Query(""),
+    ext: str = Query(""),
+    sort_by: str = Query("date"),
+    sort_dir: str = Query("desc"),
+    limit: int = Query(500, le=2000),
+    offset: int = Query(0),
+):
+    files, total = await database.list_channel_files(
+        group_id, q=q, ext=ext, sort_by=sort_by, sort_dir=sort_dir,
+        limit=limit, offset=offset,
+    )
+    summary = await database.channel_file_summary(group_id)
+    return {"files": files, "total": total, "summary": summary,
+            "limit": limit, "offset": offset}
+
+
+# ── Channels: bulk add / parse from free-form text ────────────────────────────
+
+import re as _re
+import aiohttp
+
+_CHANNEL_URL_RE = _re.compile(
+    r"(?:@|t(?:elegram)?\.me/|tg://resolve\?domain=)([A-Za-z][A-Za-z0-9_]{3,31})\b"
+)
+_CHANNEL_BARE_RE = _re.compile(r"^@?([A-Za-z][A-Za-z0-9_]{3,31})$")
+_URL_RE = _re.compile(r"https?://[^\s<>\"\)\]]+", _re.IGNORECASE)
+_HREF_RE = _re.compile(r"""href=["']([^"']+)["']""", _re.IGNORECASE)
+_TAG_RE  = _re.compile(r"<[^>]+>")
+
+
+def _extract_channel_usernames(text: str) -> list[str]:
+    """Pull every plausible Telegram channel username out of arbitrary text:
+    @username / t.me/x / telegram.me/x / tg://resolve?domain=x, plus bare
+    tokens that look like usernames on their own line. Deduped, lowercased."""
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _CHANNEL_URL_RE.finditer(text):
+        u = m.group(1).lower()
+        if u not in seen:
+            seen.add(u); out.append(u)
+    for tok in _re.split(r"[\s,;]+", text):
+        m = _CHANNEL_BARE_RE.match(tok.strip())
+        if m:
+            u = m.group(1).lower()
+            if u not in seen:
+                seen.add(u); out.append(u)
+    return out
+
+
+def _is_telegram_url(url: str) -> bool:
+    u = url.lower()
+    return ("t.me/" in u) or ("telegram.me/" in u) or u.startswith("tg://")
+
+
+async def _expand_external_urls(text: str,
+                                 fetch_timeout: float = 8.0,
+                                 max_urls: int = 8) -> str:
+    """For each non-Telegram URL in `text`, fetch the body and append its
+    href= attributes + tag-stripped text so the username regex picks up
+    channels that only appear inside the linked page. Telegram URLs are
+    left untouched (they're already pattern-matched directly)."""
+    if not text:
+        return text
+    urls = [u for u in _URL_RE.findall(text) if not _is_telegram_url(u)]
+    # Dedupe while preserving order, then cap so a malicious paste cannot
+    # exhaust the fetcher.
+    seen: set[str] = set(); ordered = []
+    for u in urls:
+        if u in seen: continue
+        seen.add(u); ordered.append(u)
+        if len(ordered) >= max_urls: break
+    if not ordered:
+        return text
+
+    headers = {"User-Agent": "telfiles/0.4 (channel-add fetcher)"}
+    timeout = aiohttp.ClientTimeout(total=fetch_timeout)
+
+    async def fetch_one(url: str) -> str:
+        try:
+            async with aiohttp.ClientSession(headers=headers, timeout=timeout) as s:
+                async with s.get(url, allow_redirects=True) as r:
+                    if r.status != 200:
+                        return ""
+                    raw = await r.text(errors="ignore")
+        except Exception:
+            return ""
+        hrefs = " ".join(_HREF_RE.findall(raw))
+        body  = _TAG_RE.sub(" ", raw)
+        return hrefs + " " + body
+
+    pieces = await asyncio.gather(*(fetch_one(u) for u in ordered))
+    return "\n".join([text, *pieces])
+
+
+class ChannelAddRequest(BaseModel):
+    text: Optional[str] = None
+    usernames: Optional[list[str]] = None  # Pre-parsed list — skips text parsing.
+    action: str = "join"                   # "join" → subscribe; "hunter" → queue
+    fetch_urls: bool = True
+
+
+class ChannelParseRequest(BaseModel):
+    text: str
+    fetch_urls: bool = True
+
+
+@app.post("/api/channels/parse")
+async def channels_parse(req: ChannelParseRequest):
+    """Resolve a free-form blob (including external page URLs) into a deduped
+    Telegram channel username list. Frontend uses this for the 'Çözümle'
+    preview before deciding which action to dispatch."""
+    text = req.text or ""
+    if req.fetch_urls:
+        text = await _expand_external_urls(text)
+    usernames = _extract_channel_usernames(text)
+    return {"ok": True, "usernames": usernames}
+
+
+@app.post("/api/channels/add")
+async def channels_add(req: ChannelAddRequest):
+    if req.usernames is not None:
+        # Caller supplied an already-parsed list (chunked submit path).
+        usernames: list[str] = []
+        seen: set[str] = set()
+        for raw in req.usernames:
+            u = (raw or "").strip().lstrip("@").lower()
+            if u and u not in seen:
+                seen.add(u); usernames.append(u)
+    else:
+        text = req.text or ""
+        if req.fetch_urls:
+            text = await _expand_external_urls(text)
+        usernames = _extract_channel_usernames(text)
+
+    if not usernames:
+        return {"ok": True, "parsed": [], "joined": [], "queued": [],
+                "skipped": [], "failed": [], "added": []}
+
+    if req.action == "hunter":
+        existing = await database.check_hunter_candidates_bulk(usernames)
+        added: list[str] = []
+        skipped_blacklisted: list[str] = []
+        skipped_joined: list[str] = []
+        skipped_queued: list[str] = []
+        for u in usernames:
+            ex = existing.get(u)
+            if ex == "blacklisted":
+                skipped_blacklisted.append(u)
+            elif ex == "joined":
+                skipped_joined.append(u)
+            elif ex is not None:   # queued / enriched / rejected / failed
+                skipped_queued.append(u)
+            else:
+                cid = await database.upsert_hunter_candidate(u)
+                if cid:
+                    await database.add_hunter_source(cid, "manual:paste", None)
+                    added.append(u)
+        return {
+            "ok": True, "parsed": usernames, "added": added,
+            "skipped_blacklisted": skipped_blacklisted,
+            "skipped_joined": skipped_joined,
+            "skipped_queued": skipped_queued,
+        }
+
+    # Default: directly join. Each username goes through the hunter join path
+    # so peer caching, FloodWait handling and the join queue all work for free.
+    import hunter as _hunter
+    joined: list[dict] = []
+    queued: list[dict] = []
+    skipped: list[dict] = []
+    failed:  list[dict] = []
+    for u in usernames:
+        cid = await database.upsert_hunter_candidate(u)
+        if not cid:
+            failed.append({"username": u, "error": "could not upsert"})
+            continue
+        await database.add_hunter_source(cid, "manual:paste", None)
+        try:
+            r = await _hunter.join_candidate(cid)
+        except Exception as e:
+            failed.append({"username": u, "error": str(e)})
+            continue
+        if r.get("ok"):
+            if r.get("already_member"):
+                skipped.append({"username": u, "group_id": r.get("group_id")})
+            elif r.get("queued"):
+                queued.append({"username": u, "wait_s": r.get("wait_s")})
+            else:
+                joined.append({"username": u, "group_id": r.get("group_id")})
+        else:
+            failed.append({"username": u, "error": r.get("error") or "unknown"})
+
+    return {"ok": True, "parsed": usernames,
+            "joined": joined, "queued": queued,
+            "skipped": skipped, "failed": failed}
+
+
 # ── Files ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/files")
@@ -962,6 +1268,8 @@ async def search_files(
     limit: int = Query(100, le=1000),
     offset: int = Query(0),
     dedupe: bool = Query(True),
+    mode: str = Query("exact"),
+    search_caption: bool = Query(False),
 ):
     gids: Optional[list] = None
     if group_ids:
@@ -975,15 +1283,68 @@ async def search_files(
             fids = [int(x) for x in file_ids.split(",") if x.strip()]
         except ValueError:
             fids = None
-    files, total = await database.search_files(
+    files, stats = await database.search_files(
         query=q, ext=ext, ext_group=ext_group, group_id=group_id, group_ids=gids, file_ids=fids,
         date_from=date_from, date_to=date_to,
         size_min=size_min, size_max=size_max,
         sort_by=sort_by, sort_dir=sort_dir,
         limit=limit, offset=offset,
         dedupe=dedupe,
+        mode=mode if mode in ("exact", "semantic", "hybrid") else "exact",
+        search_caption=search_caption,
     )
-    return {"files": files, "total": total, "limit": limit, "offset": offset}
+    return {
+        "files": files,
+        "total":         stats.get("total", 0),
+        "virtual_total": stats.get("virtual_total", 0),
+        "total_size":    stats.get("total_size", 0),
+        "limit": limit, "offset": offset,
+        "mode": mode,
+    }
+
+
+@app.get("/api/embed/status")
+async def embed_status():
+    """Reports whether semantic search is available and how far the
+    background embedder has progressed."""
+    available = getattr(database, "_VECTOR_AVAILABLE", False)
+    progress = {}
+    if available:
+        try:
+            import embed_worker
+            progress = embed_worker.get_progress()
+        except Exception:
+            pass
+    return {"available": available, **progress}
+
+
+@app.get("/api/files/shares")
+async def file_shares(fname: str = Query(...), fsize: int = Query(...)):
+    """Return the channels in which the (file_name, file_size) pair appears.
+    Used by the Files-grid dup badge tooltip to expand "×3" into the actual
+    channel list on hover. Capped at 30 rows so the tooltip stays readable."""
+    rows = await database._q(
+        """SELECT f.group_id, f.message_id, f.date,
+                  COALESCE(g.display_name, g.name) AS group_name,
+                  g.username AS group_username
+             FROM files f
+             JOIN groups g ON g.id = f.group_id
+            WHERE f.file_name = $1 AND f.file_size = $2
+         ORDER BY f.date DESC
+            LIMIT 30""",
+        fname, fsize,
+    )
+    return {"shares": [dict(r) for r in rows], "limited_to": 30}
+
+
+@app.get("/api/files/top-shared")
+async def top_shared_files(
+    window: str = Query("all"),   # 'all' | '7d' | '30d'
+    limit:  int = Query(30, le=100),
+    min_shares: int = Query(2, ge=1),
+):
+    items = await database.get_top_shared_files(window=window, limit=limit, min_shares=min_shares)
+    return {"items": items, "window": window, "limit": limit}
 
 
 @app.get("/api/files/{file_id}")
@@ -1082,6 +1443,42 @@ async def cancel_file_download(file_id: int):
     if cancel_download(file_id):
         return {"ok": True, "cancelled": True}
     return {"ok": True, "cancelled": False, "message": "No active download"}
+
+
+@app.post("/api/files/{file_id}/forward-to-me")
+async def forward_file_to_me(file_id: int):
+    """Server-side forward of the source Telegram message into the user's own
+    Saved Messages chat. Doesn't download the file — uses the file's stored
+    (group_id, message_id) and the account that originally discovered it.
+
+    Two efficiency wins vs. download-then-upload:
+      • Zero bandwidth: forward stays inside Telegram's network
+      • Instant: no MTProto chunk upload required (4 GB files become 1 RPC)
+    """
+    f = await database.get_file_by_id(file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+    gid    = f.get("group_id")
+    msg_id = f.get("message_id")
+    acc_id = int(f.get("discovered_by_account_id") or 1)
+    if gid is None or msg_id is None:
+        raise HTTPException(400, "File has no source message to forward")
+    try:
+        client = await get_client(acc_id)
+        if not client.is_connected():
+            await client.connect()
+        if not await client.is_user_authorized():
+            raise HTTPException(401, "Telegram not authorized for that account")
+        # `"me"` resolves to the user's own Saved Messages peer.
+        await client.forward_messages("me", int(msg_id), from_peer=int(gid))
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Capture the underlying class so the UI can show a useful tooltip
+        # rather than a generic 500.
+        logger.warning(f"forward-to-me failed (file {file_id}): {e}")
+        raise HTTPException(500, f"Forward failed: {e}")
+    return {"ok": True, "file_id": file_id}
 
 
 @app.delete("/api/files/{file_id}/local")
@@ -1307,11 +1704,124 @@ async def search_links_endpoint(
     return {"links": links, "total": total, "limit": limit, "offset": offset}
 
 
+@app.post("/api/links/backfill-magnets")
+async def start_magnet_backfill():
+    started = kick_magnet_backfill()
+    if not started:
+        return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
+    return {"ok": True}
+
+
+@app.get("/api/links/backfill-magnets/status")
+async def get_magnet_backfill_status():
+    return dict(magnet_backfill_status)
+
+
+@app.post("/api/links/{link_id}/retry-magnet-metadata")
+async def retry_magnet_metadata(link_id: int):
+    """Clear the sticky `magnet-enrich:*` probe error for a single magnet and
+    kick aria2c+DHT one more time. Useful when a torrent went dark briefly
+    and now has peers again."""
+    row = await database._qrow(
+        "SELECT url, platform, probe_error FROM links WHERE id = $1", link_id
+    )
+    if not row:
+        raise HTTPException(404, "Link not found")
+    if row["platform"] != "Magnet":
+        raise HTTPException(400, "Not a magnet link")
+    # Clear sticky error so the enrich pass picks it up again.
+    await database._exec(
+        "UPDATE links SET probe_error = NULL, probed_at = NULL WHERE id = $1",
+        link_id,
+    )
+    # Fetch metadata synchronously so the UI can show success/failure now.
+    import magnet_metadata
+    try:
+        meta = await magnet_metadata.fetch_magnet_metadata(row["url"], timeout=60)
+    except Exception as e:
+        await database.record_probe_result(
+            link_id=link_id, available=None, files=[],
+            error=f"magnet-enrich:{str(e)[:80]}",
+        )
+        return {"ok": False, "error": str(e)}
+    if meta and meta.get("file_count"):
+        files = magnet_metadata.magnet_to_link_files(meta)
+        await database.record_probe_result(
+            link_id=link_id, available=True, files=files, error=None,
+        )
+        return {"ok": True, "file_count": len(files)}
+    await database.record_probe_result(
+        link_id=link_id, available=None, files=[],
+        error="magnet-enrich:no-metadata",
+    )
+    return {"ok": False, "error": "no peers / metadata unavailable"}
+
+
+@app.post("/api/links/retry-dead-magnets")
+async def retry_dead_magnets_bulk():
+    """Bulk: clear `magnet-enrich:*` errors on every dead magnet so the next
+    magnet-backfill stage picks them up again. Returns the number of rows
+    cleared. Does NOT trigger the backfill; user starts it via Hunter."""
+    rows = await database._q(
+        """UPDATE links
+              SET probe_error = NULL, probed_at = NULL
+            WHERE platform = 'Magnet'
+              AND probe_error LIKE 'magnet-enrich:%'
+            RETURNING id"""
+    )
+    return {"ok": True, "cleared": len(rows)}
+
+
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/stats")
 async def get_stats():
     return await database.get_stats()
+
+
+@app.get("/api/activity/heatmap")
+async def activity_heatmap(group_id: Optional[int] = None):
+    return await database.get_activity_heatmap(group_id)
+
+
+@app.get("/api/export/files")
+async def export_files():
+    """Stream all files as a gzip-compressed TSV (channel \\t size \\t filename)."""
+    import gzip, io
+    from datetime import date as _date
+
+    async def _generate():
+        buf = io.BytesIO()
+        gz  = gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6)
+        # Column order kept stable; `source_type` appended so consumers that
+        # only read the first three columns keep working. Values:
+        #   telegram | torrent_inner | magnet_inner
+        gz.write(b"channel\tfile_size\tfile_name\tsource_type\n")
+        chunk_rows = 0
+        async for row in database.export_files_cursor():
+            ch   = f"@{row['username']}" if row['username'] else (row['group_name'] or '?')
+            src  = row['source_type'] or 'telegram'
+            line = f"{ch}\t{row['file_size'] or 0}\t{row['file_name'] or ''}\t{src}\n"
+            gz.write(line.encode('utf-8', errors='replace'))
+            chunk_rows += 1
+            if chunk_rows >= 5000:
+                gz.flush()
+                chunk_rows = 0
+                data = buf.getvalue()
+                buf.seek(0); buf.truncate()
+                if data:
+                    yield data
+        gz.close()
+        tail = buf.getvalue()
+        if tail:
+            yield tail
+
+    fname = f"telfiles_export_{_date.today().strftime('%Y%m%d')}.tsv.gz"
+    return StreamingResponse(
+        _generate(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ── Version + update check ───────────────────────────────────────────────────
@@ -1472,6 +1982,23 @@ async def dismiss_notification(notification_id: int):
     return {"ok": True}
 
 
+# ── Watch notifications: push toggle (Telegram Saved Messages) ───────────────
+
+class NotifySettingsRequest(BaseModel):
+    tg_push_enabled: Optional[bool] = None
+
+
+@app.get("/api/notify/settings")
+async def api_get_notify_settings():
+    return await database.get_notify_settings()
+
+
+@app.put("/api/notify/settings")
+async def api_set_notify_settings(req: NotifySettingsRequest):
+    await database.set_notify_settings(tg_push_enabled=req.tg_push_enabled)
+    return await database.get_notify_settings()
+
+
 # ── Hunter (channel discovery) ────────────────────────────────────────────────
 
 import hunter
@@ -1536,11 +2063,14 @@ async def hunter_skip_stage():
 @app.get("/api/hunter/candidates")
 async def hunter_list_candidates(
     status: Optional[str] = Query(None),
-    sort: str = Query("score"),
+    sort_by: str = Query("score"),
+    sort_dir: str = Query("desc"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
 ):
-    rows, total = await database.list_hunter_candidates(status=status, sort=sort, limit=limit, offset=offset)
+    rows, total = await database.list_hunter_candidates(
+        status=status, sort_by=sort_by, sort_dir=sort_dir, limit=limit, offset=offset
+    )
     # decode JSONB
     for r in rows:
         ftb = r.get("file_type_breakdown")
@@ -1551,6 +2081,21 @@ async def hunter_list_candidates(
             except Exception:
                 r["file_type_breakdown"] = {}
     return {"candidates": rows, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/api/hunter/candidates/by_username/{username}")
+async def hunter_get_by_username(username: str):
+    c = await database.get_hunter_candidate_by_username(username)
+    if not c:
+        raise HTTPException(404, "Not a hunter candidate")
+    ftb = c.get("file_type_breakdown")
+    if isinstance(ftb, str):
+        try:
+            import json as _j
+            c["file_type_breakdown"] = _j.loads(ftb)
+        except Exception:
+            c["file_type_breakdown"] = {}
+    return c
 
 
 @app.get("/api/hunter/candidates/{cid}")
@@ -1642,6 +2187,25 @@ async def hunter_clear_candidates():
 async def hunter_backfill_peer_cache(account_id: int = Query(1)):
     n = await hunter.backfill_peer_cache(account_id)
     return {"ok": True, "backfilled": n}
+
+
+@app.post("/api/hunter/magnet_hunt/run")
+async def hunter_magnet_hunt_run():
+    started = hunter.kick_magnet_hunt()
+    if not started:
+        return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
+    return {"ok": True}
+
+
+@app.post("/api/hunter/magnet_hunt/cancel")
+async def hunter_magnet_hunt_cancel():
+    cancelled = hunter.cancel_magnet_hunt()
+    return {"ok": True, "cancelled": cancelled}
+
+
+@app.get("/api/hunter/magnet_hunt/status")
+async def hunter_magnet_hunt_status():
+    return dict(hunter.magnet_hunt_status)
 
 
 @app.post("/api/hunter/candidates/{cid}/deep_scan")
@@ -1746,6 +2310,25 @@ async def hunter_file_blob(cid: int, msg_id: int):
         await database.clear_candidate_file_local_path(cid, msg_id)
         raise HTTPException(404, "Dosya diskten silinmiş")
     return FileResponse(p, filename=cfile.get("file_name") or os.path.basename(p))
+
+
+@app.get("/api/hunter/candidates/{cid}/files/{msg_id}/preview")
+async def hunter_file_preview(cid: int, msg_id: int):
+    import hunter as _hunter
+    try:
+        path, mime, fname = await _hunter.preview_candidate_file(cid, msg_id)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("too_large:"):
+            raise HTTPException(413, msg)
+        raise HTTPException(404, msg)
+    except Exception as e:
+        logger.exception("hunter preview failed for cid=%s msg=%s: %s", cid, msg_id, e)
+        raise HTTPException(500, f"preview_failed: {e}")
+    headers = {"Content-Disposition": f"inline; filename=\"{fname}\""}
+    return FileResponse(path, media_type=mime, headers=headers)
 
 
 @app.delete("/api/hunter/candidates/{cid}/files/{msg_id}/blob")

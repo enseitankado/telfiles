@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = official Postgres 16 image with pgvector
+    # extension pre-installed. Drop-in replacement for postgres:16-alpine;
+    # the existing pgdata volume keeps working without migration.
+    image: pgvector/pgvector:pg16
     container_name: telfiles-postgres
     restart: unless-stopped
     environment:
@@ -37,3 +40,6 @@ services:
       - DATA_DIR=/app/data
       - DOWNLOADS_DIR=/app/downloads
       - DATABASE_URL=postgresql://telfiles:telfiles@postgres/telfiles
+      # Embedding model lives inside the image (baked in by the Dockerfile),
+      # so HF_HOME is just consistency with the build environment.
+      - HF_HOME=/app/models

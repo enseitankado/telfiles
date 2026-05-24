@@ -38,6 +38,9 @@ const S = {
   showHidden: false,
   groupSort: 'count',
   groupSortDir: 'desc',
+  searchMode: localStorage.getItem('tf_search_mode') || 'exact',  // exact | hybrid
+  // Channels tab (Files-style grid over the same _groups data).
+  chSort: 'count', chSortDir: 'desc',
 };
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -53,30 +56,109 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') {
       const cn = document.getElementById('col-name');
       if (cn && document.activeElement === cn) { cn.value = ''; debouncedLoad(); }
+      const prev = document.getElementById('hf-preview-overlay');
+      if (prev && prev.classList.contains('open')) { hfClosePreview(); return; }
     }
   });
   document.getElementById('table-wrap').addEventListener('mousemove', onCtxMove);
   document.getElementById('table-wrap').addEventListener('mouseleave', () => {
     document.getElementById('ctx-tip').style.display = 'none';
   });
+  // Toolbar can wrap at narrow widths, changing its height.
+  // Recalculate sticky offsets so the hunter grid header stays below it.
+  let _hgResizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(_hgResizeTimer);
+    _hgResizeTimer = setTimeout(() => {
+      if (S.activeTab === 'hunter') _hgUpdateStickyTop();
+    }, 100);
+  });
 });
 
 // ── UI password gate (greeter) ───────────────────────────────────────────────
+function _startupPhaseMsg(retries) {
+  if (retries < 4)  return t('startup.connecting');
+  if (retries < 10) return t('startup.dbInit');
+  return t('startup.waiting', { n: retries });
+}
+
+function _showStartupBar(retries) {
+  const bar = document.getElementById('loading-startup-bar');
+  const msg = document.getElementById('loading-startup-msg');
+  if (bar) bar.style.display = 'flex';
+  if (msg) msg.textContent = _startupPhaseMsg(retries);
+}
+
+function _hideStartupBar() {
+  const bar = document.getElementById('loading-startup-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+function _isNetworkError(e) { return e instanceof TypeError; }
+
+// ── Greeter readiness polling ────────────────────────────────────────────────
+// Called when a network error occurs while the greeter is visible. Disables
+// the login button and polls until the backend responds, then re-enables it.
+let _greeterPollRunning = false;
+function _greeterSetReady(ready) {
+  const btn = document.getElementById('ug-login');
+  const bar = document.getElementById('ug-startup-bar');
+  if (btn) btn.disabled = !ready;
+  if (bar) bar.style.display = ready ? 'none' : 'flex';
+}
+async function _greeterReadinessPoll() {
+  if (_greeterPollRunning) return;
+  _greeterPollRunning = true;
+  _greeterSetReady(false);
+  const msgEl = document.getElementById('ug-startup-msg');
+  let retries = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    retries++;
+    if (msgEl) msgEl.textContent = _startupPhaseMsg(retries);
+    try {
+      const res = await fetch('/api/uiauth/check');
+      if (res.ok) {
+        _greeterPollRunning = false;
+        _greeterSetReady(true);
+        document.getElementById('ug-msg').textContent = '';
+        document.getElementById('ug-pass')?.focus();
+        return;
+      }
+    } catch (e) {}
+  }
+}
+
 async function uiAuthBoot() {
   show('loading-screen');
-  let r;
-  try {
-    const res = await fetch('/api/uiauth/check');
-    r = await res.json();
-  } catch (e) {
-    r = { authenticated: false };
-  }
-  hide('loading-screen');
-  if (r.authenticated) {
-    checkAuth();   // fall through to the existing Telegram-auth check
-  } else {
-    show('ui-greeter');
-    setTimeout(() => document.getElementById('ug-pass')?.focus(), 30);
+  let retries = 0;
+  while (true) {
+    try {
+      const res = await fetch('/api/uiauth/check');
+      if (res.ok) {
+        const r = await res.json();
+        _hideStartupBar();
+        if (r.authenticated) {
+          // Keep loading screen visible until checkAuth() completes
+          try {
+            await checkAuth();
+            return;
+          } catch (e) {
+            // Backend dropped during checkAuth — keep retrying
+          }
+        } else {
+          hide('loading-screen');
+          show('ui-greeter');
+          setTimeout(() => document.getElementById('ug-pass')?.focus(), 30);
+          return;
+        }
+      }
+    } catch (e) {}
+    // Backend not reachable yet — keep polling and show progress
+    retries++;
+    show('loading-screen');
+    _showStartupBar(retries);
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
 }
 
@@ -88,12 +170,23 @@ async function uiAuthLogin() {
   try {
     await api('/api/uiauth/login', { method: 'POST', json: { password: pw, remember } });
   } catch (e) {
+    if (_isNetworkError(e)) {
+      msg.textContent = t('startup.connecting');
+      _greeterReadinessPoll();
+      return;
+    }
     msg.textContent = e.message || t('pw.wrongPass');
     return;
   }
   document.getElementById('ug-pass').value = '';
   hide('ui-greeter');
-  checkAuth();
+  try {
+    await checkAuth();
+  } catch (e) {
+    // Backend disappeared right after login — go back to startup polling
+    show('loading-screen');
+    uiAuthBoot();
+  }
 }
 
 async function uiAuthLogout() {
@@ -131,21 +224,46 @@ async function _refreshUiPwState() {
 }
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
+const _THEME_META = {
+  light:     { bg:'#f0f2f5', card:'#fff',     l1:'#2563eb', l2:'#9ca3af', l3:'#d1d5db', shadow:true  },
+  dark:      { bg:'#0f172a', card:'#1e293b',  l1:'#3b82f6', l2:'#94a3b8', l3:'#475569'              },
+  nord:      { bg:'#2e3440', card:'#3b4252',  l1:'#88c0d0', l2:'#d8dee9', l3:'#5e81ac'              },
+  solarized: { bg:'#fdf6e3', card:'#fefaf3',  l1:'#268bd2', l2:'#586e75', l3:'#93a1a1', shadow:true  },
+  sepia:     { bg:'#f4ecd8', card:'#fbf6e8',  l1:'#a64b1c', l2:'#5d4a26', l3:'#9b8762', shadow:true  },
+  forest:    { bg:'#0d1f17', card:'#142c20',  l1:'#4ade80', l2:'#bcd6c5', l3:'#5e8474'              },
+  slate:     { bg:'#0f172a', card:'#1e293b',  l1:'#a78bfa', l2:'#cbd5e1', l3:'#64748b'              },
+  crimson:   { bg:'#1a0d11', card:'#291418',  l1:'#ef4444', l2:'#e2c3c8', l3:'#8b6470'              },
+  rosepine:  { bg:'#191724', card:'#1f1d2e',  l1:'#ebbcba', l2:'#c4c1d8', l3:'#6e6a86'              },
+  mocha:     { bg:'#f3eee6', card:'#faf6ee',  l1:'#7c5a30', l2:'#5a4a30', l3:'#9c8966', shadow:true  },
+};
+
+function _applyThemePreview(name) {
+  const m = _THEME_META[name] || _THEME_META.light;
+  const prev = document.getElementById('theme-prev');
+  if (prev) prev.style.background = m.bg;
+  const card = document.getElementById('theme-prev-card');
+  if (card) { card.style.background = m.card; card.style.boxShadow = m.shadow ? '0 1px 2px rgba(0,0,0,.08)' : 'none'; }
+  const l1 = document.getElementById('theme-prev-l1');
+  if (l1) l1.style.background = m.l1;
+  const l2 = document.getElementById('theme-prev-l2');
+  if (l2) l2.style.background = m.l2;
+  const l3 = document.getElementById('theme-prev-l3');
+  if (l3) l3.style.background = m.l3;
+  const sel = document.getElementById('theme-select');
+  if (sel) sel.value = name;
+}
+
 function setTheme(name) {
   document.documentElement.setAttribute('data-theme', name);
   try { localStorage.setItem('theme', name); } catch(e){}
-  document.querySelectorAll('.theme-card').forEach(c =>
-    c.classList.toggle('active', c.dataset.theme === name)
-  );
+  _applyThemePreview(name);
 }
 
 function applySavedTheme() {
   let saved = 'light';
   try { saved = localStorage.getItem('theme') || 'light'; } catch(e){}
   document.documentElement.setAttribute('data-theme', saved);
-  document.querySelectorAll('.theme-card').forEach(c =>
-    c.classList.toggle('active', c.dataset.theme === saved)
-  );
+  _applyThemePreview(saved);
 }
 
 function show(id) { document.getElementById(id).style.display = 'flex'; }
@@ -185,6 +303,8 @@ async function showApp() {
   initColResize();
   await loadGroups();
   fetchStats();
+  _initSemanticToggle();
+  _initCaptionToggle();
   loadFiles();
   loadActiveNotifications();
   pollSync();
@@ -245,10 +365,101 @@ async function fetchStats() {
   const el24 = document.getElementById('ts-24h');
   const el7d = document.getElementById('ts-7d');
   const elAll = document.getElementById('ts-all');
-  const sz = (n,b) => `${(n||0).toLocaleString()} <span class="ts-sz">${fmtSize(b||0)}</span>`;
-  if (el24) el24.innerHTML = sz(_stats.recent_24h, _stats.recent_24h_size);
-  if (el7d) el7d.innerHTML = sz(_stats.recent_7d,  _stats.recent_7d_size);
-  if (elAll) elAll.innerHTML = sz(_stats.total_files, _stats.total_size);
+  const exportMeta = document.getElementById('export-meta');
+  if (exportMeta && _stats.total_files) {
+    // Export now contains three concatenated sources:
+    //   • telegram messages excluding parsed-torrent placeholders
+    //     (raw row count: total_files − torrent_parsed_count)
+    //   • inner files of every parsed torrent (torrent_content_files)
+    //   • inner files of every magnet's files_json (magnet_file_count)
+    // The status bar's "Tümü" pill shows the deduped/library variant —
+    // these numbers are close but not identical because the TSV keeps
+    // cross-channel duplicates whereas the pill collapses them.
+    const telegramRows = (_stats.total_files || 0) - (_stats.torrent_parsed_count || 0);
+    const torrentInner = _stats.torrent_content_files || 0;
+    const magnetInner  = _stats.magnet_file_count || 0;
+    const exportTotal  = telegramRows + torrentInner + magnetInner;
+    exportMeta.textContent = `${exportTotal.toLocaleString()} ${t('export.rowCount')}`;
+    const parts = [`📨 ${telegramRows.toLocaleString()} Telegram`];
+    if (torrentInner > 0) parts.push(`📦 ${torrentInner.toLocaleString()} torrent içi`);
+    if (magnetInner > 0)  parts.push(`🧲 ${magnetInner.toLocaleString()} magnet içi`);
+    exportMeta.title = parts.join(' · ');
+  }
+
+  const sz = (n, b) =>
+    `${(n||0).toLocaleString()}<br><span class="ts-sz">${fmtSize(b||0)}</span>`;
+
+  if (el24) {
+    el24.innerHTML = sz(_stats.recent_24h || 0, _stats.recent_24h_size || 0);
+    const sb24 = el24.closest('.sb-stats');
+    if (sb24) {
+      const inner24 = (_stats.torrent_content_24h || 0) - (_stats.torrent_parsed_24h || 0);
+      if (inner24 > 0) sb24.dataset.tip = `+${inner24.toLocaleString()} ${t('topstats.torrentInner')}`;
+      else delete sb24.dataset.tip;
+    }
+  }
+
+  if (el7d) {
+    el7d.innerHTML = sz(_stats.recent_7d || 0, _stats.recent_7d_size || 0);
+    const sb7 = el7d.closest('.sb-stats');
+    if (sb7) {
+      const inner7 = (_stats.torrent_content_7d || 0) - (_stats.torrent_parsed_7d || 0);
+      if (inner7 > 0) sb7.dataset.tip = `+${inner7.toLocaleString()} ${t('topstats.torrentInner')}`;
+      else delete sb7.dataset.tip;
+    }
+  }
+
+  if (elAll) {
+    const magnetCount = _stats.magnet_file_count || 0;
+    const magnetSize  = _stats.magnet_file_size  || 0;
+    // Use the DEDUPED counts (files_canonical) so the bar matches the
+    // "X benzersiz dosya · Y" pill on the Files tab. Earlier we used raw
+    // counts which inflated the totals when the same file appeared in
+    // multiple channels.
+    const allCount = (_stats.unique_virtual_files || _stats.unique_files || 0) + magnetCount;
+    const allSize  = (_stats.unique_total_size  || 0) + magnetSize;
+    elAll.innerHTML = sz(allCount, allSize);
+    const sbAll = document.getElementById('sb-stats-all');
+    if (sbAll) {
+      // Tooltip surfaces the raw Telegram count so the user can still see
+      // the "with duplicates" number when they need it.
+      const parts = [];
+      const rawCount     = _stats.total_files || 0;
+      const torrentInner = (_stats.torrent_content_files || 0) - (_stats.torrent_parsed_count || 0);
+      const uniqueCount  = _stats.unique_files || 0;
+      parts.push(`${uniqueCount.toLocaleString()} ${t('topstats.uniqueFiles') || 'benzersiz dosya'}`);
+      parts.push(`(${rawCount.toLocaleString()} ${t('topstats.realTg')})`);
+      if (torrentInner > 0) parts.push(`+${torrentInner.toLocaleString()} ${t('topstats.torrentInner')}`);
+      if (magnetCount > 0)  parts.push(`+${magnetCount.toLocaleString()} ${t('topstats.magnetInner')}`);
+      sbAll.dataset.tip = parts.join('\n');
+    }
+  }
+
+  _bindSbTooltip();
+}
+
+// Fixed-position tooltip for stat blocks — sidesteps overflow:hidden on #app-status-bar/#main
+function _bindSbTooltip() {
+  const tip = document.getElementById('sb-tip');
+  if (!tip) return;
+  document.querySelectorAll('#app-status-bar .sb-stats[data-tip]').forEach(el => {
+    if (el._sbTipBound) return;
+    el._sbTipBound = true;
+    el.addEventListener('mouseenter', () => {
+      const text = el.dataset.tip;
+      if (!text) return;
+      tip.textContent = text;
+      tip.style.display = 'block';
+      const r  = el.getBoundingClientRect();
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+      tip.style.left = left + 'px';
+      tip.style.top  = (r.top - th - 8) + 'px';
+    });
+    el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
 }
 
 function _initColResize(tableId, storeKey) {
@@ -378,13 +589,17 @@ function authSkipCreds() {
   });
 }
 
+function _loginNetworkErr(e) {
+  if (_isNetworkError(e)) { loginMsg(t('startup.connecting')); return true; }
+  return false;
+}
 async function authSendCode() {
   const phone = document.getElementById('inp-phone').value.trim();
   if (!phone) return;
   try {
     await api('/api/auth/send-code', {method:'POST',json:{phone, account_id: _loginAccountId}});
     showStep('code');
-  } catch(e) { loginMsg(e.message); }
+  } catch(e) { if (!_loginNetworkErr(e)) loginMsg(e.message); }
 }
 async function authVerifyCode() {
   const phone = document.getElementById('inp-phone').value.trim();
@@ -393,14 +608,14 @@ async function authVerifyCode() {
     const r = await api('/api/auth/verify-code', {method:'POST',json:{phone, code, account_id: _loginAccountId}});
     if (r.needs_2fa) { showStep('2fa'); return; }
     _afterLogin();
-  } catch(e) { loginMsg(e.message); }
+  } catch(e) { if (!_loginNetworkErr(e)) loginMsg(e.message); }
 }
 async function authVerifyPass() {
   const password = document.getElementById('inp-pass').value;
   try {
     await api('/api/auth/verify-password', {method:'POST',json:{password, account_id: _loginAccountId}});
     _afterLogin();
-  } catch(e) { loginMsg(e.message); }
+  } catch(e) { if (!_loginNetworkErr(e)) loginMsg(e.message); }
 }
 
 function _afterLogin() {
@@ -531,8 +746,15 @@ async function pollSync() {
     _syncStatusCache = s;
     applySyncStatusToUI();
     if (s.running) {
-      if (S.activeTab === 'files') loadFiles(true);
-      else if (S.activeTab === 'links') loadLinks(true);
+      // While sync is running, refresh in place only when the user is on the
+      // FIRST page of an infinite-scroll grid — otherwise the silent reload
+      // would jump them back to the top mid-scroll. After they've loaded
+      // more, we wait until sync finishes (see else branch below).
+      if (S.activeTab === 'files' && _currentFiles.length <= S.limit) {
+        loadFiles(true);
+      } else if (S.activeTab === 'links') {
+        loadLinks(true);
+      }
       _wasRunning = true;
     } else if (_wasRunning) {
       _wasRunning = false;
@@ -658,6 +880,9 @@ async function loadGroups() {
   _groups = await api('/api/groups');
   _applyGroupOverrides(_groups);
   renderSidebar();
+  // Channels tab uses the same dataset; keep it in sync after every refresh.
+  if (typeof renderChannelsTable === 'function') renderChannelsTable();
+  if (typeof _syncChannelsShowHiddenBtn === 'function') _syncChannelsShowHiddenBtn();
   if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
 }
 
@@ -672,9 +897,11 @@ function setGroupSort(by) {
 }
 
 function renderSidebar() {
+  // Legacy settings→groups sidebar. After the Channels tab took over, the
+  // markup may not be in the DOM anymore — bail out cleanly when missing.
   const q  = (document.getElementById('group-filter')?.value||'').toLowerCase();
   const el = document.getElementById('group-list');
-  if (!el) return;
+  if (!el) { renderChannelsTable(); return; }
 
   let visible = _groups.filter(g => {
     if (S.showHidden) {
@@ -755,7 +982,577 @@ function renderSidebar() {
   }
 }
 
-function toggleShowHidden() { S.showHidden = !S.showHidden; renderSidebar(); }
+function toggleShowHidden() {
+  S.showHidden = !S.showHidden;
+  renderSidebar();
+  // Mirror the same toggle on the Channels tab so the two views stay in sync.
+  if (S.activeTab === 'channels') renderChannelsTable();
+  _syncChannelsShowHiddenBtn();
+}
+
+// ── Channels tab (Files-style grid over /api/groups) ─────────────────────────
+async function loadChannelsTab() {
+  // Refresh the groups dataset first so the grid reflects the latest sync.
+  await loadGroups();
+  _syncChannelsShowHiddenBtn();
+  renderChannelsTable();
+}
+
+function _syncChannelsShowHiddenBtn() {
+  const btn = document.getElementById('ch-show-hidden');
+  if (!btn) return;
+  btn.classList.toggle('active', !!S.showHidden);
+  const hiddenCount = _groups.filter(g => g.hidden).length;
+  btn.textContent = S.showHidden
+    ? t('channels.showAll')
+    : `${t('channels.showHidden')}${hiddenCount ? ' · ' + hiddenCount : ''}`;
+}
+
+function channelsToggleShowHidden() {
+  S.showHidden = !S.showHidden;
+  _syncChannelsShowHiddenBtn();
+  renderChannelsTable();
+}
+
+function channelsToggleAddCard() {
+  const card = document.getElementById('channels-add-card');
+  if (!card) return;
+  const open = card.style.display !== 'none';
+  card.style.display = open ? 'none' : '';
+  if (!open) setTimeout(() => document.getElementById('ch-add-input')?.focus(), 30);
+}
+
+function channelsSortBy(col) {
+  if (S.chSort === col) {
+    S.chSortDir = S.chSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    S.chSort = col;
+    // Numeric columns default to descending, text columns to ascending.
+    S.chSortDir = (col === 'name' || col === 'username') ? 'asc' : 'desc';
+  }
+  renderChannelsTable();
+}
+
+function _chState(g) {
+  // Single-token state used both for filter matching and sorting.
+  if (g.hidden)   return 'hidden';
+  if (g.excluded) return 'excluded';
+  return 'active';
+}
+
+function _chSortFn(a, b) {
+  let av, bv;
+  switch (S.chSort) {
+    case 'name':     av = (a.display_name || a.name || '').toLowerCase();
+                     bv = (b.display_name || b.name || '').toLowerCase(); break;
+    case 'username': av = (a.username || '').toLowerCase();
+                     bv = (b.username || '').toLowerCase(); break;
+    case 'count':    av = a.file_count  || 0; bv = b.file_count  || 0; break;
+    case 'size':     av = a.total_size  || 0; bv = b.total_size  || 0; break;
+    case 'members':  av = a.member_count|| 0; bv = b.member_count|| 0; break;
+    case 'sync':     av = a.last_sync_at    ? Date.parse(a.last_sync_at)    : 0;
+                     bv = b.last_sync_at    ? Date.parse(b.last_sync_at)    : 0; break;
+    case 'msg':      av = a.last_message_at ? Date.parse(a.last_message_at) : 0;
+                     bv = b.last_message_at ? Date.parse(b.last_message_at) : 0; break;
+    case 'state':    av = _chState(a); bv = _chState(b); break;
+    case 'type_video':    av = a.type_video    || 0; bv = b.type_video    || 0; break;
+    case 'type_audio':    av = a.type_audio    || 0; bv = b.type_audio    || 0; break;
+    case 'type_image':    av = a.type_image    || 0; bv = b.type_image    || 0; break;
+    case 'type_archive':  av = a.type_archive  || 0; bv = b.type_archive  || 0; break;
+    case 'type_document': av = a.type_document || 0; bv = b.type_document || 0; break;
+    case 'type_software': av = a.type_software || 0; bv = b.type_software || 0; break;
+    case 'type_torrent':  av = a.type_torrent  || 0; bv = b.type_torrent  || 0; break;
+    case 'type_other':    av = a.type_other    || 0; bv = b.type_other    || 0; break;
+    default:         av = 0; bv = 0;
+  }
+  const cmp = (typeof av === 'string') ? av.localeCompare(bv, 'tr') : (av - bv);
+  return S.chSortDir === 'asc' ? cmp : -cmp;
+}
+
+function _fmtAgo(iso) {
+  if (!iso) return '—';
+  const t0 = Date.parse(iso);
+  if (!isFinite(t0)) return '—';
+  const diff = Math.max(0, Date.now() - t0);
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return t('channels.justNow');
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24);
+  if (d < 30) return d + 'd';
+  return new Date(t0).toLocaleDateString();
+}
+
+function renderChannelsTable() {
+  const tbody = document.getElementById('channels-tbody');
+  if (!tbody) return;
+
+  const qSearch  = (document.getElementById('ch-search')?.value || '').toLowerCase();
+  const qName    = (document.getElementById('ch-flt-name')?.value || '').toLowerCase();
+  const qUser    = (document.getElementById('ch-flt-user')?.value || '').toLowerCase();
+  const minFiles = parseInt(document.getElementById('ch-flt-min-files')?.value || '', 10);
+  const minMembers = parseInt(document.getElementById('ch-flt-min-members')?.value || '', 10);
+  const minSizeMB = parseFloat(document.getElementById('ch-flt-min-size')?.value || '');
+  const stFlt    = document.getElementById('ch-flt-state')?.value || '';
+  const minSizeBytes = isNaN(minSizeMB) ? null : Math.round(minSizeMB * 1048576);
+
+  const visible = _groups.filter(g => {
+    // "Gizliler" toggle handles hidden visibility; explicit state filter
+    // (Tümü/Takipte/Takip Edilmiyor/Gizli) overrides if set.
+    if (stFlt) {
+      if (_chState(g) !== stFlt) return false;
+    } else if (S.showHidden) { if (!g.hidden) return false; }
+      else                    { if ( g.hidden) return false; }
+    const nm = (g.display_name || g.name || '').toLowerCase();
+    const un = (g.username || '').toLowerCase();
+    if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
+    if (qName   && !nm.includes(qName))                            return false;
+    if (qUser   && !un.includes(qUser))                            return false;
+    if (!isNaN(minMembers)  && (g.member_count || 0) < minMembers) return false;
+    if (!isNaN(minFiles)    && (g.file_count   || 0) < minFiles)   return false;
+    if (minSizeBytes != null && (g.total_size  || 0) < minSizeBytes) return false;
+    return true;
+  });
+
+  visible.sort(_chSortFn);
+
+  // Sort arrows. Map sort key → arrow element id (kept short in the markup).
+  const _arr = {
+    name:'name', username:'username', members:'members',
+    count:'count', size:'size',
+    sync:'sync', msg:'msg', state:'state',
+    type_video:'tv', type_audio:'ta', type_image:'ti', type_archive:'tar',
+    type_document:'td', type_software:'ts', type_torrent:'tt', type_other:'to',
+  };
+  Object.entries(_arr).forEach(([k, id]) => {
+    const el = document.getElementById('ch-arr-' + id);
+    if (!el) return;
+    el.textContent = S.chSort === k ? (S.chSortDir === 'asc' ? '↑' : '↓') : '';
+  });
+
+  // Pill always shows the LIBRARY total (sum across every group), so it
+  // matches the figures on the Status tab regardless of the current filter.
+  // When a filter narrows the table, the filtered count is appended.
+  const libTotalChans = _groups.length;
+  const libTotalFiles = _groups.reduce((s, g) => s + (g.file_count || 0), 0);
+  const libTotalSize  = _groups.reduce((s, g) => s + (g.total_size || 0), 0);
+  const fltFiles = visible.reduce((s, g) => s + (g.file_count || 0), 0);
+  const fltSize  = visible.reduce((s, g) => s + (g.total_size || 0), 0);
+  const filtered = (visible.length !== libTotalChans);
+  const pill = document.getElementById('ch-count-pill');
+  if (pill) {
+    let txt = `${libTotalChans.toLocaleString()} ${t('channels.unit')} · ` +
+              `${libTotalFiles.toLocaleString()} ${t('channels.fileUnit')} · ${fmtSize(libTotalSize)}`;
+    if (filtered) {
+      txt += ` · ${t('channels.filtered')}: ${visible.length.toLocaleString()} / ` +
+             `${fltFiles.toLocaleString()} / ${fmtSize(fltSize)}`;
+    }
+    pill.textContent = txt;
+  }
+
+  document.getElementById('channels-empty').style.display = visible.length === 0 ? '' : 'none';
+
+  const _mini = v => (v ? v.toLocaleString() : '');
+  tbody.innerHTML = visible.map((g, i) => {
+    const isSel = S.selectedGroups.has(g.id);
+    const name  = plainName(g.display_name || g.name || ('id ' + g.id));
+    const user  = g.username ? '@' + g.username : '';
+    const tgHref = tgGroupHref(g);
+    const state = g.hidden
+      ? `<span class="ch-state ch-state-hidden">${esc(t('channels.stHidden'))}</span>`
+      : (g.excluded
+          ? `<span class="ch-state ch-state-excl">${esc(t('channels.stUntracked'))}</span>`
+          : `<span class="ch-state ch-state-active">${esc(t('channels.stActive'))}</span>`);
+    return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)">
+      <td class="chk-cell"><input type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();_chChk(event,${g.id},this.checked)"></td>
+      <td class="num-cell">${i + 1}</td>
+      <td class="ch-name-cell" title="${esc(name)}">${esc(name)}</td>
+      <td class="ch-col-user">${user ? `<a href="${esc(tgHref)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(user)}</a>` : ''}</td>
+      <td class="ch-col-members" title="${g.member_count_updated_at ? esc(t('channels.membersUpdated') + ': ' + new Date(g.member_count_updated_at).toLocaleString()) : ''}">${g.member_count != null ? Number(g.member_count).toLocaleString() : '—'}</td>
+      <td class="ch-col-count">${(g.file_count || 0).toLocaleString()}</td>
+      <td class="ch-col-size">${fmtSize(g.total_size || 0)}</td>
+      <td class="ch-col-mini">${_mini(g.type_video)}</td>
+      <td class="ch-col-mini">${_mini(g.type_audio)}</td>
+      <td class="ch-col-mini">${_mini(g.type_image)}</td>
+      <td class="ch-col-mini">${_mini(g.type_archive)}</td>
+      <td class="ch-col-mini">${_mini(g.type_document)}</td>
+      <td class="ch-col-mini">${_mini(g.type_software)}</td>
+      <td class="ch-col-mini">${_mini(g.type_torrent)}</td>
+      <td class="ch-col-mini">${_mini(g.type_other)}</td>
+      <td class="ch-col-msg"  title="${g.last_message_at ? esc(new Date(g.last_message_at).toLocaleString()) : ''}">${esc(_fmtAgo(g.last_message_at))}</td>
+      <td class="ch-col-sync" title="${g.last_sync_at    ? esc(new Date(g.last_sync_at).toLocaleString())    : ''}">${esc(_fmtAgo(g.last_sync_at))}</td>
+      <td class="ch-col-state">${state}</td>
+      <td class="ch-col-act"><div class="ch-row-acts">
+        <button class="ga" onclick="event.stopPropagation();openGroupNameEdit(event,${g.id})" title="${esc(t('groups.editName'))}">✏</button>
+        <a class="ga" href="${esc(tgHref)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(t('table.openTg'))}">↗</a>
+      </div></td>
+    </tr>`;
+  }).join('');
+
+  // Bulk bar visibility + button labels follow the same rules as the legacy sidebar.
+  const bar = document.getElementById('ch-bulk-bar');
+  if (bar) {
+    if (S.selectedGroups.size > 0) {
+      bar.style.display = 'inline-flex';
+      document.getElementById('ch-bulk-count').textContent =
+        t('groups.bulkSelected', { n: S.selectedGroups.size });
+      const ids = [...S.selectedGroups];
+      const sel = ids.map(id => _groups.find(x => x.id === id)).filter(Boolean);
+      const allHidden   = sel.length > 0 && sel.every(g => g.hidden);
+      const allExcluded = sel.length > 0 && sel.every(g => g.excluded);
+      const hideBtn = document.getElementById('ch-bulk-hide');
+      const exclBtn = document.getElementById('ch-bulk-excl');
+      if (hideBtn) hideBtn.textContent = t(allHidden   ? 'groups.bulkShow'  : 'groups.bulkHide');
+      if (exclBtn) exclBtn.textContent = t(allExcluded ? 'groups.bulkTrack' : 'groups.bulkUntrack');
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  // Sync "select all" checkbox state.
+  const sa = document.getElementById('ch-select-all');
+  if (sa) sa.checked = visible.length > 0 && visible.every(g => S.selectedGroups.has(g.id));
+}
+
+function channelsRowClick(id, e) {
+  // Don't hijack clicks on row-internal interactive elements (checkboxes,
+  // links, per-row action buttons). Plain row click opens the detail popup;
+  // selection is done via the explicit checkbox column.
+  if (e && (e.target.closest('a') || e.target.closest('button') || e.target.closest('input'))) return;
+  channelShowDetail(id);
+}
+
+let _lastChChannelId = null;
+
+function _chChk(e, id, on) {
+  if (e.shiftKey && _lastChChannelId != null) {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+    const rows = [...document.querySelectorAll('#channels-tbody tr[data-gid]')];
+    const ids = rows.map(tr => parseInt(tr.dataset.gid, 10));
+    const i = ids.indexOf(_lastChChannelId);
+    const j = ids.indexOf(id);
+    if (i >= 0 && j >= 0) {
+      const [a, b] = i <= j ? [i, j] : [j, i];
+      for (let k = a; k <= b; k++) {
+        if (on) S.selectedGroups.add(ids[k]); else S.selectedGroups.delete(ids[k]);
+      }
+      renderChannelsTable();
+      return;
+    }
+  }
+  if (on) S.selectedGroups.add(id); else S.selectedGroups.delete(id);
+  _lastChChannelId = id;
+  renderChannelsTable();
+}
+
+function channelsToggleOne(id, on) {
+  if (on) S.selectedGroups.add(id); else S.selectedGroups.delete(id);
+  renderChannelsTable();
+}
+
+// ── Channel detail popup — same overlay as Channel Hunter ────────────────────
+let _currentChannelGid = null;
+
+async function channelShowDetail(gid) {
+  try {
+    const c = await api(`/api/channels/${gid}/detail`);
+    // Backend sets c.kind = 'channel'; shared renderer handles the visuals.
+    _renderDetailModal(c);
+  } catch (e) {
+    alert(e.message || e);
+  }
+}
+
+function closeDetailModal() {
+  hfClosePreview();
+  document.getElementById('hunter-detail-overlay').classList.remove('open');
+  if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
+  Object.keys(_hdDlPollers).forEach(k => _stopFileDlPoller(parseInt(k, 10)));
+  _hdDlStatus = {};
+  _currentDetailCid = null;
+  _currentChannelGid = null;
+  _currentDetailUsername = null;
+  _hdScanState = null;
+  _hdScanProcessed = 0;
+  _hdFilesBase = null;
+}
+function closeChannelDetail() { closeDetailModal(); }  // compat alias
+
+function _bindChDetailActions() {
+  const bar = document.getElementById('hd-actions');
+  if (!bar) return;
+  // Replace any prior listener (hunter or channel) by cloning the node.
+  const fresh = bar.cloneNode(true);
+  bar.parentNode.replaceChild(fresh, bar);
+  fresh.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'close') { closeChannelDetail(); return; }
+    const gid = _currentChannelGid;
+    if (gid == null) return;
+    const g = _groups.find(x => x.id === gid);
+    switch (act) {
+      case 'ch-files': {
+        closeChannelDetail();
+        S.activeGroupId = gid;
+        S.offset = 0;
+        renderChips();
+        switchTab('files');
+        break;
+      }
+      case 'ch-rescan':
+        try {
+          const r = await api(`/api/groups/${gid}/rescan`, { method: 'POST' });
+          showToast(r.queued
+            ? t('groups.rescanStarted', { name: esc(r.name || g?.name || gid) })
+            : t('groups.rescanQueued',  { name: esc(r.name || g?.name || gid) }),
+            3000);
+        } catch (err) {
+          showToast(t('groups.rescanFail') + ' ' + esc(err.message), 4000);
+        }
+        break;
+      case 'ch-hide': {
+        const next = !(g && g.hidden);
+        await api(`/api/groups/${gid}`, { method: 'PATCH', json: { hidden: next } });
+        _setGroupOverride(gid, { hidden: next });
+        await loadGroups();
+        closeChannelDetail();
+        break;
+      }
+      case 'ch-excl': {
+        const next = !(g && g.excluded);
+        await api(`/api/groups/${gid}`, { method: 'PATCH', json: { excluded: next } });
+        await loadGroups();
+        closeChannelDetail();
+        break;
+      }
+      case 'ch-leave': {
+        const name = g ? (g.display_name || g.name) : `#${gid}`;
+        if (!confirm(t('groups.leaveConfirm', { name }))) break;
+        const purge = confirm(t('groups.purgeConfirm', { count: (g?.file_count || 0).toLocaleString() }));
+        try {
+          await api(`/api/groups/${gid}/leave?purge=${purge}`, { method: 'POST' });
+          showToast(t('groups.leaveOk', { name: esc(name) }), 3000);
+        } catch (err) {
+          showToast(t('groups.leaveFail') + ' ' + esc(err.message), 5000);
+          break;
+        }
+        S.selectedGroups.delete(gid);
+        await loadGroups();
+        closeChannelDetail();
+        break;
+      }
+    }
+  });
+}
+
+function channelsToggleAll(on) {
+  // Apply to the currently visible (filtered) rows only.
+  document.querySelectorAll('#channels-tbody tr[data-gid]').forEach(tr => {
+    const id = +tr.dataset.gid;
+    if (on) S.selectedGroups.add(id); else S.selectedGroups.delete(id);
+  });
+  renderChannelsTable();
+}
+
+// ── Channels tab — Add Channel(s) flow ───────────────────────────────────────
+const _CH_USERNAME_RE = /(?:@|t(?:elegram)?\.me\/|tg:\/\/resolve\?domain=)([A-Za-z][A-Za-z0-9_]{3,31})\b/g;
+
+function _parseChannelInput(raw) {
+  // Extract every plausible Telegram channel reference from arbitrary text.
+  // Returns a deduped list of bare usernames (no @, lowercase).
+  const out = new Set();
+  if (!raw) return [];
+  // First, scan with the URL/@ regex (catches t.me/x, @x, tg://resolve?domain=x).
+  let m;
+  _CH_USERNAME_RE.lastIndex = 0;
+  while ((m = _CH_USERNAME_RE.exec(raw)) !== null) {
+    out.add(m[1].toLowerCase());
+  }
+  // Second pass: bare tokens on whitespace boundaries that look like usernames.
+  // Keeps the simple "@foo, @bar" or "foo\nbar" cases working when users skip
+  // the @ prefix entirely.
+  for (const tok of raw.split(/[\s,;]+/)) {
+    const t = tok.replace(/^@/, '').trim();
+    if (/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(t)) out.add(t.toLowerCase());
+  }
+  return [...out];
+}
+
+function _renderAddPreview(list) {
+  const wrap = document.getElementById('ch-add-preview');
+  const node = document.getElementById('ch-add-preview-list');
+  if (!wrap || !node) return;
+  if (!list.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  node.innerHTML = list.map(u => `<span class="ch-tok">@${esc(u)}</span>`).join('');
+}
+
+function _showAddResult(kind, html) {
+  const res = document.getElementById('ch-add-result');
+  if (!res) return;
+  res.style.display = '';
+  res.className = 'ch-add-result ' + kind;
+  res.innerHTML = html;
+}
+
+function _clearAddInputs() {
+  const ta = document.getElementById('ch-add-input');
+  if (ta) ta.value = '';
+  _renderAddPreview([]);
+  _chParsedCache = null;
+}
+
+// Disable inputs + buttons + show busy cursor on the add card so it never
+// looks like the page hung mid-operation.
+function _chSetBusy(busy) {
+  const card = document.getElementById('channels-add-card');
+  if (!card) return;
+  card.classList.toggle('ch-busy', !!busy);
+  card.querySelectorAll('button, textarea, input').forEach(el => {
+    el.disabled = !!busy;
+  });
+}
+
+function _chRenderProgress(done, total, label) {
+  const pct = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+  _showAddResult('warn',
+    `<div class="ch-prog-row"><span>${esc(label)}</span>` +
+      `<span class="ch-prog-count">${done.toLocaleString()} / ${total.toLocaleString()}</span></div>` +
+    `<div class="ch-prog-bar"><div class="ch-prog-fill" style="width:${pct}%"></div></div>`);
+}
+
+// Cache of {raw, list} from the last preview/submit so chunked sends can
+// skip re-parsing + avoid re-fetching external URLs on the backend.
+let _chParsedCache = null;
+
+// Resolve user input → username list. Uses the cached parse if the raw text
+// is unchanged; otherwise asks the backend (which can also fetch external
+// pages for embedded channel links).
+async function _chResolveUsernames(raw) {
+  if (_chParsedCache && _chParsedCache.raw === raw) return _chParsedCache.list;
+  const hasExternal = /https?:\/\/(?!t(?:elegram)?\.me\/)/i.test(raw);
+  _chRenderProgress(0, 1, hasExternal ? t('channels.parsingUrl') : t('channels.parsing'));
+  const r = await api('/api/channels/parse', { method: 'POST', json: { text: raw } });
+  const list = r.usernames || [];
+  _chParsedCache = { raw, list };
+  return list;
+}
+
+async function channelsParsePreview() {
+  const raw = document.getElementById('ch-add-input')?.value || '';
+  if (!raw.trim()) {
+    _chParsedCache = null;
+    _renderAddPreview([]);
+    _showAddResult('warn', esc(t('channels.parseEmpty')));
+    return;
+  }
+  // Show instant local-parse feedback while the backend fetch (if any) runs
+  // so the UI never looks frozen during the round-trip.
+  const localList = _parseChannelInput(raw);
+  if (localList.length) _renderAddPreview(localList);
+
+  _chSetBusy(true);
+  try {
+    const list = await _chResolveUsernames(raw);
+    _renderAddPreview(list);
+    _showAddResult(list.length ? 'ok' : 'warn',
+      list.length ? esc(t('channels.parsedN', { n: list.length }))
+                  : esc(t('channels.parseEmpty')));
+  } catch (e) {
+    _showAddResult('err', esc(t('channels.error') + ': ' + (e?.message || e)));
+  } finally {
+    _chSetBusy(false);
+  }
+}
+
+// Generic chunked submitter — yields control between batches and updates the
+// progress bar so a 5,000-channel paste never blocks the UI thread.
+async function _chSubmitChunked(usernames, action, labelKey, mergeFn) {
+  const CHUNK = 200;
+  const aggregate = { joined: [], queued: [], skipped: [], failed: [], added: [],
+                      skipped_blacklisted: [], skipped_joined: [], skipped_queued: [] };
+  for (let i = 0; i < usernames.length; i += CHUNK) {
+    const slice = usernames.slice(i, i + CHUNK);
+    _chRenderProgress(i, usernames.length, t(labelKey));
+    const r = await api('/api/channels/add', {
+      method: 'POST',
+      json:   { usernames: slice, action },
+    });
+    if (action === 'hunter') {
+      aggregate.added.push(...(r.added || []));
+      aggregate.skipped_blacklisted.push(...(r.skipped_blacklisted || []));
+      aggregate.skipped_joined.push(...(r.skipped_joined || []));
+      aggregate.skipped_queued.push(...(r.skipped_queued || []));
+    } else {
+      aggregate.joined.push (...(r.joined  || []));
+      aggregate.queued.push (...(r.queued  || []));
+      aggregate.skipped.push(...(r.skipped || []));
+      aggregate.failed.push (...(r.failed  || []));
+    }
+    // Yield to let the browser repaint between batches.
+    await new Promise(rs => setTimeout(rs, 0));
+  }
+  _chRenderProgress(usernames.length, usernames.length, t(labelKey));
+  return aggregate;
+}
+
+async function channelsSubmitJoin() {
+  const raw = document.getElementById('ch-add-input')?.value || '';
+  if (!raw.trim()) { _showAddResult('warn', esc(t('channels.parseEmpty'))); return; }
+  _chSetBusy(true);
+  try {
+    const list = await _chResolveUsernames(raw);
+    if (!list.length) { _showAddResult('warn', esc(t('channels.parseEmpty'))); return; }
+    _renderAddPreview(list);
+    const agg = await _chSubmitChunked(list, 'join', 'channels.joinProgress');
+    let html = `<b>${esc(t('channels.joinDone', { n: agg.joined.length }))}</b>`;
+    if (agg.queued.length)  html += `<br>${esc(t('channels.joinQueued',  { n: agg.queued.length  }))}`;
+    if (agg.skipped.length) html += `<br>${esc(t('channels.joinSkipped', { n: agg.skipped.length }))}`;
+    if (agg.failed.length) {
+      html += `<br><b>${esc(t('channels.joinFailed', { n: agg.failed.length }))}</b><ul>` +
+              agg.failed.slice(0, 8).map(f => `<li>@${esc(f.username)} — ${esc(f.error || '')}</li>`).join('') +
+              `</ul>`;
+    }
+    _showAddResult(agg.failed.length ? 'warn' : 'ok', html);
+    if (!agg.failed.length) _clearAddInputs();
+    await loadChannelsTab();
+    if (typeof loadFiles === 'function') loadFiles();
+  } catch (e) {
+    _showAddResult('err', esc(t('channels.error') + ': ' + (e?.message || e)));
+  } finally {
+    _chSetBusy(false);
+  }
+}
+
+async function channelsSubmitHunter() {
+  const raw = document.getElementById('ch-add-input')?.value || '';
+  if (!raw.trim()) { _showAddResult('warn', esc(t('channels.parseEmpty'))); return; }
+  _chSetBusy(true);
+  try {
+    const list = await _chResolveUsernames(raw);
+    if (!list.length) { _showAddResult('warn', esc(t('channels.parseEmpty'))); return; }
+    _renderAddPreview(list);
+    const agg = await _chSubmitChunked(list, 'hunter', 'channels.huntProgress');
+    const hasAny = agg.added.length || agg.skipped_blacklisted.length ||
+                   agg.skipped_joined.length || agg.skipped_queued.length;
+    const kind = agg.skipped_blacklisted.length && !agg.added.length ? 'warn' : 'ok';
+    let html = `<b>${esc(t('channels.huntDone', { n: agg.added.length }))}</b>`;
+    if (agg.added.length) html += `<br><span style="font-size:.76rem;color:var(--text-3)">${esc(t('channels.huntDoneHint'))}</span>`;
+    if (agg.skipped_blacklisted.length) html += `<br>${esc(t('channels.huntSkippedBlacklisted', { n: agg.skipped_blacklisted.length }))}`;
+    if (agg.skipped_joined.length)      html += `<br>${esc(t('channels.huntSkippedJoined',      { n: agg.skipped_joined.length }))}`;
+    if (agg.skipped_queued.length)      html += `<br>${esc(t('channels.huntSkippedQueued',      { n: agg.skipped_queued.length }))}`;
+    _showAddResult(kind, html);
+    _clearAddInputs();
+  } catch (e) {
+    _showAddResult('err', esc(t('channels.error') + ': ' + (e?.message || e)));
+  } finally {
+    _chSetBusy(false);
+  }
+}
 
 function selectGroup(id, e) {
   if (e && e.target.closest('.ga')) return;
@@ -844,6 +1641,9 @@ async function bulkToggleHide() {
   await Promise.all(ids.map(id =>
     api(`/api/groups/${id}`, {method:'PATCH', json:{hidden: next}})
   ));
+  // Sync localStorage override so _applyGroupOverrides doesn't undo the change
+  // on the next loadGroups() call (this was masking bulk hide/show updates).
+  ids.forEach(id => _setGroupOverride(id, { hidden: next }));
   await loadGroups();
 }
 
@@ -902,6 +1702,7 @@ async function bulkRescanGroups() {
   }
   S.selectedGroups.clear();
   renderSidebar();
+  renderChannelsTable();
   if (failed) showToast(t('groups.rescanSome', { ok: ids.length - failed, fail: failed }), 4000);
   else        showToast(t('groups.rescanOk', { n: ids.length }), 3000);
 }
@@ -926,7 +1727,7 @@ async function bulkLeaveGroups() {
   else showToast(t('groups.bulkLeaveOk', { ok }), 3000);
 }
 
-function bulkClearSelection() { S.selectedGroups.clear(); renderSidebar(); }
+function bulkClearSelection() { S.selectedGroups.clear(); renderSidebar(); renderChannelsTable(); }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchSettingsTab(name) {
@@ -939,23 +1740,25 @@ function switchSettingsTab(name) {
   if (name === 'watches') {
     loadWatches();
     loadAllNotifications();
+    loadNotifyPushSettings();
   } else if (name === 'account') {
     loadAccountsList();
     _refreshUiPwState();
     loadTelemetrySettings();
+    _torrentCtrlRefresh();
   } else if (name === 'transfer') {
     loadTransferDestinations();
-  } else if (name === 'bandwidth') {
     loadBandwidthTab();
   }
 }
 
 function switchTab(tab) {
   S.activeTab = tab;
-  ['files','links','settings','downloads','status','hunter'].forEach(t =>
+  ['files','channels','links','settings','downloads','status','hunter'].forEach(t =>
     document.getElementById('tab-'+t)?.classList.toggle('active', t===tab));
 
   const isFiles     = tab === 'files';
+  const isChannels  = tab === 'channels';
   const isLinks     = tab === 'links';
   const isSettings  = tab === 'settings';
   const isDownloads = tab === 'downloads';
@@ -970,17 +1773,25 @@ function switchTab(tab) {
   document.getElementById('status-panel').style.display    = isStatus    ? 'flex' : 'none';
   document.getElementById('settings-panel').style.display  = isSettings  ? 'flex' : 'none';
   document.getElementById('downloads-panel').style.display = isDownloads ? 'flex' : 'none';
+  const cp = document.getElementById('channels-panel');
+  if (cp) cp.style.display = isChannels ? 'flex' : 'none';
   const hp = document.getElementById('hunter-panel');
   if (hp) hp.style.display = isHunter ? 'flex' : 'none';
   document.getElementById('files-table').style.display     = isFiles ? '' : 'none';
   document.getElementById('links-table').style.display     = isLinks ? '' : 'none';
 
-  if (isFiles)         { stopStatusPoll(); stopHunterPoll(); loadFiles(); }
+  if (isFiles)         { stopStatusPoll(); stopHunterPoll(); loadFiles(false, true); }
+  else if (isChannels) {
+    stopStatusPoll(); stopHunterPoll();
+    const addCard = document.getElementById('channels-add-card');
+    if (addCard) addCard.style.display = 'none';
+    loadChannelsTab();
+  }
   else if (isLinks)    { stopStatusPoll(); stopHunterPoll(); loadLinks(); }
-  else if (isSettings) { stopStatusPoll(); stopHunterPoll(); loadCredentials(); loadSyncInterval(); _refreshUiPwState(); }
+  else if (isSettings) { stopStatusPoll(); stopHunterPoll(); loadCredentials(); loadSyncInterval(); _refreshUiPwState(); loadAccountsList(); }
   else if (isDownloads){ stopStatusPoll(); stopHunterPoll(); loadDownloadsList(); }
   else if (isStatus)   { stopHunterPoll(); startStatusPoll(); }
-  else if (isHunter)   { stopStatusPoll(); startHunterPoll(); }
+  else if (isHunter)   { stopStatusPoll(); startHunterPoll(); _magnetHuntInitOnSwitch(); requestAnimationFrame(_hgUpdateStickyTop); }
 
   updateBulkFileBtn();
   updateBulkLinkBtn();
@@ -997,13 +1808,33 @@ function stopStatusPoll() {
   if (_statusInterval) { clearInterval(_statusInterval); _statusInterval = null; }
 }
 
+let _statusGroupsCache = null;
+let _statusGroupsTs = 0;
+async function _fetchGroupsForStatus() {
+  const now = Date.now();
+  if (_statusGroupsCache && now - _statusGroupsTs < 30000) return _statusGroupsCache;
+  try {
+    const g = await api('/api/groups');
+    _statusGroupsCache = Array.isArray(g) ? g : (g.groups || []);
+    _statusGroupsTs = now;
+  } catch(_) {}
+  return _statusGroupsCache || [];
+}
+
 async function loadStatus() {
   try {
     const d = await api('/api/status');
     const el = document.getElementById('status-panel');
     if (!el || el.style.display === 'none') return;
     const scroll = el.scrollTop;
-    renderStatus(d);
+    const groups = await _fetchGroupsForStatus();
+    renderStatus(d, groups);
+    // Repaint heatmap from cache (fast) or trigger first fetch
+    if (_hmapData !== null) {
+      _renderHeatmapCells();
+    } else {
+      loadActivityHeatmap(null);
+    }
     el.scrollTop = scroll;
   } catch(e) { /* ignore while tab is switching */ }
 }
@@ -1012,15 +1843,96 @@ const _TYPE_ICON  = {audio:'🎵',video:'🎬',image:'🖼',archive:'🗜',docum
 const _TYPE_COLOR = {audio:'#7c3aed',video:'#ef4444',image:'#059669',archive:'#f59e0b',document:'#2563eb',software:'#374151',other:'#9ca3af'};
 const _TYPE_NAME  = {audio:'type.audio',video:'type.video',image:'type.image',archive:'type.archive',document:'type.document',software:'type.software',other:'type.other'};
 
-function renderStatus(d) {
+// ── Activity heatmap state ────────────────────────────────────────────────────
+let _hmapData    = null;  // raw rows from API, null = not yet loaded
+let _hmapGroupId = null;  // currently selected group_id filter
+
+function renderStatus(d, groups = []) {
   const el = document.getElementById('status-panel');
   el.innerHTML =
     stCards(d) +
     stFileTypes(d) +
     `<div class="st-2col">${stGroups(d)}${stPlatforms(d)}</div>` +
+    stIndexStatus(groups, d.sync || {}) +
     stPgTables(d) +
     `<div class="st-2col">${stSystem(d)}${stSync(d)}</div>` +
+    stActivityHeatmap(groups) +
     stLogs(d);
+}
+
+function stActivityHeatmap(groups) {
+  const opts = [`<option value="">${esc(t('heatmap.allChannels'))}</option>`];
+  for (const g of (groups || [])) {
+    const sel = (_hmapGroupId != null && g.id === _hmapGroupId) ? ' selected' : '';
+    opts.push(`<option value="${g.id}"${sel}>${esc(g.display_name || g.name || `#${g.id}`)}</option>`);
+  }
+  return `<div class="st-section">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <h4 style="margin:0;flex:1">${esc(t('heatmap.title'))}</h4>
+      <select class="hunter-sel" style="font-size:.72rem" onchange="loadActivityHeatmap(this.value||null)">${opts.join('')}</select>
+    </div>
+    <div style="overflow-x:auto">
+      <div id="act-grid" class="act-grid"></div>
+    </div>
+    <div id="act-peak" class="act-peak"></div>
+    <div id="act-legend" class="act-legend" style="display:none">
+      <span>0</span>
+      <div class="act-leg-bar"></div>
+      <span id="act-leg-max"></span>
+    </div>
+    <div style="font-size:.63rem;color:var(--text-4);margin-top:4px;text-align:right">${esc(t('heatmap.utcNote'))}</div>
+  </div>`;
+}
+
+async function loadActivityHeatmap(groupId) {
+  _hmapGroupId = groupId ? parseInt(groupId) : null;
+  try {
+    const url = _hmapGroupId ? `/api/activity/heatmap?group_id=${_hmapGroupId}` : '/api/activity/heatmap';
+    _hmapData = await api(url);
+    _renderHeatmapCells();
+  } catch (e) { /* ignore */ }
+}
+
+function _renderHeatmapCells() {
+  const grid = document.getElementById('act-grid');
+  if (!grid || !_hmapData) return;
+
+  // Build 7×24 matrix; DOW: 0=Sunday … 6=Saturday
+  const matrix = Array.from({length: 7}, () => new Array(24).fill(0));
+  let maxVal = 0, peakDow = 0, peakHour = 0;
+  for (const r of _hmapData) {
+    matrix[r.dow][r.hour] = r.cnt;
+    if (r.cnt > maxVal) { maxVal = r.cnt; peakDow = r.dow; peakHour = r.hour; }
+  }
+
+  const days = [t('cal.sun'),t('cal.mon'),t('cal.tue'),t('cal.wed'),t('cal.thu'),t('cal.fri'),t('cal.sat')];
+  const dowOrder = [1,2,3,4,5,6,0]; // Mon → Sun
+
+  let html = `<div class="act-corner"></div>`;
+  for (let h = 0; h < 24; h++) {
+    html += `<div class="act-hlabel">${h % 6 === 0 ? h : ''}</div>`;
+  }
+  for (const dow of dowOrder) {
+    html += `<div class="act-dlabel">${esc(days[dow])}</div>`;
+    for (let h = 0; h < 24; h++) {
+      const cnt = matrix[dow][h];
+      const i   = maxVal > 0 ? (cnt / maxVal) : 0;
+      const tip = `${days[dow]} ${String(h).padStart(2,'0')}:00 — ${cnt.toLocaleString()} ${t('heatmap.files')}`;
+      html += `<div class="act-cell" style="--act-i:${i.toFixed(3)}" title="${esc(tip)}"></div>`;
+    }
+  }
+  grid.innerHTML = html;
+
+  const peakEl = document.getElementById('act-peak');
+  if (peakEl) {
+    peakEl.innerHTML = maxVal > 0
+      ? t('heatmap.peak', { day: `<b>${esc(days[peakDow])}</b>`, hour: String(peakHour).padStart(2,'0'), n: maxVal.toLocaleString() })
+      : esc(t('heatmap.noData'));
+  }
+  const legEl = document.getElementById('act-legend');
+  if (legEl) legEl.style.display = maxVal > 0 ? 'flex' : 'none';
+  const legMax = document.getElementById('act-leg-max');
+  if (legMax) legMax.textContent = maxVal.toLocaleString();
 }
 
 function stCards(d) {
@@ -1099,6 +2011,59 @@ function stGroups(d) {
           <span class="kv-key" style="font-size:.67rem">${k}</span>
           <span class="kv-val" style="font-size:1.1rem">${v}</span>
         </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function stIndexStatus(groups, sync) {
+  if (!groups || !groups.length) return '';
+  const currentGroup = (sync.current_group || '').toLowerCase();
+  const typeKeys = ['video','audio','image','archive','document','software','torrent','other'];
+  const typeColors = {video:'#ef4444',audio:'#7c3aed',image:'#059669',archive:'#f59e0b',document:'#2563eb',software:'#374151',torrent:'#0891b2',other:'#9ca3af'};
+
+  const rows = groups.filter(g => !g.hidden).map(g => {
+    const isActive = currentGroup && (
+      (g.username||'').toLowerCase() === currentGroup ||
+      String(g.id) === currentGroup ||
+      (g.name||'').toLowerCase().includes(currentGroup)
+    );
+    const excluded = g.excluded;
+    const fileCount = (g.file_count || 0).toLocaleString();
+    const lastSync = g.last_synced_at ? fmtDate(g.last_synced_at).substring(0,16) : '—';
+
+    // Mini type bar
+    const total = typeKeys.reduce((s, k) => s + (g['type_'+k] || 0), 0);
+    const bar = total > 0
+      ? `<div style="display:flex;gap:1px;height:10px;border-radius:2px;overflow:hidden;min-width:80px">` +
+        typeKeys.map(k => {
+          const v = g['type_'+k] || 0;
+          if (!v) return '';
+          return `<div style="flex:${v};background:${typeColors[k]}" title="${k}:${v}"></div>`;
+        }).join('') + `</div>`
+      : `<span style="color:var(--text-4);font-size:.7rem">—</span>`;
+
+    let badge;
+    if (isActive)    badge = `<span style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:1px 7px;border-radius:99px;font-size:.68rem;font-weight:600"><span class="hd-spinner" style="width:8px;height:8px;border-width:1.5px"></span> Aktif</span>`;
+    else if (excluded) badge = `<span style="background:var(--bg-3);color:var(--text-4);border:1px solid var(--border-2);padding:1px 7px;border-radius:99px;font-size:.68rem">Hariç</span>`;
+    else if (g.last_synced_at) badge = `<span style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;padding:1px 7px;border-radius:99px;font-size:.68rem">Senkronize</span>`;
+    else               badge = `<span style="background:#fefce8;color:#854d0e;border:1px solid #fde68a;padding:1px 7px;border-radius:99px;font-size:.68rem">Bekliyor</span>`;
+
+    return `<tr>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(g.display_name||g.name)}">${esc(g.display_name||g.name)}</td>
+      <td class="r" style="font-size:.72rem">${fileCount}</td>
+      <td>${bar}</td>
+      <td style="font-size:.7rem;color:var(--text-3)">${esc(lastSync)}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="st-section">
+    <h4>İndeksleme Durumu <button onclick="_statusGroupsTs=0;loadStatus()" style="font-size:.7rem;padding:1px 8px;border:1px solid var(--border-2);border-radius:4px;background:var(--bg-3);cursor:pointer;color:var(--text-2)">↻ Yenile</button></h4>
+    <div style="overflow-x:auto">
+    <table class="st-tbl">
+      <tr><th>Kanal/Grup</th><th class="r">Dosya</th><th>Tür Dağılımı</th><th>Son Senkronizasyon</th><th>Durum</th></tr>
+      ${rows || '<tr><td colspan="5" style="text-align:center;color:var(--text-4);padding:10px">Grup bulunamadı</td></tr>'}
+    </table>
     </div>
   </div>`;
 }
@@ -1229,6 +2194,172 @@ function setTypeFilter(group) {
   loadFiles();
 }
 
+// ── Trend Mode ────────────────────────────────────────────────────────────
+// "Most Shared Files" card view — replaces the table when active.
+let _trendWindow = 'all';
+let _trendActive = false;
+let _trendPrevSortBy  = 'date';
+let _trendPrevSortDir = 'desc';
+
+function toggleTrendMode() {
+  _trendActive = !_trendActive;
+  document.getElementById('trend-mode-btn')?.classList.toggle('active', _trendActive);
+  if (_trendActive) {
+    _trendPrevSortBy  = S.sortBy;
+    _trendPrevSortDir = S.sortDir;
+    S.sortBy  = 'shares';
+    S.sortDir = 'desc';
+    S.offset  = 0;
+  } else {
+    S.sortBy  = _trendPrevSortBy;
+    S.sortDir = _trendPrevSortDir;
+    S.offset  = 0;
+  }
+  loadFiles();
+}
+
+function setTrendWindow(w) {
+  _trendWindow = w;
+  document.querySelectorAll('.trend-win-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.window === w));
+  loadTopShared();
+}
+
+async function loadTopShared() {
+  const container = document.getElementById('trend-cards');
+  if (!container) return;
+  container.innerHTML = `<div class="trend-loading">${esc(t('common.loadingData'))}</div>`;
+  try {
+    const r = await api(`/api/files/top-shared?window=${encodeURIComponent(_trendWindow)}&limit=30&min_shares=2`);
+    const items = r.items || [];
+    if (!items.length) {
+      container.innerHTML = `<div class="trend-empty">${esc(t('trend.empty'))}</div>`;
+      return;
+    }
+    container.innerHTML = items.map((it, i) => _renderTrendCard(it, i + 1)).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="trend-empty">${esc(t('common.error'))} — ${esc(e.message || e)}</div>`;
+  }
+}
+
+function _renderTrendCard(it, rank) {
+  const sc      = it.share_count || 0;
+  const sc7     = it.share_count_7d || 0;
+  const sc30    = it.share_count_30d || 0;
+  const fname   = cleanText(it.file_name || '') || '—';
+  const ext     = (it.file_ext || '').toUpperCase();
+  const extPill = ext ? `<span class="ext-badge" style="${extColor(it.file_ext||'')};font-size:.68rem">${esc(ext)}</span>` : '';
+  const rising  = it.is_rising
+    ? `<span class="rise-badge" title="${esc(t('table.rising'))}">↑ ${esc(t('trend.rising'))}</span>`
+    : '';
+  const winLbl = _trendWindow === '7d'  ? t('trend.winShare7d')
+               : _trendWindow === '30d' ? t('trend.winShare30d')
+               :                          t('trend.winShareAll');
+  const winNum = _trendWindow === '7d' ? sc7 : _trendWindow === '30d' ? sc30 : sc;
+
+  // Group chips (top 5)
+  const groups = (it.sharing_groups || []).slice(0, 5);
+  const more   = Math.max(0, (it.sharing_groups?.length || 0) - groups.length);
+  const groupChips = groups
+    .map(g => `<b>${esc(g.name || ('#' + g.id))}</b>`)
+    .join(', ') + (more > 0 ? ` <span style="color:var(--text-4)">+${more}</span>` : '');
+
+  // 7-day sparkline — normalize bar heights to the daily max
+  const spark = _renderSpark7d(it.spark_7d || []);
+
+  // Actions: file-name filter to see all copies, plus straight download
+  const escFname = esc(fname).replace(/'/g, "&#39;");
+  return `<div class="trend-card">
+    <div class="trend-card-head">
+      <div class="trend-rank">#${rank}</div>
+      <div style="flex:1;min-width:0">
+        <div class="trend-name" title="${esc(fname)}">${esc(fname)}</div>
+        <div class="trend-meta-row">
+          ${extPill}
+          <span class="trend-size">${fmtSize(it.file_size || 0)}</span>
+          <span>·</span>
+          <span class="trend-share-big">
+            <span class="num">🔁 ${winNum.toLocaleString()}</span>
+            <span class="lbl">${esc(winLbl)}</span>
+          </span>
+          ${rising}
+        </div>
+      </div>
+    </div>
+    <div class="trend-meta-row">
+      <span style="color:var(--text-4)">${esc(t('trend.share7'))}:</span> <b style="color:var(--text-2)">${sc7}</b>
+      <span style="color:var(--text-4)">${esc(t('trend.share30'))}:</span> <b style="color:var(--text-2)">${sc30}</b>
+      <span style="color:var(--text-4)">${esc(t('trend.shareAll'))}:</span> <b style="color:var(--text-2)">${sc}</b>
+      <span class="trend-flex"></span>
+      ${spark}
+    </div>
+    <div class="trend-groups"><span style="color:var(--text-4)">${esc(t('trend.groups'))}:</span> ${groupChips || '<i>—</i>'}</div>
+    <div class="trend-actions">
+      <button class="trend-act-btn" onclick="trendShowAllCopies('${escFname}', ${it.file_size || 0})">📂 ${esc(t('trend.allCopies'))}</button>
+      <button class="trend-act-btn primary" onclick="downloadFile(${it.id})">⬇ ${esc(t('trend.download'))}</button>
+    </div>
+  </div>`;
+}
+
+function _renderSpark7d(days) {
+  // Map the per-day counts into 7 buckets ending today. Missing days = 0.
+  const buckets = new Array(7).fill(0);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const keyFor = (offset) => {
+    const d = new Date(today); d.setDate(today.getDate() - (6 - offset));
+    return d.toISOString().slice(0, 10);
+  };
+  const idx = {};
+  for (let i = 0; i < 7; i++) idx[keyFor(i)] = i;
+  for (const d of (days || [])) {
+    const k = (d.d || '').slice(0, 10);
+    if (k in idx) buckets[idx[k]] = d.n || 0;
+  }
+  const max = Math.max(1, ...buckets);
+  const bars = buckets.map((n, i) => {
+    const h = Math.round((n / max) * 22) || (n > 0 ? 2 : 1);
+    const peak = n === max && n > 0 ? ' peak' : '';
+    const day = keyFor(i);
+    return `<span class="bar${peak}" style="height:${h}px" title="${esc(day)}: ${n}"></span>`;
+  }).join('');
+  return `<span class="trend-spark" title="${esc(t('trend.sparkTitle'))}">${bars}</span>`;
+}
+
+// Filter the regular files table to all copies of a specific (file_name, file_size).
+// Cleanest: drop into normal mode, set col-name + size range to the exact value.
+function trendShowAllCopies(fname, size) {
+  _trendActive = false;
+  document.getElementById('trend-mode-btn')?.classList.remove('active');
+  S.sortBy  = _trendPrevSortBy  || 'date';
+  S.sortDir = _trendPrevSortDir || 'desc';
+  const colName = document.getElementById('col-name');
+  if (colName) colName.value = fname;
+  // Tight size range so we match exactly this file, not just same-name files
+  const mb = (size / (1024 * 1024)) || 0;
+  const sMin = document.getElementById('col-size-min');
+  const sMax = document.getElementById('col-size-max');
+  if (sMin) sMin.value = (mb - 0.01).toFixed(2);
+  if (sMax) sMax.value = (mb + 0.01).toFixed(2);
+  // Disable dedupe so we see EVERY copy across groups
+  if (typeof S === 'object') S.dedupe = false;
+  S.offset = 0;
+  loadFiles();
+}
+
+// Magnet'ler `files` tablosunda değil `links` tablosunda. Bu yüzden "Magnet"
+// düğmesi kullanıcıyı linkler sekmesine, platform=Magnet filtresi açık olarak
+// atlatır — dosya filtre çubuğunda sade ve beklendiği gibi davranır.
+function jumpToMagnetLinks() {
+  switchTab('links');
+  setTimeout(() => {
+    const sel = document.getElementById('lcol-platform');
+    if (sel) {
+      sel.value = 'Magnet';
+      if (typeof loadLinks === 'function') loadLinks();
+    }
+  }, 50);
+}
+
 // ── Size slider ───────────────────────────────────────────────────────────────
 function initSizeSlider(maxBytes) {
   const maxMB = Math.ceil(maxBytes/1048576)||1;
@@ -1259,6 +2390,10 @@ function fmtMB(mb) { return mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB'; }
 
 // ── Context tooltip ───────────────────────────────────────────────────────────
 function onCtxMove(e) {
+  // Skip when the cursor is over a dup-badge — its own mouseenter handler
+  // manages #ctx-tip (async channel-list fetch) and we'd otherwise hide its
+  // result on every mousemove tick.
+  if (e.target.closest('.file-dup-badge')) return;
   const td = e.target.closest('td[data-ctx]');
   const tip = document.getElementById('ctx-tip');
   if (!td||!td.dataset.ctx) { tip.style.display='none'; return; }
@@ -1286,81 +2421,212 @@ function debouncedLoad() {
   }, 280);
 }
 
-async function loadFiles(silent = false) {
+// İstemci tarafı önbellek: aynı sorgu parametreleri için son sonuç.
+// Sekme değiştir → geri dön akışında ağ gidiş-dönüşü ve dedupe sorgusunu
+// beklemeden anında boyar; ardından sessiz arkaplan tazelemesi yapar.
+const _filesCache = new Map();   // key → {ts, data}
+const _FILES_CACHE_TTL = 60_000; // 60 sn
+
+const _PIPE_TYPE_MAP = {
+  video:'video', vid:'video',
+  ses:'audio', audio:'audio',
+  resim:'image', image:'image', img:'image',
+  'arşiv':'archive', arsiv:'archive', archive:'archive',
+  belge:'document', document:'document', doc:'document',
+  'yazılım':'software', yazilim:'software', software:'software',
+  torrent:'torrent',
+};
+
+function _buildFilesParams() {
+  const rawQ = document.getElementById('col-name').value.trim();
+  let nameQ = rawQ, pipeGroup = '';
+  if (rawQ.includes('|')) {
+    const [left, right] = rawQ.split('|').map(s => s.trim());
+    nameQ = left;
+    pipeGroup = _PIPE_TYPE_MAP[right.toLowerCase()] || '';
+  }
   const params = new URLSearchParams({
-    q:         document.getElementById('col-name').value.trim(),
+    q:         nameQ,
     ext:       S.extChip || document.getElementById('ext-input').value.trim() ||
                document.getElementById('col-ext').value.trim(),
-    ext_group: S.typeGroup,
+    ext_group: pipeGroup || S.typeGroup,
     sort_by:   S.sortBy, sort_dir: S.sortDir,
     limit:     S.limit,  offset:   S.offset,
   });
+  if (S.searchCaption) params.set('search_caption', '1');
   if (S.activeGroupId!=null) params.set('group_id', S.activeGroupId);
-
-  // Multi-select group filter (from #cgf-list checkboxes)
   if (S.colGroupIds && S.colGroupIds.size > 0) {
     params.set('group_ids', [...S.colGroupIds].join(','));
   }
-
-  // Notification-driven file_ids restriction (set by showNotifMatches)
   if (S.fileIdsFilter && S.fileIdsFilter.size > 0) {
     params.set('file_ids', [...S.fileIdsFilter].join(','));
   }
-
-  // Column-level size filter overrides the top filter bar
   const colSizeMin = document.getElementById('col-size-min').value.trim();
   const colSizeMax = document.getElementById('col-size-max').value.trim();
-
   const df = document.getElementById('date-from')?.value;
   const dt = document.getElementById('date-to')?.value;
   if (df) params.set('date_from', df);
   if (dt) params.set('date_to', dt);
-
   let smin = colSizeMin ? parseFloat(colSizeMin) : null;
   let smax = colSizeMax ? parseFloat(colSizeMax) : null;
   if (smin == null && S.sizeMinMB != null) smin = S.sizeMinMB;
   if (smax == null && S.sizeMaxMB != null) smax = S.sizeMaxMB;
   if (smin != null && !isNaN(smin)) params.set('size_min', Math.round(smin * 1048576));
   if (smax != null && !isNaN(smax)) params.set('size_max', Math.round(smax * 1048576));
+  // Semantic toggle: only meaningful when there's a name query. Server
+  // will fall back to exact silently if the embedding subsystem isn't ready.
+  if (S.searchMode === 'hybrid' && document.getElementById('col-name').value.trim()) {
+    params.set('mode', 'hybrid');
+  }
+  return params;
+}
 
-  if (!silent) _paintGridLoading('files-body', 9);
-  const data = await api('/api/files?'+params);
+function toggleCaptionSearch() {
+  S.searchCaption = !S.searchCaption;
+  localStorage.setItem('tf_search_caption', S.searchCaption ? '1' : '0');
+  document.getElementById('caption-toggle')?.classList.toggle('active', S.searchCaption);
+  S.offset = 0;
+  loadFiles();
+}
 
-  if (S.sliderMax===0) {
-    const stats = await api('/api/stats');
-    initSizeSlider(stats.max_file_size||0);
+function _initCaptionToggle() {
+  S.searchCaption = localStorage.getItem('tf_search_caption') === '1';
+  document.getElementById('caption-toggle')?.classList.toggle('active', S.searchCaption);
+}
+
+// Semantic search toggle + boot-time availability probe.
+function toggleSemanticSearch() {
+  S.searchMode = (S.searchMode === 'hybrid') ? 'exact' : 'hybrid';
+  localStorage.setItem('tf_search_mode', S.searchMode);
+  const btn = document.getElementById('sem-toggle');
+  if (btn) btn.classList.toggle('active', S.searchMode === 'hybrid');
+  // Re-run search with the new mode.
+  S.offset = 0;
+  loadFiles();
+}
+
+async function _initSemanticToggle() {
+  try {
+    const r = await fetch('/api/embed/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s.available) return;
+    const btn = document.getElementById('sem-toggle');
+    if (!btn) return;
+    btn.style.display = '';
+    btn.classList.toggle('active', S.searchMode === 'hybrid');
+  } catch (e) {}
+}
+
+function _paintFilesResult(data, mode = 'replace') {
+  renderFiles(data.files, '', mode);
+  _filesTotal = data.total || 0;
+  renderFilesFooter(data);
+  const fc = document.getElementById('flt-count');
+  if (fc) {
+    // Filtre pili alttaki "Tümü" istatistiği gibi torrent içi dosyaları da
+    // dahil ederek "X benzersiz dosya · Y boyut" gösterir.
+    const vt = (data.virtual_total != null ? data.virtual_total : data.total) || 0;
+    const sz = data.total_size || 0;
+    fc.textContent = `${t("filter.fileCount", { n: vt.toLocaleString() })} · ${fmtSize(sz)}`;
+  }
+  _mountFilesInfiniteScroll();
+  // After an append the sentinel is below the freshly-added rows; arming the
+  // observer fires immediately if more rows still fit in the viewport. Guard
+  // with the loading flag so we don't blast the API in a tight loop.
+  _filesLoadingMore = false;
+}
+
+let _filesTotal = 0;
+
+async function loadFiles(silent = false, allowCache = false, mode = 'replace') {
+  // Infinite-scroll grid (replaces paginated mode).
+  //   mode='replace'  → fresh load from offset 0, paint skeleton, reset state
+  //   mode='append'   → fetch next page starting at the currently-loaded count
+  //                     and append rows to the existing tbody
+  if (mode === 'append') {
+    const params = _buildFilesParams();
+    params.set('offset', String(_currentFiles.length));
+    params.set('limit',  String(S.limit));
+    try {
+      const data = await api('/api/files?' + params);
+      _paintFilesResult(data, 'append');
+    } catch (e) {
+      console.warn('loadFiles append failed', e);
+    }
+    return;
   }
 
-  // Fetch torrent content matches in parallel with the render so matched
-  // torrent rows in the current page auto-expand with filtered tree.
+  // Replace mode — same flow as before with cache + skeleton + parallel stats.
+  const params = _buildFilesParams();
+  params.set('offset', '0');
+  const key = params.toString();
+
+  if (allowCache) {
+    const cached = _filesCache.get(key);
+    const fresh  = cached && (Date.now() - cached.ts) < _FILES_CACHE_TTL;
+    if (fresh) {
+      _paintFilesResult(cached.data, 'replace');
+      (async () => {
+        try {
+          const data = await api('/api/files?' + params);
+          _filesCache.set(key, { ts: Date.now(), data });
+          if (data.total !== cached.data.total ||
+              (data.files || []).length !== (cached.data.files || []).length ||
+              JSON.stringify((data.files || []).map(f => f.id)) !==
+                JSON.stringify((cached.data.files || []).map(f => f.id))) {
+            _paintFilesResult(data, 'replace');
+          }
+        } catch (e) {}
+      })();
+      return;
+    }
+  }
+
+  if (!silent) _paintGridLoading('files-body', 10);
+
+  const filesPromise = api('/api/files?' + params);
+  const statsPromise = (S.sliderMax === 0) ? api('/api/stats').catch(() => null) : null;
   const nameQ = document.getElementById('col-name').value.trim();
   const torrentMatchPromise = nameQ
     ? fetch(`/api/torrents/search?q=${encodeURIComponent(nameQ)}&limit=200`)
         .then(r => r.ok ? r.json() : []).catch(() => [])
-    : Promise.resolve([]);
+    : null;
 
-  renderFiles(data.files, '');
-  renderPagination(data.total, S.limit, S.offset);
-  const fc = document.getElementById('flt-count');
-  if (fc) fc.textContent = t("filter.fileCount", {n: (data.total || 0).toLocaleString()});
+  const data = await filesPromise;
+  _filesCache.set(key, { ts: Date.now(), data });
+  _paintFilesResult(data, 'replace');
 
-  if (nameQ) {
+  if (statsPromise) {
+    statsPromise.then(stats => { if (stats) initSizeSlider(stats.max_file_size || 0); });
+  }
+  if (torrentMatchPromise) {
     const matches = await torrentMatchPromise;
     _autoExpandTorrentMatches(matches, nameQ);
   }
 }
 
-function renderFiles(files, gFilter) {
+// Veri değişikliği olan eylemlerden sonra çağrılmak üzere — önbelleği boşalt.
+function _invalidateFilesCache() { _filesCache.clear(); }
+
+function renderFiles(files, gFilter, mode = 'replace') {
   const tbody = document.getElementById('files-body');
   if (gFilter) files = files.filter(f=>(f.group_name||'').toLowerCase().includes(gFilter));
-  _currentFiles = files;
-  if (!files.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="no-data">${esc(t("table.noFiles"))}</td></tr>`;
+  // Infinite scroll: in append mode we extend the existing list + tbody rather
+  // than blowing it away. Row numbering picks up where the previous batch left.
+  const startIdx = (mode === 'append') ? _currentFiles.length : 0;
+  if (mode === 'append') {
+    _currentFiles = _currentFiles.concat(files);
+  } else {
+    _currentFiles = files;
+  }
+  if (mode === 'replace' && !files.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="no-data">${esc(t("table.noFiles"))}</td></tr>`;
     return;
   }
   const rows = [];
   files.forEach((f, i) => {
-    const rowNum  = S.offset+i+1;
+    const rowNum  = startIdx + i + 1;
     const checked = S.selectedFiles.has(f.id) ? ' checked' : '';
     const ext     = (f.file_ext||'').toUpperCase();
     const color   = extColor(f.file_ext||'');
@@ -1368,7 +2634,7 @@ function renderFiles(files, gFilter) {
     // Strip emojis / formatting glue from anything that came out of a
     // Telegram message (channel display name, file name, message body)
     // so cells render as plain text regardless of how the source was decorated.
-    const gName   = cleanText(f.group_name || '');
+    const gName   = plainName(f.group_name || '');
     const fName   = cleanText(f.file_name || '') || '—';
     const ctxRaw  = cleanText(f.context || '');
     const gLink   = `<span class="g-link" onclick="filterByGroup(${f.group_id})">${esc(gName)}</span>`;
@@ -1377,7 +2643,7 @@ function renderFiles(files, gFilter) {
     // Same file (name + size) re-posted across multiple messages collapses
     // into one row; surface the underlying count.
     const dupBadge = (f.appearances && f.appearances > 1)
-      ? `<span class="link-dup-badge" title="${esc(t('table.appearances', { n: f.appearances }))}">×${f.appearances}</span>`
+      ? `<span class="link-dup-badge file-dup-badge" data-fname="${esc(f.file_name || '')}" data-fsize="${f.file_size || 0}" data-appearances="${f.appearances}" title="${esc(t('table.appearances', { n: f.appearances }))}">×${f.appearances}</span>`
       : '';
 
     const isTorrent = (f.file_ext || '').toLowerCase() === 'torrent';
@@ -1385,6 +2651,15 @@ function renderFiles(files, gFilter) {
     const toggleBtn = isTorrent
       ? `<button class="torrent-toggle${tc?.open ? ' open' : ''}" onclick="toggleTorrentTree(event,${f.id})" title="${esc(t('torrent.toggle'))}">▶</button>`
       : '';
+
+    // Share marker: subtle text + small icon. Hot/veryhot bump weight+color only.
+    const sc      = f.share_count || 1;
+    const sc7     = f.share_count_7d || 0;
+    const sc30    = f.share_count_30d || 0;
+    const isRising = sc7 >= 2 && sc7 * 4 > sc30;
+    const pillCls = sc >= 20 ? 'share-pill veryhot' : sc >= 5 ? 'share-pill hot' : 'share-pill';
+    const scTip   = t('table.sharesTipDetail', {n: sc, w: sc7, m: sc30});
+    const sharePill = `<span class="${pillCls}" title="${esc(scTip)}"><span class="share-icon">🔁</span><span class="share-num">${sc.toLocaleString()}</span>${isRising ? '<span class="rise-badge" title="' + esc(t('table.rising')) + '">↑</span>' : ''}</span>`;
 
     rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
@@ -1395,6 +2670,7 @@ function renderFiles(files, gFilter) {
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
+      <td class="col-shares">${sharePill}</td>
       <td>${dlState(f)}</td>
     </tr>`);
 
@@ -1411,16 +2687,90 @@ function renderFiles(files, gFilter) {
         treeContent = `<div class="tt-loading"><span class="hm-spinner"></span> ${esc(t('common.loadingData'))}</div>`;
       }
       rows.push(`<tr class="torrent-tree-row" id="torrent-tree-${f.id}"${open ? '' : ' style="display:none"'}>
-        <td colspan="9"><div class="torrent-tree-panel" id="torrent-tree-panel-${f.id}">${treeContent}</div></td>
+        <td colspan="10"><div class="torrent-tree-panel" id="torrent-tree-panel-${f.id}">${treeContent}</div></td>
       </tr>`);
     }
   });
-  tbody.innerHTML = rows.join('');
+  if (mode === 'append') {
+    tbody.insertAdjacentHTML('beforeend', rows.join(''));
+  } else {
+    tbody.innerHTML = rows.join('');
+  }
   // Direct per-checkbox listeners — gives us a real DOM event with shiftKey.
+  // We rebind on the entire tbody every time because new rows just landed and
+  // don't yet have listeners; old rows are idempotent (addEventListener on the
+  // same handler reference is deduped by the browser).
   tbody.querySelectorAll('.row-chk').forEach(cb => {
     cb.addEventListener('click', _fileCbClick);
   });
+  // Hover the ×N dup badge → fetch + show the channel list in #ctx-tip.
+  tbody.querySelectorAll('.file-dup-badge[data-fname]').forEach(el => {
+    el.addEventListener('mouseenter', _dupBadgeHover);
+    el.addEventListener('mouseleave', _dupBadgeHoverEnd);
+    el.addEventListener('mousemove',  _dupBadgeMove);
+  });
   updateBulkFileBtn();
+}
+
+// ── Dup badge tooltip (lazy channel-list fetch on hover) ────────────────────
+const _DUP_CACHE = new Map();   // key = "fname|fsize" → {ts, html}
+const _DUP_TTL   = 60_000;
+
+function _dupBadgeKey(el) { return `${el.dataset.fname}|${el.dataset.fsize}`; }
+
+async function _dupBadgeHover(ev) {
+  const el = ev.currentTarget;
+  const key = _dupBadgeKey(el);
+  const tip = document.getElementById('ctx-tip');
+  if (!tip) return;
+  // Hide native title while our richer tip is up.
+  if (el.title) { el.dataset.origTitle = el.title; el.title = ''; }
+  let cached = _DUP_CACHE.get(key);
+  if (!cached || (Date.now() - cached.ts) > _DUP_TTL) {
+    tip.innerHTML = `<div class="dup-tip-head">${esc(t('table.appearancesLoading') || 'Kanallar yükleniyor…')}</div>`;
+    tip.style.display = 'block';
+    _dupBadgeMove(ev);
+    try {
+      const r = await api(`/api/files/shares?fname=${encodeURIComponent(el.dataset.fname)}&fsize=${el.dataset.fsize}`);
+      cached = { ts: Date.now(), html: _renderDupTipHtml(r.shares || [], +el.dataset.appearances) };
+      _DUP_CACHE.set(key, cached);
+    } catch (e) {
+      cached = { ts: Date.now(), html: `<div class="dup-tip-head">${esc(t('table.appearancesError') || 'Yüklenemedi')}</div>` };
+    }
+  }
+  tip.innerHTML = cached.html;
+  tip.style.display = 'block';
+  _dupBadgeMove(ev);
+}
+
+function _dupBadgeHoverEnd(ev) {
+  const tip = document.getElementById('ctx-tip');
+  if (tip) tip.style.display = 'none';
+  const el = ev.currentTarget;
+  if (el.dataset.origTitle) { el.title = el.dataset.origTitle; delete el.dataset.origTitle; }
+}
+
+function _dupBadgeMove(ev) {
+  const tip = document.getElementById('ctx-tip');
+  if (!tip || tip.style.display === 'none') return;
+  const x = ev.clientX + 14, y = ev.clientY + 14;
+  const bx = tip.offsetWidth, by = tip.offsetHeight;
+  tip.style.left = (x + bx > window.innerWidth  ? x - bx - 20 : x) + 'px';
+  tip.style.top  = (y + by > window.innerHeight ? y - by - 20 : y) + 'px';
+}
+
+function _renderDupTipHtml(shares, total) {
+  if (!shares.length) return `<div class="dup-tip-head">${esc(t('table.appearancesEmpty') || 'Kayıt bulunamadı')}</div>`;
+  const head = total > shares.length
+    ? `${total} kanal · ilk ${shares.length} gösteriliyor`
+    : `${shares.length} kanal`;
+  const rows = shares.map(s => {
+    const name   = plainName(s.group_name || `#${s.group_id}`);
+    const uname  = s.group_username ? `@${s.group_username}` : '';
+    const dateTx = s.date ? new Date(s.date).toLocaleDateString() : '';
+    return `<div class="dup-tip-row"><span class="dup-tip-name">${esc(name)}</span>${uname ? ` <span class="dup-tip-uname">${esc(uname)}</span>` : ''}${dateTx ? ` <span class="dup-tip-date">· ${esc(dateTx)}</span>` : ''}</div>`;
+  }).join('');
+  return `<div class="dup-tip-head">${esc(head)}</div>${rows}`;
 }
 
 function selectFileRow(e, id) {
@@ -1455,36 +2805,45 @@ function _buildTorrentPanelHtml(fileId, data, filter) {
   </div>${_buildTorrentListHtml(data.tree || [], filter)}`;
 }
 
+const _TORRENT_DISPLAY_LIMIT = 1000;
+
 function _buildTorrentListHtml(tree, filter) {
   const term = (filter || '').toLowerCase().trim();
   const filtered = term ? tree.filter(f => f.path.toLowerCase().includes(term)) : tree;
   if (!filtered.length) {
     return `<div class="torrent-tree-list"><div class="tt-empty">${esc(t('torrent.noMatch'))}</div></div>`;
   }
+  const shown = filtered.length > _TORRENT_DISPLAY_LIMIT ? filtered.slice(0, _TORRENT_DISPLAY_LIMIT) : filtered;
+  const hiddenCount = filtered.length - shown.length;
   const dirsSeen = new Set();
   const rows = [];
-  for (const f of filtered) {
+  const _guides = (d) => {
+    let g = '';
+    for (let i = 0; i < d; i++) g += '<span class="tt-guide"></span>';
+    return g;
+  };
+  for (const f of shown) {
     const parts = f.path.replace(/\\/g, '/').split('/');
     const depth = parts.length - 1;
-    // Emit dir headers for each ancestor not yet shown
     for (let d = 1; d < parts.length; d++) {
       const dirKey = parts.slice(0, d).join('/');
       if (!dirsSeen.has(dirKey)) {
         dirsSeen.add(dirKey);
-        const indent = 8 + (d - 1) * 14;
-        rows.push(`<div class="tt-entry tt-dir" style="padding-left:${indent}px">
-          <span class="tt-icon">📁</span>
+        rows.push(`<div class="tt-entry tt-dir" data-depth="${d - 1}">
+          ${_guides(d - 1)}<span class="tt-icon">📁</span>
           <span class="tt-path">${esc(parts[d - 1])}</span>
         </div>`);
       }
     }
     const fileName = parts[parts.length - 1];
-    const indent   = 8 + depth * 14;
-    rows.push(`<div class="tt-entry${term ? ' tt-match' : ''}" style="padding-left:${indent}px">
-      <span class="tt-icon">📄</span>
+    rows.push(`<div class="tt-entry${term ? ' tt-match' : ''}" data-depth="${depth}">
+      ${_guides(depth)}<span class="tt-icon">📄</span>
       <span class="tt-path" title="${esc(f.path)}">${esc(fileName)}</span>
       <span class="tt-size">${fmtSize(f.size)}</span>
     </div>`);
+  }
+  if (hiddenCount > 0) {
+    rows.push(`<div class="tt-more-notice">+${hiddenCount.toLocaleString()} ${esc(t('torrent.moreFiles'))}</div>`);
   }
   return `<div class="torrent-tree-list">${rows.join('')}</div>`;
 }
@@ -1551,6 +2910,13 @@ function filterTorrentTree(fileId, term) {
 // Auto-expand torrent rows in the current page that matched via content search.
 // `matches` comes from /api/torrents/search; `term` is the active name filter.
 function _autoExpandTorrentMatches(matches, term) {
+  // User preference: don't auto-open the tree even when a search match lives
+  // inside a parsed torrent. We still:
+  //   • Pre-fetch the tree data in the background, so the first manual click
+  //     renders instantly (no API round-trip wait).
+  //   • Stash the active filter term so the panel is pre-filtered when opened.
+  //   • Mark the toggle button with a "has match" hint class so it's
+  //     discoverable.
   if (!matches || !matches.length) return;
   const matchMap = new Map(matches.map(m => [m.torrent_file_id, m]));
 
@@ -1559,50 +2925,45 @@ function _autoExpandTorrentMatches(matches, term) {
     if (!row) continue;  // not on this page
 
     const btn = document.querySelector(`.torrent-toggle[onclick*="toggleTorrentTree(event,${fileId})"]`);
+    if (btn) btn.classList.add('has-match');
 
-    // If already cached from a previous load, reuse and re-filter.
+    // If already cached from a previous load, just update the filter term so
+    // a subsequent click renders with the current search highlighted.
     if (_torrentCache[fileId]?.state === 'done') {
-      _torrentCache[fileId].open   = true;
       _torrentCache[fileId].filter = term;
-      row.style.display = '';
-      if (btn) btn.classList.add('open');
-      _refreshTorrentPanel(fileId);
+      // Keep `open` state untouched — respects user's prior manual choice.
       continue;
     }
 
-    // Show the row in loading state; inject matched_paths immediately so the
-    // user sees something while the full tree loads.
-    _torrentCache[fileId] = { state: 'loading', open: true, filter: term };
-    row.style.display = '';
-    if (btn) btn.classList.add('open');
-
-    const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
-    if (panel) {
-      // Render a preview using just the matched paths (fast, no extra fetch).
-      const preview = {
+    // Background pre-fetch (no DOM mutation, panel stays closed).
+    _torrentCache[fileId] = {
+      state:  'loading',
+      open:   false,
+      filter: term,
+      // Preview from matched_paths in case the fetch fails — used the moment
+      // user opens the tree.
+      preview: {
         torrent_name: match.torrent_name || match.file_name || '',
         total_size:   match.content_size || 0,
         file_count:   (match.matched_paths || []).length,
         tree:         match.matched_paths || [],
-      };
-      panel.innerHTML = _buildTorrentPanelHtml(fileId, preview, term);
-    }
+      },
+    };
 
-    // Fetch the full tree in background to replace the preview.
     fetch(`/api/files/${fileId}/torrent-tree`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => {
-        _torrentCache[fileId] = { state: 'done', data, open: true, filter: term };
-        _refreshTorrentPanel(fileId);
+        const prev = _torrentCache[fileId] || {};
+        _torrentCache[fileId] = { state: 'done', data, open: prev.open || false, filter: term };
       })
       .catch(() => {
-        // Keep preview on error — matched_paths is still useful.
-        if (_torrentCache[fileId]?.state === 'loading') {
-          _torrentCache[fileId].state = 'done';
-          _torrentCache[fileId].data  = {
-            torrent_name: match.torrent_name || '',
-            total_size:   match.content_size || 0,
-            tree:         match.matched_paths || [],
+        const cur = _torrentCache[fileId];
+        if (cur?.state === 'loading') {
+          _torrentCache[fileId] = {
+            state:  'done',
+            data:   cur.preview,
+            open:   false,
+            filter: term,
           };
         }
       });
@@ -1619,19 +2980,11 @@ function torrentCtrlToggle() {
 
 async function torrentCtrlOpen() {
   _torrentCtrlVisible = true;
-  const ctrl = document.getElementById('torrent-parse-ctrl');
-  const btn  = document.getElementById('torrent-parse-trigger');
-  if (ctrl) ctrl.style.display = '';
-  if (btn)  btn.classList.add('active');
   await _torrentCtrlRefresh();
 }
 
 function torrentCtrlClose() {
   _torrentCtrlVisible = false;
-  const ctrl = document.getElementById('torrent-parse-ctrl');
-  const btn  = document.getElementById('torrent-parse-trigger');
-  if (ctrl) ctrl.style.display = 'none';
-  if (btn)  btn.classList.remove('active');
 }
 
 async function _torrentCtrlRefresh() {
@@ -1654,7 +3007,6 @@ async function _torrentCtrlRefresh() {
 
 async function startTorrentParse() {
   const conc = parseInt(document.getElementById('tpc-concurrency')?.value || '5', 10);
-  torrentCtrlClose();
   try {
     await fetch('/api/torrents/parse-all', {
       method: 'POST',
@@ -1697,8 +3049,12 @@ async function _torrentPollTick() {
     const pct  = document.getElementById('tpb-pct');
     if (!bar) return;
 
+    const startBtn  = document.getElementById('tpc-start-btn');
+    const cancelBtn = document.getElementById('tpc-cancel-btn');
     if (w.running) {
       bar.style.display = 'flex';
+      if (startBtn)  startBtn.disabled = true;
+      if (cancelBtn) cancelBtn.style.display = '';
       const done  = w.done  || 0;
       const total = w.total || 0;
       const errs  = w.errors || 0;
@@ -1709,13 +3065,15 @@ async function _torrentPollTick() {
     } else {
       const done = w.done  || 0;
       const errs = w.errors || 0;
+      if (startBtn)  startBtn.disabled = false;
+      if (cancelBtn) cancelBtn.style.display = 'none';
       if (txt)  txt.textContent  = t('torrent.parseDone', { done, errors: errs });
       if (fill) fill.style.width = '100%';
       if (pct)  pct.textContent  = '100%';
       setTimeout(_torrentPollStop, 4000);
       _torrentPollTimer && clearInterval(_torrentPollTimer);
       _torrentPollTimer = null;
-      if (_torrentCtrlVisible) await _torrentCtrlRefresh();
+      await _torrentCtrlRefresh();
     }
   } catch (_) {}
 }
@@ -1793,20 +3151,39 @@ function updateBulkFileBtn() {
 async function bulkDownloadSelected() {
   const fileIds = [...S.selectedFiles];
   const dests = await _getEnabledDests();
-  let destIds = [];
-  let scheduledAt = null;
-  if (dests.length > 0) {
-    const result = await _showDlDestModal(dests, fileIds);
-    if (result === null) return; // cancelled
-    destIds = result.destIds;
-    scheduledAt = result.scheduledAt;
+  // Always show the modal so the forward-to-Saved-Messages toggle is reachable
+  // even when there are no transfer destinations configured.
+  const result = await _showDlDestModal(dests, fileIds);
+  if (result === null) return; // cancelled
+  const { destIds, scheduledAt, forwardSelf } = result;
+  if (forwardSelf) {
+    await _forwardFilesToSelf(fileIds);
   }
-  for (const fileId of fileIds) {
-    await _doDownload(fileId, destIds, scheduledAt);
+  // If the user picked ONLY "forward to me" (no destinations, no later
+  // schedule), skip downloading to disk entirely — forward is free.
+  const shouldDownload = destIds.length > 0 || scheduledAt || !forwardSelf;
+  if (shouldDownload) {
+    for (const fileId of fileIds) {
+      await _doDownload(fileId, destIds, scheduledAt);
+    }
   }
   S.selectedFiles.clear();
   updateBulkFileBtn();
   document.querySelectorAll('.row-chk').forEach(c => c.checked=false);
+}
+
+async function _forwardFilesToSelf(fileIds) {
+  let ok = 0, failed = 0;
+  for (const fid of fileIds) {
+    try {
+      await api(`/api/files/${fid}/forward-to-me`, { method: 'POST' });
+      ok++;
+    } catch (e) {
+      failed++;
+    }
+  }
+  if (ok)     showToast(t('ddm.forwardOk',   { n: ok })     || `${ok} dosya Saved Messages'a yönlendirildi.`, 3500);
+  if (failed) showToast(t('ddm.forwardFail', { n: failed }) || `${failed} dosya yönlendirilemedi.`, 4500);
 }
 
 // ── Download state ────────────────────────────────────────────────────────────
@@ -1853,12 +3230,15 @@ let _dlDestPending = null;
 
 async function triggerDownload(fileId) {
   const dests = await _getEnabledDests();
-  if (dests.length > 0) {
-    const result = await _showDlDestModal(dests, [fileId]);
-    if (result === null) return; // cancelled
-    await _doDownload(fileId, result.destIds, result.scheduledAt);
-  } else {
-    await _doDownload(fileId, []);
+  // Always show the modal so the forward-to-self toggle stays reachable
+  // even when no transfer destinations exist.
+  const result = await _showDlDestModal(dests, [fileId]);
+  if (result === null) return; // cancelled
+  const { destIds, scheduledAt, forwardSelf } = result;
+  if (forwardSelf) await _forwardFilesToSelf([fileId]);
+  const shouldDownload = destIds.length > 0 || scheduledAt || !forwardSelf;
+  if (shouldDownload) {
+    await _doDownload(fileId, destIds, scheduledAt);
   }
 }
 
@@ -1869,31 +3249,46 @@ async function _getEnabledDests() {
   } catch { return []; }
 }
 
+function _ddmLoadPrefs() {
+  try { return JSON.parse(localStorage.getItem('dl_dest_prefs') || 'null'); } catch { return null; }
+}
+
+function _ddmSavePrefs(checkedIds, forwardSelf, when) {
+  try { localStorage.setItem('dl_dest_prefs', JSON.stringify({ checked_ids: checkedIds, forward_self: !!forwardSelf, when: when || 'now' })); } catch {}
+}
+
 function _showDlDestModal(dests, fileIds) {
   return new Promise(resolve => {
     _dlDestPending = { fileIds, resolve };
     const wrap = document.getElementById('ddm-options');
     wrap.innerHTML = '';
+    const prefs = _ddmLoadPrefs();
     dests.forEach(d => {
       const desc = _destPathLabel(d);
+      const wasChecked = prefs ? prefs.checked_ids.includes(d.id) : true;
       const row = document.createElement('div');
-      row.className = 'ddm-option selected';
+      row.className = 'ddm-option' + (wasChecked ? ' selected' : '');
       row.dataset.id = d.id;
       row.innerHTML = `
-        <input type="checkbox" checked onchange="this.closest('.ddm-option').classList.toggle('selected',this.checked)">
+        <input type="checkbox" ${wasChecked ? 'checked' : ''} onchange="this.closest('.ddm-option').classList.toggle('selected',this.checked)">
         <span class="td-badge ${d.type}">${_typeLabelShort(d.type)}</span>
         <span class="ddm-opt-name">${esc(d.name)}</span>
         <span class="ddm-opt-path">${esc(desc)}</span>`;
-      row.querySelector('input').addEventListener('change', () => {});
       wrap.appendChild(row);
     });
-    // Reset schedule section
+    // Restore schedule section from prefs (default: now)
+    const savedWhen = prefs?.when || 'now';
     const nowRadio = document.querySelector('input[name="ddm-when"][value="now"]');
-    if (nowRadio) nowRadio.checked = true;
+    const laterRadio2 = document.querySelector('input[name="ddm-when"][value="later"]');
+    if (nowRadio) nowRadio.checked = savedWhen !== 'later';
+    if (laterRadio2) laterRadio2.checked = savedWhen === 'later';
     const form = document.getElementById('ddm-schedule-form');
-    if (form) form.style.display = 'none';
+    if (form) form.style.display = savedWhen === 'later' ? '' : 'none';
     const dtInput = document.getElementById('ddm-schedule-at');
     if (dtInput) dtInput.value = '';
+    // Restore forward-to-self from last session
+    const fwd = document.getElementById('ddm-forward-self');
+    if (fwd) fwd.checked = prefs ? !!prefs.forward_self : false;
     ddmLoadPresets();
     document.getElementById('dl-dest-overlay').classList.add('open');
   });
@@ -1972,24 +3367,25 @@ function closeDlDestModal() {
   if (_dlDestPending) { _dlDestPending.resolve(null); _dlDestPending = null; }
 }
 
-function confirmDlDestModal(withTransfer) {
+function confirmDlDestModal() {
   document.getElementById('dl-dest-overlay').classList.remove('open');
   if (!_dlDestPending) return;
-  let destIds = [];
-  if (withTransfer) {
-    document.querySelectorAll('#ddm-options .ddm-option').forEach(row => {
-      if (row.querySelector('input').checked) destIds.push(parseInt(row.dataset.id));
-    });
-  }
+  const destIds = [];
+  document.querySelectorAll('#ddm-options .ddm-option').forEach(row => {
+    if (row.querySelector('input').checked) destIds.push(parseInt(row.dataset.id, 10));
+  });
   let scheduledAt = null;
   const laterRadio = document.querySelector('input[name="ddm-when"][value="later"]');
   if (laterRadio && laterRadio.checked) {
     const dtVal = (document.getElementById('ddm-schedule-at') || {}).value;
     if (dtVal) scheduledAt = new Date(dtVal).toISOString();
   }
+  const forwardSelf = !!document.getElementById('ddm-forward-self')?.checked;
+  const whenVal = laterRadio?.checked ? 'later' : 'now';
+  _ddmSavePrefs(destIds, forwardSelf, whenVal);
   const pending = _dlDestPending;
   _dlDestPending = null;
-  pending.resolve({ destIds, scheduledAt });
+  pending.resolve({ destIds, scheduledAt, forwardSelf });
 }
 
 function showToast(html, ms = 4000) {
@@ -2121,6 +3517,7 @@ function renderDownloadsTab() {
     pct: 100,
     status: 'done',
     downloaded_at: d.downloaded_at || null,
+    local_path: d.local_path || null,
   }));
 
   let all = [...inFlight, ...scheduledRows, ...completedRows];
@@ -2160,7 +3557,7 @@ function renderDownloadsTab() {
 
   const notice = document.getElementById('dl-space-notice');
   const completedSize = _serverDownloads.reduce((s, d) => s + (d.file_size || 0), 0);
-  if (notice) notice.style.display = completedSize > 0 ? '' : 'none';
+  if (notice) notice.style.display = completedSize > 0 ? 'inline-flex' : 'none';
 
   if (!all.length) {
     tbody.innerHTML = '';
@@ -2203,11 +3600,15 @@ function renderDownloadsTab() {
       : isScheduled
       ? `<button class="dl-act dl-act-del" onclick="cancelScheduledDownload(${e.id})" title="${esc(t('dl.cancelTitle'))}">✕</button>`
       : `<button class="dl-act dl-act-del" onclick="cancelDownload(${e.id})" title="${esc(t('dl.cancelTitle'))}">✕</button>`;
+    const fnameTooltip = e.local_path ? esc(e.local_path) : esc(e.name||'');
+    const fnameHtml = e.local_path
+      ? `<span class="dl-fname-wrap" data-path="${esc(e.local_path)}">${esc(e.name || t('common.fileId', { n: e.id }))}<span class="dl-path-tip">${esc(e.local_path)}</span></span>`
+      : esc(e.name || t('common.fileId', { n: e.id }));
     return `<tr>
       <td class="chk-cell">${chkCell}</td>
-      <td title="${esc(e.name||'')}">${esc(e.name || t('common.fileId', { n: e.id }))}</td>
+      <td title="${fnameTooltip}">${fnameHtml}</td>
       <td>${fmtSize(e.size)}</td>
-      <td>${esc(e.group||'')}</td>
+      <td>${esc(plainName(e.group || ''))}</td>
       <td>${e.downloaded_at ? fmtDate(e.downloaded_at) : '—'}</td>
       <td>${progHtml}</td>
       <td><span class="${stCls}">${stTxt}</span></td>
@@ -2298,6 +3699,21 @@ async function bulkDeleteDownloaded() {
   else showToast(t('dl.deletedBulk', { n: done.length }), 2500);
 }
 
+async function deleteAllLocalFiles() {
+  const all = _serverDownloads.map(d => d.id);
+  if (!all.length) return;
+  if (!confirm(t('dl.deleteAllConfirm', { n: all.length }))) return;
+  let failed = 0;
+  for (const id of all) {
+    try { await api(`/api/files/${id}/local`, { method: 'DELETE' }); }
+    catch (_) { failed++; }
+  }
+  await loadDownloadsList();
+  loadFiles();
+  if (failed) showToast(t('dl.deletedSome', { ok: all.length - failed, fail: failed }), 4000);
+  else showToast(t('dl.deletedAll', { n: all.length }), 2500);
+}
+
 async function cancelDownload(fileId) {
   try {
     await api(`/api/files/${fileId}/cancel`, { method: 'POST' });
@@ -2358,6 +3774,89 @@ async function deleteLocalFile(fileId) {
   loadFiles();
 }
 
+// ── Magnet backfill ───────────────────────────────────────────────────────────
+let _backfillPollTimer = null;
+
+async function startMagnetBackfill() {
+  const btn = document.getElementById('magnet-backfill-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/links/backfill-magnets', { method: 'POST' });
+    if (r.status === 409) {
+      // already running — just start polling
+    } else if (!r.ok) {
+      if (btn) btn.disabled = false;
+      return;
+    }
+    _pollMagnetBackfill();
+  } catch {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _pollMagnetBackfill() {
+  clearTimeout(_backfillPollTimer);
+  _backfillPollTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/links/backfill-magnets/status');
+      if (!r.ok) return;
+      const s = await r.json();
+      _updateBackfillBar(s);
+      if (s.running) _pollMagnetBackfill();
+      else if (s.done_groups > 0 || s.new_magnets > 0) loadLinks(true);
+    } catch { /* ignore */ }
+  }, 1500);
+}
+
+function _updateBackfillBar(s) {
+  const txt = document.getElementById('magnet-backfill-status');
+  const btn = document.getElementById('magnet-backfill-btn');
+  if (!txt) return;
+  if (s.running) {
+    if (btn) btn.disabled = true;
+    let msg;
+    if (s.enrich_phase) {
+      // Phase 2: metadata fetch via aria2c/DHT
+      const cur = s.current_magnet ? ` — ${s.current_magnet}` : '';
+      msg = t('backfill.enrichProgress', {
+        done: s.enrich_done || 0,
+        total: s.enrich_total || 0,
+        ok: s.enrich_success || 0,
+      }) + cur;
+    } else {
+      // Phase 1: scanning Telegram groups for magnet messages
+      const grp = s.current_group ? ` — ${s.current_group}` : '';
+      msg = t('backfill.progress', {
+        done: s.done_groups, total: s.total_groups, found: s.new_magnets,
+      }) + grp;
+    }
+    txt.textContent = msg;
+    txt.className = 'backfill-progress';
+  } else if (s.error) {
+    if (btn) btn.disabled = false;
+    txt.textContent = t('backfill.error', { msg: s.error });
+    txt.className = 'backfill-progress';
+  } else if (s.done_groups > 0 || s.new_magnets > 0 || s.enrich_done > 0) {
+    if (btn) btn.disabled = false;
+    txt.textContent = t('backfill.done', { found: s.new_magnets })
+      + (s.enrich_done ? ' · ' + t('backfill.enrichDone', {ok: s.enrich_success || 0, total: s.enrich_done}) : '');
+    txt.className = 'backfill-progress backfill-done';
+  } else {
+    txt.textContent = '';
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _initBackfillBar() {
+  try {
+    const r = await fetch('/api/links/backfill-magnets/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    _updateBackfillBar(s);
+    if (s.running) _pollMagnetBackfill();
+  } catch { /* ignore */ }
+}
+
 // ── Links ─────────────────────────────────────────────────────────────────────
 let _debounceLinksTimer;
 function debouncedLoadLinks() {
@@ -2365,15 +3864,16 @@ function debouncedLoadLinks() {
   _debounceLinksTimer = setTimeout(loadLinks, 280);
 }
 
-async function loadLinks(silent = false) {
+async function loadLinks(silent = false, mode = 'replace') {
   const v  = (id) => (document.getElementById(id)?.value || '').trim();
+  const offset = (mode === 'append') ? _currentLinks.length : 0;
   const p  = new URLSearchParams({
     q:        v('link-search'),
     platform: v('lcol-platform'),
     sort_by:  S.linkSortBy,
     sort_dir: S.linkSortDir,
     limit:    S.linkLimit,
-    offset:   S.linkOffset,
+    offset:   offset,
   });
   if (S.activeGroupId != null) p.set('group_id', S.activeGroupId);
   // Per-column filters (sent only when non-empty so the API treats them as absent)
@@ -2384,14 +3884,22 @@ async function loadLinks(silent = false) {
   const dfrom = v('lcol-date-from');   if (dfrom) p.set('date_from', dfrom);
   const dto   = v('lcol-date-to');     if (dto)   p.set('date_to',   dto);
 
-  if (!silent) _paintGridLoading('links-body', 8);
-  const data = await api('/api/links?' + p);
-  renderLinks(data.links);
-  const lc = document.getElementById('link-flt-count');
-  if (lc) lc.textContent = t("filter.linkCount", {n: (data.total || 0).toLocaleString()});
-  _updateLinkSortArrows();
-  renderPagination(data.total, S.linkLimit, S.linkOffset);
+  if (mode === 'replace' && !silent) _paintGridLoading('links-body', 8);
+  try {
+    const data = await api('/api/links?' + p);
+    renderLinks(data.links, mode);
+    _linksTotal = data.total || 0;
+    const lc = document.getElementById('link-flt-count');
+    if (lc) lc.textContent = t("filter.linkCount", {n: (data.total || 0).toLocaleString()});
+    _updateLinkSortArrows();
+    renderLinksFooter(data);
+    _mountLinksInfiniteScroll();
+  } finally {
+    _linksLoadingMore = false;
+  }
 }
+
+let _linksTotal = 0;
 
 function linkSortBy(col) {
   S.linkSortDir = (S.linkSortBy === col) ? (S.linkSortDir === 'asc' ? 'desc' : 'asc') : 'asc';
@@ -2411,6 +3919,12 @@ function _updateLinkSortArrows() {
 
 function cleanUrl(raw) {
   if (!raw) return '';
+  // Magnet URIs: preserve as-is. Their `tr=` parameters embed http(s)://
+  // tracker URLs (often mangled by Twitter's t.co shortener); the http-finder
+  // below would otherwise promote one of those trackers to the canonical URL,
+  // making the grid render a magnet as if it were a t.co link and breaking
+  // magnet expansion / file-list paths.
+  if (/^magnet:/i.test(String(raw))) return String(raw).trim();
   // Strip zero-width and soft hyphen characters that often pollute Telegram URLs
   let s = String(raw).replace(/[​-‍﻿­]/g, '').trim();
   // Find the first http(s):// occurrence and take from there
@@ -2422,10 +3936,117 @@ function cleanUrl(raw) {
   return s;
 }
 
+async function retryDeadMagnets() {
+  const btn = document.getElementById('link-retry-dead-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
+  try {
+    const r = await api('/api/links/retry-dead-magnets', { method: 'POST' });
+    showToast(t('links.retryDeadOk', { n: r.cleared }) ||
+              `${r.cleared} ölü magnet sıfırlandı. Sonraki magnet backfill turunda yeniden denenirler.`,
+              5000);
+  } catch (e) {
+    showToast((t('links.retryDeadFail') || 'Toplu sıfırlama başarısız') + ': ' + e.message, 4000);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = `<span data-i18n="links.retryDeadBtn">↻ ${esc(t('links.retryDeadBtn') || 'Ölü magnetleri yeniden dene')}</span>`; }
+  }
+}
+
+// ── Magnet file tree (inline expand in links grid) ────────────────────────────
+
+function toggleMagnetTree(lid, btn) {
+  const row   = document.getElementById(`magnet-tree-${lid}`);
+  const panel = document.getElementById(`magnet-tree-panel-${lid}`);
+  if (!row || !panel) return;
+  const wasOpen = row.style.display !== 'none';
+  if (wasOpen) {
+    row.style.display = 'none';
+    if (btn) btn.classList.remove('open');
+    return;
+  }
+  row.style.display = '';
+  if (btn) btn.classList.add('open');
+  const link = _currentLinks.find(l => l.id === lid);
+  if (!link) return;
+  let files = link.files_json;
+  if (typeof files === 'string') { try { files = JSON.parse(files); } catch(e) { files = []; } }
+  // Re-render every time so the highlight from the current file-name filter
+  // stays in sync. (Previously cached innerHTML froze a stale highlight.)
+  const hl = (document.getElementById('lcol-files-name')?.value || '').trim();
+  panel.innerHTML = _buildMagnetPanelHtml(link, Array.isArray(files) ? files : [], hl);
+}
+
+// After renderLinks, auto-open the magnet trees whose file list contains the
+// active file-name filter so the user sees what they're searching for. Same
+// pattern as the Files-tab torrent auto-expand.
+function _autoExpandMagnetMatches() {
+  const term = (document.getElementById('lcol-files-name')?.value || '').trim().toLowerCase();
+  if (!term) return;
+  for (const l of _currentLinks) {
+    if (!/^magnet:/i.test(l.url || '')) continue;
+    let files = l.files_json;
+    if (typeof files === 'string') { try { files = JSON.parse(files); } catch (e) { files = []; } }
+    if (!Array.isArray(files) || !files.length) continue;
+    if (!files.some(f => (f.name || '').toLowerCase().includes(term))) continue;
+    const row   = document.getElementById(`magnet-tree-${l.id}`);
+    const panel = document.getElementById(`magnet-tree-panel-${l.id}`);
+    const btn   = document.querySelector(`.magnet-toggle[data-mlid="${l.id}"]`);
+    if (!row || !panel) continue;
+    row.style.display = '';
+    if (btn) btn.classList.add('open');
+    panel.innerHTML = _buildMagnetPanelHtml(l, files, term);
+  }
+}
+
+function _buildMagnetPanelHtml(link, files, highlight) {
+  const totalSz = +(link.file_size_total || 0);
+  const hm = (link.url || '').match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
+  const infohash = hm ? hm[1].toUpperCase() : '';
+  const name = (files[0] && cleanText(files[0].name)) || infohash || 'Magnet';
+  const countStr = files.length === 1
+    ? `1 ${t('torrent.files')}`
+    : `${files.length.toLocaleString()} ${t('torrent.files')}`;
+  const sizeStr = totalSz > 0 ? ` · ${fmtSize(totalSz)}` : '';
+  const hl = (highlight || '').trim().toLowerCase();
+  // Build a regex once so the per-row highlighter doesn't recompile.
+  let hlRe = null;
+  if (hl) {
+    const safe = hl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    hlRe = new RegExp('(' + safe + ')', 'ig');
+  }
+  // Put matching files first so the user sees what they searched for without
+  // scrolling. Order is stable inside each bucket.
+  const matched = [];
+  const rest    = [];
+  for (const f of files) {
+    if (hl && (f.name || '').toLowerCase().includes(hl)) matched.push(f);
+    else rest.push(f);
+  }
+  const ordered = [...matched, ...rest];
+  let rows = '';
+  for (const f of ordered) {
+    const nm  = cleanText(f.name || '');
+    const sz  = f.size ? fmtSize(f.size) : (files.length === 1 && totalSz ? fmtSize(totalSz) : '');
+    let nmHtml = esc(nm);
+    if (hlRe) nmHtml = nmHtml.replace(hlRe, '<mark>$1</mark>');
+    rows += `<div class="tt-entry${hl && nm.toLowerCase().includes(hl) ? ' tt-entry-match' : ''}" style="padding-left:8px">
+      <span class="tt-icon">📄</span>
+      <span class="tt-path" title="${esc(nm)}">${nmHtml}</span>
+      ${sz ? `<span class="tt-size">${sz}</span>` : ''}
+    </div>`;
+  }
+  return `<div class="torrent-tree-header">
+    <span class="torrent-tree-name" title="${esc(infohash)}">🧲 ${esc(name)}</span>
+    <span class="torrent-tree-stats">${countStr}${sizeStr}</span>
+    ${infohash ? `<span class="magnet-infohash" title="${esc(t('magnet.infohash'))}">📋 ${esc(infohash.substring(0, 16))}…</span>` : ''}
+  </div><div class="torrent-tree-list">${rows}</div>`;
+}
+
 function _linkFilesCell(l) {
-  // Three states from the prober:
+  // Probe states:
   //   probed_at IS NULL              → not yet visited (queued)
   //   available IS NOT NULL && false → confirmed dead (filtered out by API)
+  //   probe_error LIKE 'magnet-enrich:*' → aria2c+DHT failed to fetch metadata
+  //                                       (no peers / timeout) — clickable to retry
   //   available is null + probed_at  → unsupported provider
   //   files_json non-empty           → actual file list
   if (!l.probed_at) {
@@ -2438,6 +4059,12 @@ function _linkFilesCell(l) {
   if (!Array.isArray(files) || files.length === 0) {
     if (l.available === false) {
       return `<span class="link-files-dead" title="${esc(t('links.noAccess'))}">${esc(t('links.noAccessText'))}</span>`;
+    }
+    const isMagnet = /^magnet:/i.test(l.url || '');
+    if (isMagnet && typeof l.probe_error === 'string' && l.probe_error.startsWith('magnet-enrich:')) {
+      const reason = l.probe_error.replace(/^magnet-enrich:/, '').trim() || 'no-metadata';
+      const tip = `${t('links.magnetNoMeta') || 'DHT\'de peer bulunamadı, metadata çekilemedi'} (${reason}).\n${t('links.clickToRetry') || 'Yeniden denemek için tıkla.'}`;
+      return `<span class="link-files-dead link-files-retry" data-lid="${l.id}" title="${esc(tip)}">❌ ${esc(t('links.magnetNoMetaShort') || 'metadata yok')} ↻</span>`;
     }
     return `<span class="link-files-unknown" title="${esc(t('links.unsupported'))}">—</span>`;
   }
@@ -2458,43 +4085,134 @@ function _linkFilesCell(l) {
   return `<span class="link-files-ok" title="${esc(tip)}">${visible}</span>`;
 }
 
-function renderLinks(links) {
+function renderLinks(links, mode = 'replace') {
   // Normalize URLs once so display, copy, and external open all use the same cleaned form
   links.forEach(l => { l.url = cleanUrl(l.url); });
-  _currentLinks = links;
+  const startIdx = (mode === 'append') ? _currentLinks.length : 0;
+  if (mode === 'append') {
+    _currentLinks = _currentLinks.concat(links);
+  } else {
+    _currentLinks = links;
+  }
   const tbody = document.getElementById('links-body');
-  if (!links.length) {
+  if (mode === 'replace' && !links.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="no-data">${esc(t("table.noLinks"))}</td></tr>`;
     return;
   }
-  tbody.innerHTML = links.map((l, i) => {
-    const rowNum  = S.linkOffset + i + 1;
+  const rowsHtml = links.map((l, i) => {
+    const rowNum  = startIdx + i + 1;
     const checked = S.selectedLinks.has(l.id) ? ' checked' : '';
-    const shortUrl = l.url.replace(/^https?:\/\//,'').substring(0,55);
     // Same URL re-posted across multiple messages collapses into one row;
     // surface the underlying count so the user knows it's not a single shot.
     const dupBadge = (l.appearances && l.appearances > 1)
       ? ` <span class="link-dup-badge" title="${esc(t('table.appearances', { n: l.appearances }))}">×${l.appearances}</span>`
       : '';
+    const isMagnet = l.url && /^magnet:/i.test(l.url);
+    let urlTd;
+    let mFiles = [];
+    if (isMagnet) {
+      let raw = l.files_json;
+      if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(e) { raw = []; } }
+      if (Array.isArray(raw)) mFiles = raw;
+      let magnetLabel = '';
+      if (mFiles.length && mFiles[0].name) {
+        magnetLabel = cleanText(mFiles[0].name).substring(0, 50);
+      }
+      if (!magnetLabel) {
+        const hm = l.url.match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
+        magnetLabel = hm ? hm[1].substring(0, 12).toUpperCase() + '…' : 'Magnet';
+      }
+      // Expand button shown for any magnet whose file list we know about, so
+      // the user can inspect the contents (and the file-name filter can
+      // auto-expand matching magnets even when they hold a single file).
+      const hasFiles = mFiles.length >= 1;
+      const toggleBtn = hasFiles
+        ? `<button class="torrent-toggle magnet-toggle" data-mlid="${l.id}" title="${esc(t('magnet.expand'))}">▶</button>`
+        : '';
+      urlTd = `${toggleBtn}<span class="magnet-name" title="${esc(l.url)}">${esc(magnetLabel)}</span><button class="magnet-copy-btn" data-lid="${l.id}" title="${esc(t('link.copyMagnet'))}">&#x2398;</button>${dupBadge}`;
+    } else {
+      const shortUrl = l.url.replace(/^https?:\/\//,'').substring(0,55);
+      urlTd = `<a href="${esc(l.url)}" target="_blank" rel="noopener" style="color:#2563eb">${esc(shortUrl)}</a>${dupBadge}`;
+    }
     // URL'ler zaten ASCII; group_name ve context Telegram'dan geldiği için
     // emoji/biçim temizliği uygulanır.
     const gName  = cleanText(l.group_name || '');
     const ctxRaw = cleanText(l.context || '');
-    return `<tr>
+    const mainRow = `<tr data-lid="${l.id}">
       <td class="chk-cell"><input type="checkbox" class="link-chk" data-lid="${l.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
-      <td title="${esc(l.url)}"><a href="${esc(l.url)}" target="_blank" rel="noopener" style="color:#2563eb">${esc(shortUrl)}</a>${dupBadge}</td>
+      <td title="${isMagnet ? '' : esc(l.url)}">${urlTd}</td>
       <td>${platBadge(l.platform)}</td>
       <td class="link-files-cell">${_linkFilesCell(l)}</td>
       <td>${esc(gName)}</td>
       <td>${fmtDate(l.date)}</td>
       <td class="ctx-cell" title="${esc(ctxRaw)}">${esc(ctxRaw.substring(0,40))}</td>
     </tr>`;
+    const subRow = (isMagnet && mFiles.length >= 1)
+      ? `<tr id="magnet-tree-${l.id}" class="magnet-tree-row" style="display:none">
+           <td colspan="8"><div class="magnet-tree-panel" id="magnet-tree-panel-${l.id}"></div></td>
+         </tr>`
+      : '';
+    return mainRow + subRow;
   }).join('');
+  if (mode === 'append') {
+    tbody.insertAdjacentHTML('beforeend', rowsHtml);
+  } else {
+    tbody.innerHTML = rowsHtml;
+  }
   // Direct per-checkbox click listeners — gives us a real DOM event with shiftKey.
   document.querySelectorAll('#links-body .link-chk').forEach(cb => {
     cb.addEventListener('click', _linkCbClick);
   });
+  document.querySelectorAll('#links-body .magnet-copy-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const lid = parseInt(btn.getAttribute('data-lid'), 10);
+      const link = _currentLinks.find(l => l.id === lid);
+      if (!link) return;
+      try {
+        await navigator.clipboard.writeText(link.url);
+        const orig = btn.innerHTML;
+        btn.textContent = '✓';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+      } catch {}
+    });
+  });
+  document.querySelectorAll('#links-body .magnet-toggle').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const lid = parseInt(btn.dataset.mlid, 10);
+      toggleMagnetTree(lid, btn);
+    });
+  });
+  // Click a "❌ metadata yok ↻" cell → re-run aria2c+DHT for that magnet.
+  document.querySelectorAll('#links-body .link-files-retry').forEach(el => {
+    el.addEventListener('click', async ev => {
+      ev.stopPropagation();
+      const lid = parseInt(el.dataset.lid, 10);
+      if (!Number.isFinite(lid)) return;
+      const orig = el.innerHTML;
+      el.innerHTML = '⏳';
+      el.style.cursor = 'wait';
+      try {
+        const r = await api(`/api/links/${lid}/retry-magnet-metadata`, { method: 'POST' });
+        if (r.ok) {
+          showToast(t('links.retryOk', { n: r.file_count }) ||
+                    `Yeniden çekildi: ${r.file_count} dosya`, 3000);
+        } else {
+          showToast(t('links.retryFail') || 'Peer bulunamadı, yine başarısız.', 3500);
+        }
+        loadLinks(true);
+      } catch (e) {
+        el.innerHTML = orig;
+        el.style.cursor = '';
+        showToast((t('links.retryError') || 'Yeniden deneme hatası') + ': ' + e.message, 4000);
+      }
+    });
+  });
+  // When the user is filtering by a magnet's inner file name, auto-open the
+  // matching magnet trees and highlight the matches inside.
+  _autoExpandMagnetMatches();
   updateBulkLinkBtn();
 }
 
@@ -2579,7 +4297,8 @@ async function copyLinksToClipboard() {
 
 function platBadge(p) {
   const cls={'Google Drive':'plat-gdrive','Mega':'plat-mega','MediaFire':'plat-mediafire',
-    'OneDrive':'plat-onedrive','Dropbox':'plat-dropbox','YouTube':'plat-youtube','GitHub':'plat-github'}[p]||'plat-other';
+    'OneDrive':'plat-onedrive','Dropbox':'plat-dropbox','YouTube':'plat-youtube',
+    'GitHub':'plat-github','Magnet':'plat-magnet'}[p]||'plat-other';
   return `<span class="plat-badge ${cls}">${esc(p||'—')}</span>`;
 }
 
@@ -2592,7 +4311,7 @@ function sortBy(col) {
   updateSortArrows(); loadFiles();
 }
 function updateSortArrows() {
-  ['name','group','size','date'].forEach(c => {
+  ['name','group','size','date','shares'].forEach(c => {
     const el=document.getElementById('arr-'+c);
     if (!el) return;
     el.textContent = S.sortBy===c?(S.sortDir==='asc'?'▲':'▼'):'▲▼';
@@ -2634,33 +4353,118 @@ function setPagLimit(v) {
 }
 
 function renderPagination(total, limit, offset) {
-  const totalPages = Math.max(1, Math.ceil(total/limit));
-  const current    = Math.floor(offset/limit);
-  const limitVal   = S.activeTab==='files'?S.limit:S.linkLimit;
-  const el         = document.getElementById('pagination');
+  // Legacy entry-point kept so old callers still work. Files + Links both use
+  // infinite-scroll footers now; route there instead of rendering page-nav.
+  if (S.activeTab === 'files') { renderFilesFooter({ total }); return; }
+  if (S.activeTab === 'links') { renderLinksFooter({ total }); return; }
+  // No other tab calls this currently — clear the footer if it gets called.
+  const el = document.getElementById('pagination');
+  if (el) el.innerHTML = '';
+}
 
-  let html = '';
-  if (S.activeTab === 'files') {
-    html += `<button id="bulk-dl-btn" onclick="bulkDownloadSelected()"></button>`;
-    html += `<button id="torrent-parse-trigger" onclick="torrentCtrlToggle()" title="${esc(t('torrent.parseBtn'))}">📦</button>`;
-  } else if (S.activeTab === 'links') {
-    html += `<button id="bulk-copy-btn" onclick="copyLinksToClipboard()"><span class="i18n-bcopy">📋 Panoya Kopyala (</span><span id="bulk-copy-count">0</span>)</button>`;
-  }
-  html += `<select id="pag-limit" onchange="setPagLimit(this.value)" style="margin-left:auto">
-    <option value="100"${limitVal==100?' selected':''}>100</option>
-    <option value="500"${limitVal==500?' selected':''}>500</option>
-    <option value="1000"${limitVal==1000?' selected':''}>1000</option>
-  </select>`;
-  html += `<button class="pg-btn" onclick="gotoPage(${current-1})" ${current===0?'disabled':''}>‹</button>`;
-  buildPageList(current, totalPages).forEach(p => {
-    if (p==='…') { html+=`<span class="pg-ellipsis">…</span>`; return; }
-    html+=`<button class="pg-btn${p===current?' active':''}" onclick="gotoPage(${p})">${p+1}</button>`;
-  });
-  html += `<button class="pg-btn" onclick="gotoPage(${current+1})" ${current>=totalPages-1?'disabled':''}>›</button>`;
-  el.innerHTML = html;
+// Infinite-scroll footer for the Files tab. Keeps the bulk-download button
+// + page-size selector + "loaded / total" indicator visible. No page-nav.
+function renderFilesFooter(data) {
+  const el = document.getElementById('pagination');
+  if (!el) return;
+  const loaded = _currentFiles.length;
+  const total  = (data && data.total != null) ? data.total : _filesTotal;
+  el.innerHTML = `
+    <button id="bulk-dl-btn" onclick="bulkDownloadSelected()"></button>
+    <select id="pag-limit" onchange="setPagLimit(this.value)" style="margin-left:auto">
+      <option value="100" ${S.limit==100?'selected':''}>100</option>
+      <option value="500" ${S.limit==500?'selected':''}>500</option>
+      <option value="1000" ${S.limit==1000?'selected':''}>1000</option>
+    </select>
+    <span class="files-loaded-pill" title="${esc(t('files.loadedTip') || 'Şu ana kadar yüklenen / toplam')}">${loaded.toLocaleString()} / ${total.toLocaleString()}</span>`;
   applySyncStatusToUI();
   updateBulkFileBtn();
+}
+
+// Infinite-scroll observer for the Files grid. Same pattern as the hunter
+// grid: a sentinel right after the table fires hourly load-more requests.
+let _filesScrollObs   = null;
+let _filesLoadingMore = false;
+function _mountFilesInfiniteScroll() {
+  if (_filesScrollObs) return;
+  const sentinel = document.getElementById('files-grid-sentinel');
+  const root     = document.getElementById('table-wrap');
+  if (!sentinel || !root) return;
+  _filesScrollObs = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) filesLoadMore();
+    }
+  }, { root, rootMargin: '400px' });
+  _filesScrollObs.observe(sentinel);
+}
+
+// Infinite-scroll footer for the Links tab. Mirrors renderFilesFooter but
+// hosts the "copy to clipboard" bulk action instead of "download all".
+function renderLinksFooter(data) {
+  const el = document.getElementById('pagination');
+  if (!el) return;
+  const loaded = _currentLinks.length;
+  const total  = (data && data.total != null) ? data.total : _linksTotal;
+  el.innerHTML = `
+    <button id="bulk-copy-btn" onclick="copyLinksToClipboard()"><span class="i18n-bcopy">📋 ${esc(t('table.linkCopy') || 'Panoya Kopyala')} (</span><span id="bulk-copy-count">0</span>)</button>
+    <select id="pag-limit" onchange="setPagLimit(this.value)" style="margin-left:auto">
+      <option value="100" ${S.linkLimit==100?'selected':''}>100</option>
+      <option value="500" ${S.linkLimit==500?'selected':''}>500</option>
+      <option value="1000" ${S.linkLimit==1000?'selected':''}>1000</option>
+    </select>
+    <span class="files-loaded-pill" title="${esc(t('files.loadedTip') || 'Şu ana kadar yüklenen / toplam')}">${loaded.toLocaleString()} / ${total.toLocaleString()}</span>`;
+  applySyncStatusToUI();
   updateBulkLinkBtn();
+}
+
+let _linksScrollObs   = null;
+let _linksLoadingMore = false;
+function _mountLinksInfiniteScroll() {
+  if (_linksScrollObs) return;
+  // Files + Links tables share #table-wrap as their scroll container, so the
+  // single sentinel placed below both tables is fine for either grid.
+  const sentinel = document.getElementById('files-grid-sentinel');
+  const root     = document.getElementById('table-wrap');
+  if (!sentinel || !root) return;
+  _linksScrollObs = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) linksLoadMore();
+    }
+  }, { root, rootMargin: '400px' });
+  _linksScrollObs.observe(sentinel);
+}
+
+async function linksLoadMore() {
+  if (_linksLoadingMore) return;
+  if (_currentLinks.length >= _linksTotal && _linksTotal > 0) return;
+  if (S.activeTab !== 'links') return;
+  _linksLoadingMore = true;
+  const loader = document.getElementById('files-grid-loading');
+  if (loader) loader.style.display = '';
+  try {
+    await loadLinks(true, 'append');
+  } finally {
+    if (loader) loader.style.display = 'none';
+  }
+}
+
+async function filesLoadMore() {
+  if (_filesLoadingMore) return;
+  if (_currentFiles.length >= _filesTotal && _filesTotal > 0) return;
+  // Anything that isn't the Files tab shouldn't pull files. Same idea as
+  // hunter's load-more guard.
+  if (S.activeTab !== 'files') return;
+  _filesLoadingMore = true;
+  const loader = document.getElementById('files-grid-loading');
+  if (loader) loader.style.display = '';
+  try {
+    await loadFiles(true, false, 'append');
+  } finally {
+    if (loader) loader.style.display = 'none';
+    // _filesLoadingMore is cleared inside _paintFilesResult after the new
+    // rows are in the DOM; that way an immediately-visible sentinel can
+    // re-trigger load-more without a tight loop.
+  }
 }
 
 function buildPageList(cur, total) {
@@ -2712,6 +4516,29 @@ function cleanText(s) {
     .trim();
 }
 
+// Stronger cleaner for channel / group / publisher labels. On top of what
+// cleanText strips we also:
+//   - NFKC-normalize so Unicode "fancy fonts" (𝐀, 𝙰, 𝘈, ⒜, ＡＢＣ, ㎏, …)
+//     collapse to their plain ASCII / regular forms.
+//   - Drop \p{So} (Symbol, other — covers ⭐✨◆◇★☆⚠ etc.) and box-drawing /
+//     block-element / geometric-shape / dingbat code points that survive
+//     pictographic stripping.
+// Real letters in Latin / Cyrillic / Greek / CJK / Turkish accented chars
+// stay because they're \p{L} (Letter), not stripped here.
+function plainName(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .normalize('NFKC')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/\p{So}/gu, '')
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
+    .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '')
+    .replace(/[\u{2500}-\u{257F}\u{2580}-\u{259F}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, '')
+    .replace(/[​-‏‪-‮⁠-⁤︀-️]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Show a single-row spinner inside any tbody while its data fetch is in flight.
 // Replaced by the next innerHTML write in the corresponding render*() function.
 function _paintGridLoading(tbodyId, colspan) {
@@ -2721,7 +4548,7 @@ function _paintGridLoading(tbodyId, colspan) {
     <span class="gl-inner"><span class="hd-spinner"></span> ${esc(t('common.loadingData'))}</span>
   </td></tr>`;
 }
-function fmtSize(b){if(!b)return'—';if(b>=1073741824)return(b/1073741824).toFixed(1)+' GB';if(b>=1048576)return(b/1048576).toFixed(1)+' MB';if(b>=1024)return(b/1024).toFixed(0)+' KB';return b+' B';}
+function fmtSize(b){if(!b)return'—';const GB=1073741824;if(b>=1000*GB)return(b/(1024*GB)).toFixed(2)+' TB';if(b>=GB)return(b/GB).toFixed(1)+' GB';if(b>=1048576)return(b/1048576).toFixed(1)+' MB';if(b>=1024)return(b/1024).toFixed(0)+' KB';return b+' B';}
 function fmtDate(s){
   if(!s) return '—';
   const d = new Date(s);
@@ -2767,6 +4594,43 @@ document.querySelector('.type-btn[data-group=""]').classList.add('active');
 let _watches = [];
 let _activeNotifications = [];
 let _allNotifications = [];
+
+// ── Watch → Saved Messages push toggle ───────────────────────────────────────
+async function loadNotifyPushSettings() {
+  try {
+    const s = await api('/api/notify/settings');
+    const cb  = document.getElementById('notify-tg-push');
+    const st  = document.getElementById('notify-tg-push-status');
+    if (cb) cb.checked = !!s.tg_push_enabled;
+    if (st) {
+      if (s.last_push_at) {
+        st.textContent = t('notify.lastPushAt', { when: fmtDate(s.last_push_at) }) ||
+                         `Son gönderim: ${fmtDate(s.last_push_at)}`;
+      } else if (s.tg_push_enabled) {
+        st.textContent = t('notify.pushArmed') || 'Aktif — henüz eşleşme yok.';
+      } else {
+        st.textContent = '';
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function saveNotifyPushToggle() {
+  const cb = document.getElementById('notify-tg-push');
+  if (!cb) return;
+  const enabled = cb.checked;
+  try {
+    await api('/api/notify/settings', { method: 'PUT', json: { tg_push_enabled: enabled } });
+    showToast(enabled
+      ? (t('notify.pushOn') || 'Telegram bildirimleri aktif')
+      : (t('notify.pushOff') || 'Telegram bildirimleri kapalı'), 2000);
+    loadNotifyPushSettings();
+  } catch (e) {
+    showToast((t('notify.pushFail') || 'Bildirim ayarı kaydedilemedi') + ': ' + e.message, 3500);
+    // Revert checkbox so UI matches server state.
+    cb.checked = !enabled;
+  }
+}
 
 async function loadWatches() {
   try {
@@ -3049,16 +4913,69 @@ function renderAccountsList() {
     const loginBtn = a.authorized
       ? `<button class="acc-btn" onclick="logoutAcc(${a.id})">${esc(t('accounts.logout'))}</button>`
       : `<button class="acc-btn" onclick="startLoginForAccount(${a.id},'settings')">${esc(t('accounts.login'))}</button>`;
-    return `<div class="acc-row">
+    return `<div class="acc-row" id="acc-row-${a.id}">
       <span class="acc-name">${esc(a.name)}</span>
       <span class="acc-meta">${phone}${apiPart} · ${meta}</span>
       <span class="acc-status ${stCls}">${esc(stTxt)}</span>
       <span class="acc-actions">
         ${loginBtn}
+        <button class="acc-btn acc-edit-btn" data-id="${a.id}" data-name="${esc(a.name||'')}" data-api-id="${a.api_id||''}" data-api-hash="${esc(a.api_hash||'')}" title="${esc(t('common.edit'))}">✏️</button>
         <button class="acc-btn acc-btn-danger" onclick="deleteAcc(${a.id})">${esc(t('accounts.delete'))}</button>
       </span>
+    </div>
+    <div id="acc-ef-${a.id}" style="display:none;margin:4px 0 10px;padding:12px;background:var(--bg-3);border-radius:8px">
+      <div class="creds-form">
+        <input id="acc-edit-name-${a.id}" type="text" placeholder="${esc(t('accounts.namePh'))}">
+        <input id="acc-edit-api-id-${a.id}" type="text" placeholder="API ID">
+        <input id="acc-edit-api-hash-${a.id}" type="text" placeholder="API Hash">
+        <div style="display:flex;gap:6px;margin-top:6px;width:100%">
+          <button class="creds-btn" onclick="submitEditAcc(${a.id})">${esc(t('common.save'))}</button>
+          <button class="creds-btn creds-btn-alt" onclick="closeEditAcc(${a.id})">${esc(t('common.cancel'))}</button>
+        </div>
+      </div>
     </div>`;
   }).join('');
+
+  // Wire up edit buttons via event delegation (avoids inline onclick quote issues)
+  el.querySelectorAll('.acc-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openEditAcc(btn.dataset.id, btn.dataset.name, btn.dataset.apiId, btn.dataset.apiHash);
+    });
+  });
+}
+
+function openEditAcc(id, name, apiId, apiHash) {
+  document.querySelectorAll('[id^="acc-ef-"]').forEach(el => el.style.display = 'none');
+  const form = document.getElementById(`acc-ef-${id}`);
+  if (!form) return;
+  form.style.display = '';
+  document.getElementById(`acc-edit-name-${id}`).value = name || '';
+  document.getElementById(`acc-edit-api-id-${id}`).value = apiId || '';
+  document.getElementById(`acc-edit-api-hash-${id}`).value = apiHash || '';
+  document.getElementById(`acc-edit-name-${id}`).focus();
+}
+
+function closeEditAcc(id) {
+  const form = document.getElementById(`acc-ef-${id}`);
+  if (form) form.style.display = 'none';
+}
+
+async function submitEditAcc(id) {
+  const name   = document.getElementById(`acc-edit-name-${id}`).value.trim();
+  const apiIdV = document.getElementById(`acc-edit-api-id-${id}`).value.trim();
+  const apiHash = document.getElementById(`acc-edit-api-hash-${id}`).value.trim();
+  const body = {};
+  if (name)   body.name    = name;
+  if (apiIdV) body.api_id  = parseInt(apiIdV, 10);
+  if (apiHash) body.api_hash = apiHash;
+  if (!Object.keys(body).length) { closeEditAcc(id); return; }
+  try {
+    await api(`/api/accounts/${id}`, { method: 'PATCH', json: body });
+    closeEditAcc(id);
+    await loadAccountsList();
+  } catch (e) {
+    alert('Kaydedilemedi: ' + e.message);
+  }
 }
 
 function openAddAccount() {
@@ -3222,14 +5139,49 @@ function startHunterPoll() {
   hunterReloadCandidates();
   loadHunterSettings();
   pollHunterStatus();
-  _hunterPollTimer = setInterval(() => { pollHunterStatus(); hunterReloadCandidates(true); }, 1500);
-  // Kullanıcının önceki "log paneli kapalı" tercihini geri yükle.
-  try {
-    if (localStorage.getItem('tf_hunter_log_collapsed') === '1') {
-      document.getElementById('hunter-log-list')?.classList.add('collapsed');
-      document.getElementById('hc-log-arrow')?.classList.remove('open');
+  // Polling now only refreshes status/log/total — the grid itself updates
+  // incrementally via IntersectionObserver (load-more on scroll) plus
+  // explicit reloads after run/filter/candidate-action.
+  _hunterPollTimer = setInterval(() => { pollHunterStatus(); }, 1500);
+  // Default the log drawer to collapsed; honor any saved "open" preference.
+  const list = document.getElementById('hunter-log-list');
+  const arr  = document.getElementById('hc-log-arrow');
+  const open = (() => { try { return localStorage.getItem('tf_hunter_log_collapsed') === '0'; } catch (e) { return false; } })();
+  if (list) list.classList.toggle('collapsed', !open);
+  if (arr)  arr.classList.toggle('open', open);
+}
+
+// IntersectionObserver: when the sentinel scrolls into view, fetch the next
+// page and append. Re-arms automatically after each append since the sentinel
+// is preserved across reloads. Guarded against double-fires while a fetch is
+// still in flight.
+let _hunterScrollObs = null;
+let _hunterLoadingMore = false;
+function _hunterMountInfiniteScroll() {
+  if (_hunterScrollObs) return;
+  const sentinel = document.getElementById('hunter-grid-sentinel');
+  const root     = document.getElementById('hunter-panel');
+  if (!sentinel || !root) return;
+  _hunterScrollObs = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) hunterLoadMore();
     }
-  } catch (e) {}
+  }, { root, rootMargin: '300px' });
+  _hunterScrollObs.observe(sentinel);
+}
+
+async function hunterLoadMore() {
+  if (_hunterLoadingMore) return;
+  if (_hunterCandidates.length >= S.hunterTotal && S.hunterTotal > 0) return;
+  _hunterLoadingMore = true;
+  const loader = document.getElementById('hunter-grid-loading');
+  if (loader) loader.style.display = '';
+  try {
+    await hunterReloadCandidates(true, 'append');
+  } finally {
+    _hunterLoadingMore = false;
+    if (loader) loader.style.display = 'none';
+  }
 }
 
 // "Kanal Avcısı nedir?" — opens the static info card as a modal.
@@ -3272,6 +5224,8 @@ async function pollHunterStatus() {
       if (btn) { btn.disabled = false; btn.textContent = t('hunter.runNow'); }
       if (monitor) monitor.style.display = 'none';
     }
+    // Log her durumda (çalışıyor veya durmuş) render edilir — kalıcı log.
+    _renderHunterLog(s.events || []);
   } catch (e) {}
 }
 
@@ -3366,13 +5320,28 @@ function _eventText(e) {
   return e ? (e.msg || '') : '';
 }
 
+let _hunterLogSig = '';
 function _renderHunterLog(events) {
   const el = document.getElementById('hunter-log-list');
   if (!el) return;
+  _updateHunterLogPulse(events);
   if (!events.length) {
+    const sig = '__empty__';
+    if (sig === _hunterLogSig) return;
+    _hunterLogSig = sig;
     el.innerHTML = `<div class="hl-empty">${esc(t('hunter.logEmpty'))}</div>`;
     return;
   }
+  // İçerik imzası: aynıysa yeniden çizme (seçimi/scroll'u koru).
+  const sig = events.length + '|' + (events[0]?.ts || '') + '|' + (events[events.length-1]?.ts || '') + '|' + (events[events.length-1]?.msg || events[events.length-1]?.key || '');
+  if (sig === _hunterLogSig) return;
+  // Kullanıcı log içinde metin seçtiyse re-render etme (seçim kaybolmasın).
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    if (el.contains(range.commonAncestorContainer)) return;
+  }
+  _hunterLogSig = sig;
   // En yeni satır en üstte: array'i ters çevirip render et. Kullanıcı en
   // üstteyse (yeni gelenleri takip ediyor) scroll'u 0'da tutuyoruz; daha
   // aşağıdaysa (eski olayı okuyor) scroll pozisyonunu bozmadan içeriği
@@ -3390,6 +5359,18 @@ function _renderHunterLog(events) {
     </div>`;
   }).join('');
   el.scrollTop = wasAtTop ? 0 : prevTop;
+}
+
+function _updateHunterLogPulse(events) {
+  // Shows the most-recent log line (truncated) on the drawer title bar, so
+  // users can keep one eye on activity without expanding the drawer.
+  const el = document.getElementById('hunter-log-pulse');
+  if (!el) return;
+  if (!events || !events.length) { el.textContent = ''; return; }
+  const last = events[events.length - 1];
+  const ts   = (last.ts || '').substring(11, 19);  // HH:MM:SS
+  const txt  = _eventText(last);
+  el.textContent = ts ? `${ts} · ${txt}` : txt;
 }
 
 function hunterToggleLog() {
@@ -3422,6 +5403,8 @@ async function loadHunterSettings() {
     set('h-enabled', _hunterSettings.enabled);
     set('h-stage1',  _hunterSettings.stage1_enabled);
     set('h-stage2',  _hunterSettings.stage2_enabled);
+    set('h-magnethunt', _hunterSettings.magnethunt_enabled);
+    set('h-magnet-backfill', _hunterSettings.magnet_backfill_enabled);
     set('h-web-delay', _hunterSettings.web_request_delay_ms);
     set('h-web-conc',  _hunterSettings.web_concurrency);
     set('h-tg-delay',  _hunterSettings.tg_request_delay_ms);
@@ -3429,6 +5412,7 @@ async function loadHunterSettings() {
     set('h-tg-sample', _hunterSettings.tg_messages_to_sample);
     set('h-tg-account',_hunterSettings.tg_account_id);
     set('h-temp-join', _hunterSettings.tg_temp_join_enabled);
+    set('h-skip-old',  _hunterSettings.skip_old_channels !== false);
     set('h-schedule-kind', _hunterSettings.schedule_kind);
     set('h-schedule-int',  _hunterSettings.schedule_interval_seconds);
     set('h-keywords',  _hunterSettings.keywords || '');
@@ -3466,6 +5450,8 @@ async function hunterSaveSettings() {
     enabled: get('h-enabled'),
     stage1_enabled: get('h-stage1'),
     stage2_enabled: get('h-stage2'),
+    magnethunt_enabled: get('h-magnethunt'),
+    magnet_backfill_enabled: get('h-magnet-backfill'),
     web_request_delay_ms: get('h-web-delay'),
     web_concurrency: get('h-web-conc'),
     tg_request_delay_ms: get('h-tg-delay'),
@@ -3473,6 +5459,7 @@ async function hunterSaveSettings() {
     tg_messages_to_sample: get('h-tg-sample'),
     tg_account_id: get('h-tg-account'),
     tg_temp_join_enabled: get('h-temp-join'),
+    skip_old_channels: get('h-skip-old'),
     schedule_kind: get('h-schedule-kind'),
     schedule_interval_seconds: get('h-schedule-int'),
     keywords: get('h-keywords'),
@@ -3496,113 +5483,126 @@ async function hunterRun() {
   setTimeout(hunterReloadCandidates, 800);
 }
 
-async function hunterReloadCandidates(silent) {
+// ── Magnet Hunt (Google-dork search for magnet: URIs) ──────────────────────
+let _magnetHuntPollTimer = null;
+
+async function magnetHuntToggle() {
+  // Toggle: if running → cancel; otherwise → start
+  try {
+    const s = await api('/api/hunter/magnet_hunt/status');
+    if (s.running) {
+      await api('/api/hunter/magnet_hunt/cancel', { method: 'POST' });
+      showToast(t('magnetHunt.cancelled'), 2000);
+    } else {
+      const r = await api('/api/hunter/magnet_hunt/run', { method: 'POST' });
+      if (r.ok) {
+        showToast(t('magnetHunt.started'), 2000);
+        _magnetHuntStartPolling();
+      }
+    }
+  } catch (e) {
+    if (e && e.status === 409) showToast(t('magnetHunt.alreadyRunning'), 3000);
+    else showToast(t('common.error') + ' ' + esc(e.message || e), 4000);
+  }
+}
+
+function _magnetHuntStartPolling() {
+  if (_magnetHuntPollTimer) clearInterval(_magnetHuntPollTimer);
+  _magnetHuntPollTimer = setInterval(_magnetHuntPoll, 2000);
+  _magnetHuntPoll();
+}
+
+async function _magnetHuntPoll() {
+  try {
+    const s = await api('/api/hunter/magnet_hunt/status');
+    _updateMagnetHuntBtn(s);
+    if (!s.running) {
+      clearInterval(_magnetHuntPollTimer);
+      _magnetHuntPollTimer = null;
+      if (s.magnets_new > 0) showToast(t('magnetHunt.summaryNew', {n: s.magnets_new}), 4000);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function _updateMagnetHuntBtn(s) {
+  const btn  = document.getElementById('magnet-hunt-btn');
+  const meta = document.getElementById('magnet-hunt-meta');
+  if (!btn || !meta) return;
+  if (s && s.running) {
+    btn.classList.add('active');
+    const eng = s.current_engine ? `· ${esc(s.current_engine)} ` : '';
+    meta.textContent = `${eng}${s.engines_done}/${s.engines_total} · ${s.magnets_new || 0} ${t('magnetHunt.newShort')}`;
+  } else {
+    btn.classList.remove('active');
+    meta.textContent = '';
+  }
+}
+
+// Pick up state on page load (in case a hunt is already running from a previous session)
+async function _magnetHuntInitOnSwitch() {
+  try {
+    const s = await api('/api/hunter/magnet_hunt/status');
+    if (s.running) _magnetHuntStartPolling();
+    else _updateMagnetHuntBtn(s);
+  } catch (e) {}
+}
+
+async function hunterReloadCandidates(silent, mode = 'replace') {
   const status = document.getElementById('hunter-filter-status')?.value || '';
-  const sort = document.getElementById('hunter-sort')?.value || 'score';
+  const page   = S.hunterLimit || 200;
+  const offset = mode === 'append' ? _hunterCandidates.length : 0;
   const params = new URLSearchParams({
-    sort,
-    limit:  String(S.hunterLimit),
-    offset: String(S.hunterOffset),
+    sort_by:  _hgSortBy,
+    sort_dir: _hgSortDir,
+    limit:    String(page),
+    offset:   String(offset),
   });
   if (status) params.set('status', status);
-  // Only paint the loading state on the explicit (user-driven) reload —
-  // not for the silent 1.5s polling refresh, which would cause flicker.
-  if (!silent) _paintGridLoading('hunter-grid-body', 11);
+  // Only paint the loading skeleton on a full replace from a user action —
+  // not silent (polling) or appending more (infinite scroll), which would
+  // wipe the grid.
+  if (!silent && mode === 'replace') _paintGridLoading('hunter-grid-body', 11);
   try {
     const r = await api('/api/hunter/candidates?' + params);
-    _hunterCandidates = r.candidates || [];
+    const newRows = r.candidates || [];
     S.hunterTotal = r.total || 0;
-    // If user deleted/blacklisted enough rows that the current page no
-    // longer exists, slide the offset back to a valid page.
-    if (S.hunterOffset > 0 && S.hunterOffset >= S.hunterTotal) {
-      S.hunterOffset = Math.max(0, Math.floor((S.hunterTotal - 1) / S.hunterLimit) * S.hunterLimit);
-      return hunterReloadCandidates(silent);
+    if (mode === 'append') {
+      _hunterCandidates = _hunterCandidates.concat(newRows);
+    } else {
+      _hunterCandidates = newRows;
     }
     renderHunterCandidates();
-    renderHunterPager();
+    _updateHunterTotalPill();
+    if (mode === 'replace') _hunterMountInfiniteScroll();
   } catch(e) {
     if (!silent) console.warn(e);
   }
 }
 
-function renderHunterPager() {
-  const el = document.getElementById('hunter-pager');
+function _updateHunterTotalPill() {
+  const el = document.getElementById('hunter-total-count');
   if (!el) return;
-  const total = S.hunterTotal;
-  const limit = S.hunterLimit;
-  const offset = S.hunterOffset;
-
-  if (!total) {
-    // Empty grid — drop pager content. Memoize so we don't keep wiping
-    // an already-empty node and stomping any unrelated focus.
-    if (el._lastPagerHtml !== '') {
-      el.innerHTML = '';
-      el._lastPagerHtml = '';
-      el.classList.remove('has-rows');
-    }
-    return;
-  }
-  el.classList.add('has-rows');
-
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const current = Math.floor(offset / limit);
-  const fromN = offset + 1;
-  const toN = Math.min(offset + limit, total);
-
-  let html = `
-    <span class="hp-info">${esc(t('hg.pagerRange', { from: fromN.toLocaleString(), to: toN.toLocaleString(), total: total.toLocaleString() }))}</span>
-    <span style="flex:1"></span>
-    <label style="display:inline-flex;align-items:center;gap:6px">${esc(t('hg.perPage'))}
-      <select onchange="hunterSetLimit(this.value)">
-        <option value="20"${limit===20?' selected':''}>20</option>
-        <option value="50"${limit===50?' selected':''}>50</option>
-        <option value="100"${limit===100?' selected':''}>100</option>
-        <option value="200"${limit===200?' selected':''}>200</option>
-        <option value="500"${limit===500?' selected':''}>500</option>
-        <option value="1000"${limit===1000?' selected':''}>1000</option>
-      </select>
-    </label>
-    <button class="pg-btn" onclick="hunterGotoPage(${current-1})" ${current===0?'disabled':''}>‹</button>
-  `;
-  // Use the same window-style page list builder as the files grid.
-  buildPageList(current, totalPages).forEach(p => {
-    if (p === '…') { html += `<span class="pg-ellipsis">…</span>`; return; }
-    html += `<button class="pg-btn${p===current?' active':''}" onclick="hunterGotoPage(${p})">${p+1}</button>`;
-  });
-  html += `<button class="pg-btn" onclick="hunterGotoPage(${current+1})" ${current>=totalPages-1?'disabled':''}>›</button>`;
-  // Hunter status polling redraws this element every 1.5s. If we rewrite
-  // innerHTML unconditionally, an open <select> dropdown ("sayfa başı")
-  // disappears with its DOM node and the browser auto-closes the menu
-  // 1-2 sec after the user clicked it. Skip the write when nothing
-  // changed.
-  if (el._lastPagerHtml === html) return;
-  el._lastPagerHtml = html;
-  el.innerHTML = html;
+  const total = S.hunterTotal || 0;
+  if (total <= 0) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = `<b>${total.toLocaleString()}</b> ${esc(t('hunter.totalCandidates'))}`;
 }
 
-function hunterSetLimit(v) {
-  const lim = parseInt(v, 10);
-  if (!Number.isFinite(lim) || lim <= 0) return;
-  S.hunterLimit = lim;
-  S.hunterOffset = 0;
-  try { localStorage.setItem('tf_hunter_limit', lim); } catch (e) {}
-  hunterReloadCandidates();
-}
-
-function hunterGotoPage(pg) {
-  if (!Number.isFinite(pg)) return;
-  const total = S.hunterTotal;
-  const limit = S.hunterLimit;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const clamped = Math.max(0, Math.min(totalPages - 1, pg));
-  S.hunterOffset = clamped * limit;
-  hunterReloadCandidates();
-}
+// Old pager + per-page picker removed: the hunter grid is now infinite-scroll
+// (see _hunterMountInfiniteScroll / hunterLoadMore). Total count moved into
+// the toolbar pill (_updateHunterTotalPill).
 
 // Status/sort changes shrink or shuffle the result set, so any non-zero
 // offset becomes meaningless — reset to page 1.
 function hunterFilterChange() {
   S.hunterOffset = 0;
+  // Mirror the toolbar status into the column-header filter so the two stay
+  // in sync no matter which one the user touches.
+  const tb  = document.getElementById('hunter-filter-status')?.value || '';
+  const col = document.getElementById('hg-flt-status');
+  if (col && col.value !== tb) col.value = tb;
+  _hgLastFetchedStatus = tb;
+  _hgUpdateEventCol();
   hunterReloadCandidates();
 }
 
@@ -3632,15 +5632,19 @@ function hgSort(col) {
     _hgSortDir = _hgSortDir === 'asc' ? 'desc' : 'asc';
   } else {
     _hgSortBy = col;
-    _hgSortDir = (col === 'username') ? 'asc' : 'desc';
+    _hgSortDir = (col === 'username' || col === 'status') ? 'asc' : 'desc';
   }
-  renderHunterCandidates();
+  hunterReloadCandidates();
 }
 
 function _hgUpdateSortArrows() {
   const map = {score:'hg-arr-score', username:'hg-arr-username', members:'hg-arr-members',
                 estimated_files:'hg-arr-files', last_message_at:'hg-arr-last', discovered_at:'hg-arr-disc',
-                status:'hg-arr-status', sources:'hg-arr-sources'};
+                status:'hg-arr-status', sources:'hg-arr-sources',
+                type_video:'hg-arr-type-video', type_audio:'hg-arr-type-audio',
+                type_image:'hg-arr-type-image', type_archive:'hg-arr-type-archive',
+                type_document:'hg-arr-type-document', type_software:'hg-arr-type-software',
+                type_other:'hg-arr-type-other'};
   for (const [k, id] of Object.entries(map)) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -3649,7 +5653,46 @@ function _hgUpdateSortArrows() {
   }
 }
 
-function hgFilterChange() { renderHunterCandidates(); }
+const _HG_EV_MAP = {
+  discovered:  { field: 'discovered_at', label: 'Keşif Tarihi' },
+  enriched:    { field: 'enriched_at',   label: 'Zenginl. Tarihi' },
+  joined:      { field: 'decided_at',    label: 'Katıldı Tarihi' },
+  rejected:    { field: 'decided_at',    label: 'Reddedildi Tarihi' },
+  blacklisted: { field: 'decided_at',    label: 'Kara Liste Tarihi' },
+};
+
+function _hgUpdateEventCol() {
+  const st = document.getElementById('hg-flt-status')?.value || '';
+  const grid = document.getElementById('hunter-grid');
+  const th = document.getElementById('hg-th-event');
+  const ev = _HG_EV_MAP[st];
+  if (ev) {
+    grid?.classList.add('hg-show-ev');
+    if (th) th.textContent = ev.label;
+  } else {
+    grid?.classList.remove('hg-show-ev');
+  }
+}
+
+let _hgLastFetchedStatus = '';
+
+function hgFilterChange() {
+  // The column-header status filter is the same control the user reaches for
+  // most often. Keep it in sync with the toolbar dropdown AND re-fetch from
+  // the API when status changes — otherwise statuses excluded from the
+  // default backend filter (joined / rejected / blacklisted / failed) never
+  // appear because they were never loaded in the first place.
+  _hgUpdateEventCol();
+  const colSt = document.getElementById('hg-flt-status')?.value || '';
+  const tb = document.getElementById('hunter-filter-status');
+  if (tb && tb.value !== colSt) tb.value = colSt;
+  if (colSt !== _hgLastFetchedStatus) {
+    _hgLastFetchedStatus = colSt;
+    hunterReloadCandidates();
+    return;
+  }
+  renderHunterCandidates();
+}
 
 function _stripEmojiAndFormat(s) {
   // Drop all emoji / pictographs / symbols and collapse extra whitespace
@@ -3696,25 +5739,8 @@ function renderHunterCandidates() {
     return true;
   });
 
-  // Sort
-  const dir = _hgSortDir === 'asc' ? 1 : -1;
-  rows.sort((a, b) => {
-    let va = a[_hgSortBy], vb = b[_hgSortBy];
-    if (_hgSortBy === 'last_message_at' || _hgSortBy === 'discovered_at') {
-      va = va ? Date.parse(va) : 0; vb = vb ? Date.parse(vb) : 0;
-    } else if (_hgSortBy === 'username' || _hgSortBy === 'status') {
-      va = (va||'').toLowerCase(); vb = (vb||'').toLowerCase();
-    } else if (_hgSortBy === 'sources') {
-      va = (a.sources||[]).join(',').toLowerCase();
-      vb = (b.sources||[]).join(',').toLowerCase();
-    } else {
-      va = va || 0; vb = vb || 0;
-    }
-    if (va < vb) return -1*dir;
-    if (va > vb) return  1*dir;
-    return 0;
-  });
-
+  // Rows arrive pre-sorted from the server; only local-filter columns (sources,
+  // username text filter) still run client-side here.
   _hgUpdateSortArrows();
 
   if (!rows.length) {
@@ -3744,21 +5770,6 @@ function renderHunterCandidates() {
     const last = c.last_message_at ? fmtDate(c.last_message_at).substring(0,16) : '—';
     const disc = c.discovered_at ? fmtDate(c.discovered_at).substring(0,16) : '—';
     const sources = (c.sources || []).map(s => s.replace('internal:', '')).join(', ');
-    const isEnriched = status === 'enriched' || status === 'reviewed';
-    let actions;
-    if (status !== 'joined' && status !== 'rejected' && status !== 'blacklisted') {
-      if (c.already_joined) {
-        // User is already a member of this channel via Telegram; skip the
-        // Join button (which would fire JoinChannelRequest and risk FloodWait).
-        actions = `<span class="hg-already-joined" title="${esc(t('hunter.alreadyJoinedTitle'))}">${esc(t('hunter.alreadyJoined'))}</span>
-                   <button class="hg-btn hg-btn-reject" onclick="hunterReject(${c.id}, event)">${esc(t('hunter.reject'))}</button>`;
-      } else {
-        actions = `<button class="hg-btn hg-btn-join" onclick="hunterJoin(${c.id}, event)">${esc(t('hunter.join'))}</button>
-                   <button class="hg-btn hg-btn-reject" onclick="hunterReject(${c.id}, event)">${esc(t('hunter.reject'))}</button>`;
-      }
-    } else {
-      actions = `<span style="color:var(--text-4);font-size:.7rem">—</span>`;
-    }
     const sel = S.hunterSelected.has(c.id);
     // Hourglass when this candidate sits in the FloodWait join queue.
     let queueBadge = '';
@@ -3772,18 +5783,22 @@ function renderHunterCandidates() {
       const tip = t('hg.queueTip', { wait: waitTxt, attempts: c.queue_attempts || 1 });
       queueBadge = ` <span class="hg-queue-badge" title="${esc(tip)}">⏳ ${esc(waitTxt)}</span>`;
     }
+    const bd = c.file_type_breakdown || {};
+    const _tc = (k, col) => { const v = bd[k]||0; return `<td class="hg-tc${v?'':' zero'}" style="color:${v?col:'var(--text-4)'}">${v||'—'}</td>`; };
+    const evInfo = _HG_EV_MAP[document.getElementById('hg-flt-status')?.value || ''];
+    const evDate = evInfo ? (c[evInfo.field] ? fmtDate(c[evInfo.field]).substring(0,16) : '—') : '';
     return `<tr class="${sel?'hg-row-selected':''}" onclick="hgRowClick(event, ${c.id})">
       <td class="hg-chk-cell"><input type="checkbox" data-hg-cid="${c.id}" ${sel?'checked':''}></td>
       <td><div class="hg-score${scoreCls}">${score.toFixed(0)}</div></td>
-      <td><div class="hg-channel"><span class="hg-title" title="${esc(title)}">${esc(title)}</span> <code>@${esc(c.username)}</code>${queueBadge}</div></td>
+      <td><div class="hg-channel"><span class="hg-title" title="${esc(title)} · @${esc(c.username)}">${esc(title)}</span> <span class="hg-uname">@${esc(c.username)}</span>${queueBadge}</div></td>
       <td>${members}</td>
       <td>${files}</td>
-      <td>${_hgTypesBar(c.file_type_breakdown)}</td>
+      ${_tc('video','#ef4444')}${_tc('audio','#7c3aed')}${_tc('image','#059669')}${_tc('archive','#f59e0b')}${_tc('document','#2563eb')}${_tc('software','#374151')}${_tc('other','#9ca3af')}
       <td style="font-size:.72rem;color:var(--text-3)">${esc(last)}</td>
       <td style="font-size:.72rem;color:var(--text-3)">${esc(disc)}</td>
+      <td class="hg-ev-col" style="font-size:.72rem;color:var(--text-3)">${esc(evDate)}</td>
       <td><span class="hg-status s-${status}">${esc(t('hunter.status' + status.charAt(0).toUpperCase() + status.slice(1)) || status)}</span></td>
       <td><span class="hg-sources" title="${esc((c.sources||[]).join(', '))}">${esc(sources || '—')}</span></td>
-      <td onclick="event.stopPropagation()"><div class="hg-act">${actions}</div></td>
     </tr>`;
   }).join('');
 
@@ -3809,67 +5824,106 @@ function _hgCbClick(ev) {
 async function hunterShowDetail(cid) {
   try {
     const c = await api(`/api/hunter/candidates/${cid}`);
-    const breakdown = c.file_type_breakdown || {};
-    const types = Object.entries(breakdown).filter(([,v]) => v > 0)
-      .map(([k,v]) => `<span class="hd-type-pill" style="border-left:3px solid ${_HUNTER_TYPE_COLORS[k]||'#9ca3af'};padding-left:8px">${esc(k)}: <b>${v}</b></span>`)
-      .join('');
-    const sources = (c.sources || []).join(', ');
-    document.getElementById('hunter-detail-body').innerHTML = `
-      <div class="hd-head">
-        <h2>🎯 ${esc(c.title || c.username)} <code style="font-size:.75rem;background:var(--bg-info);color:var(--accent-h);padding:2px 8px;border-radius:5px">@${esc(c.username)}</code></h2>
-        ${c.description ? `<div class="hd-desc">${esc(c.description)}</div>` : ''}
-      </div>
+    c.kind = 'candidate';
+    _renderDetailModal(c);
+  } catch (e) {
+    alert(e.message);
+  }
+}
 
-      <div class="hd-meta">
-        <div class="hd-grid">
-          <b>${esc(t('hunter.score'))}:</b> <span><b style="color:var(--accent);font-size:1.05rem">${(c.score||0).toFixed(1)}</b></span>
-          <b>${esc(t('hunter.members'))}:</b> <span>${c.members ? c.members.toLocaleString() : '—'}</span>
-          <b>${esc(t('hunter.totalFilesSampled'))}:</b> <span>${c.file_count_sample||0} / ${c.sampled_messages||0}</span>
-          <b>${esc(t('hunter.avgFileSize'))}:</b> <span>${fmtSize(c.avg_file_size||0)}</span>
-          <b>${esc(t('hunter.lastMessage'))}:</b> <span>${c.last_message_at ? fmtDate(c.last_message_at) : '—'}</span>
-          <b>${esc(t('hunter.discovered'))}:</b> <span>${c.discovered_at ? fmtDate(c.discovered_at) : '—'}</span>
-          <b>${esc(t('hunter.sources_'))}:</b> <span>${esc(sources || '—')}</span>
-          <b>${esc(t('table.status'))}:</b> <span><span class="h-status-pill s-${c.status||'discovered'}">${esc(c.status||'')}</span></span>
-          ${c.error ? `<b style="color:#dc2626">⚠</b><span style="color:#dc2626">${esc(c.error)}</span>` : ''}
-        </div>
-        ${types ? `<div class="hd-types">${types}</div>` : ''}
-      </div>
+// Shared modal renderer used by BOTH the Channel Hunter grid and the Channels
+// grid. The only contextual differences are the header icon, the action set,
+// and whether we wire up the deep-scan file list panel below the actions.
+function _renderDetailModal(c) {
+  const isChannel = c.kind === 'channel';
+  const breakdown = c.file_type_breakdown || {};
+  const types = Object.entries(breakdown).filter(([,v]) => v > 0)
+    .map(([k,v]) => `<span class="hd-type-pill" style="border-left:3px solid ${_HUNTER_TYPE_COLORS[k]||'#9ca3af'};padding-left:8px">${esc(k)}: <b>${v}</b></span>`)
+    .join('');
+  const sources = (c.sources || []).join(', ');
+  const headerIcon = isChannel ? '📋' : '🎯';
 
-      <div class="hd-actions" id="hd-actions">
-        <a href="https://t.me/${esc(c.username)}" target="_blank" rel="noopener" class="h-btn">↗ Telegram</a>
-        <button class="h-btn"               data-act="deepScan"  title="${esc(t('hd.deepScan'))}">${esc(t('hd.deepScan'))}</button>
-        ${c.status !== 'joined' && c.status !== 'blacklisted' ? `<button class="h-btn h-btn-join" data-act="join"      title="${esc(t('hunter.actionHelpJoin'))}">${esc(t('hunter.join'))}</button>` : ''}
-        ${c.status !== 'rejected' && c.status !== 'blacklisted' ? `<button class="h-btn"          data-act="reject"    title="${esc(t('hunter.actionHelpReject'))}">${esc(t('hunter.reject'))}</button>` : ''}
-        ${c.status !== 'blacklisted' ? `<button class="h-btn h-btn-reject" data-act="blacklist" title="${esc(t('hunter.actionHelpBlacklist'))}">${esc(t('hunter.blacklist'))}</button>` : ''}
-        ${c.status === 'blacklisted' || c.status === 'rejected' ? `<button class="h-btn" data-act="restore" title="${esc(t('hunter.restoreBtnTitle'))}">${esc(t('hunter.restoreBtn'))}</button>` : ''}
-        <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>
-      </div>
+  // Action set depends on context. Channels reuse the same data-act dispatcher
+  // pattern as hunter but with channel-management verbs (rescan/hide/excl/leave).
+  let actionsHtml;
+  if (isChannel) {
+    actionsHtml = `
+      <a href="https://t.me/${esc(c.username)}" target="_blank" rel="noopener" class="h-btn">↗ Telegram</a>
+      <button class="h-btn" data-act="ch-files" data-i18n-title="channels.openFilesTip" title="Bu kanaldaki dosyaları Dosyalar sekmesinde aç">📁 ${esc(t('channels.openFiles'))}</button>
+      <button class="h-btn" data-act="ch-rescan" data-i18n-title="channels.tipRescan" title="">${esc(t('groups.bulkRescan'))}</button>
+      <button class="h-btn" data-act="ch-hide"   data-i18n-title="channels.tipHide"   title="">${esc(c.hidden ? t('groups.bulkShow') : t('groups.bulkHide'))}</button>
+      <button class="h-btn" data-act="ch-excl"   data-i18n-title="channels.tipUntrack" title="">${esc(c.excluded ? t('groups.bulkTrack') : t('groups.bulkUntrack'))}</button>
+      <button class="h-btn h-btn-reject" data-act="ch-leave" data-i18n-title="channels.tipLeave" title="">${esc(t('groups.bulkLeave'))}</button>
+      <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>`;
+  } else {
+    actionsHtml = `
+      <a href="https://t.me/${esc(c.username)}" target="_blank" rel="noopener" class="h-btn">↗ Telegram</a>
+      <button class="h-btn"               data-act="deepScan"  title="${esc(t('hd.deepScan'))}">${esc(t('hd.deepScan'))}</button>
+      ${c.status !== 'joined' && c.status !== 'blacklisted' ? `<button class="h-btn h-btn-join" data-act="join"      title="${esc(t('hunter.actionHelpJoin'))}">${esc(t('hunter.join'))}</button>` : ''}
+      ${c.status !== 'rejected' && c.status !== 'blacklisted' ? `<button class="h-btn"          data-act="reject"    title="${esc(t('hunter.actionHelpReject'))}">${esc(t('hunter.reject'))}</button>` : ''}
+      ${c.status !== 'blacklisted' ? `<button class="h-btn h-btn-reject" data-act="blacklist" title="${esc(t('hunter.actionHelpBlacklist'))}">${esc(t('hunter.blacklist'))}</button>` : ''}
+      ${c.status === 'blacklisted' || c.status === 'rejected' ? `<button class="h-btn" data-act="restore" title="${esc(t('hunter.restoreBtnTitle'))}">${esc(t('hunter.restoreBtn'))}</button>` : ''}
+      <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>`;
+  }
 
-      <div class="hd-files">
-        <h4>${esc(t('hd.fileList'))}</h4>
-        <div id="hd-files-area"></div>
-      </div>`;
-    document.getElementById('hunter-detail-overlay').classList.add('open');
-    _currentDetailCid = c.id;
+  // For channels the file list comes from the main Files tab, so we hide the
+  // hunter-specific file panel + deep-scan progress block. Everything else
+  // (header / meta grid / type pills / actions) stays visually identical.
+  document.getElementById('hunter-detail-body').innerHTML = `
+    <div class="hd-head">
+      <h2>${headerIcon} ${esc(c.title || c.username || ('id ' + (c.group_id || c.id || '')))} <code style="font-size:.75rem;background:var(--bg-info);color:var(--accent-h);padding:2px 8px;border-radius:5px">@${esc(c.username || '')}</code></h2>
+      ${c.description ? `<div class="hd-desc">${esc(c.description)}</div>` : ''}
+    </div>
+
+    <div class="hd-meta">
+      <div class="hd-grid">
+        <b>${esc(t('hunter.score'))}:</b> <span><b style="color:var(--accent);font-size:1.05rem">${(c.score||0).toFixed(1)}</b></span>
+        <b>${esc(t('hunter.members'))}:</b> <span>${c.members != null ? Number(c.members).toLocaleString() : '—'}</span>
+        <b>${esc(t('hunter.totalFilesSampled'))}:</b> <span>${(c.file_count_sample||0).toLocaleString()} / ${(c.sampled_messages||0).toLocaleString()}</span>
+        <b>${esc(t('hunter.avgFileSize'))}:</b> <span>${fmtSize(c.avg_file_size||0)}</span>
+        <b>${esc(t('hunter.lastMessage'))}:</b> <span>${c.last_message_at ? fmtDate(c.last_message_at) : '—'}</span>
+        <b>${esc(t('hunter.discovered'))}:</b> <span>${c.discovered_at ? fmtDate(c.discovered_at) : '—'}</span>
+        <b>${esc(t('hunter.sources_'))}:</b> <span>${esc(sources || '—')}</span>
+        <b>${esc(t('table.status'))}:</b> <span><span class="h-status-pill s-${c.status||'discovered'}">${esc(c.status||'')}</span></span>
+        ${c.error ? `<b style="color:#dc2626">⚠</b><span style="color:#dc2626">${esc(c.error)}</span>` : ''}
+      </div>
+      ${types ? `<div class="hd-types">${types}</div>` : ''}
+    </div>
+
+    <div class="hd-actions" id="hd-actions">
+      ${actionsHtml}
+    </div>
+
+    <div class="hd-files">
+      <h4>${esc(t('hd.fileList'))}</h4>
+      <div id="hd-files-area"></div>
+    </div>`;
+
+  document.getElementById('hunter-detail-overlay').classList.add('open');
+
+  _hdFilesQ = ''; _hdFilesExt = ''; _hdFilesSortBy = 'date'; _hdFilesSortDir = 'desc';
+
+  if (isChannel) {
+    _currentChannelGid = c.group_id;
+    _currentDetailCid  = null;
+    _hdFilesBase       = `/api/channels/${c.group_id}`;
+    _bindChDetailActions();
+    refreshHdFiles();
+  } else {
+    _currentDetailCid      = c.id;
     _currentDetailUsername = c.username;
-    _hdFilesQ = ''; _hdFilesExt = ''; _hdFilesSortBy = 'date'; _hdFilesSortDir = 'desc';
+    _currentChannelGid     = null;
+    _hdFilesBase           = `/api/hunter/candidates/${c.id}`;
     _bindHdActions();
     refreshHdFiles();
     pollDeepScan();
-    // NOT auto-kicking a deep scan on open. Stage 3 enrichment now writes
-    // the files it sees in its 200-msg sample to hunter_candidate_files,
-    // so the lightbox is already populated for the typical case. The
-    // "Tam Tara" button is the explicit gesture for fetching the rest of
-    // the channel history; we don't burn FloodWait budget just because
-    // the user clicked a row to look at it.
-  } catch (e) {
-    alert(e.message);
   }
 }
 
 // ── Detail modal: file list / deep-scan ─────────────────────────────────────
 let _currentDetailCid = null;
 let _currentDetailUsername = null;
+let _hdFilesBase = null;   // '/api/hunter/candidates/{id}' or '/api/channels/{gid}'
 let _hdFilesQ = '';
 let _hdFilesExt = '';
 let _hdFilesSortBy = 'date';
@@ -3877,6 +5931,8 @@ let _hdFilesSortDir = 'desc';
 let _hdDeepPollTimer = null;
 let _hdScanState = null;        // 'running' | 'done' | 'error' | 'cancelled' | null
 let _hdScanProcessed = 0;       // processed-message count emitted by backend
+let _hdScanTempJoined = false;
+let _hdScanTempJoinErr = null;
 let _hdRefreshSkip = 0;         // refresh files every other tick to keep UI snappy
 
 async function pollDeepScan() {
@@ -3887,6 +5943,8 @@ async function pollDeepScan() {
       const s = await api(`/api/hunter/candidates/${_currentDetailCid}/deep_scan_status`);
       _hdScanState = s.state || null;
       _hdScanProcessed = s.processed || 0;
+      _hdScanTempJoined = !!s.temp_joined;
+      _hdScanTempJoinErr = s.temp_join_error || null;
       const stateEl = document.getElementById('hd-deep-state');
       if (stateEl) {
         if (s.state === 'running') {
@@ -3951,7 +6009,7 @@ function _hdSetSort(col) {
 }
 
 async function refreshHdFiles() {
-  if (!_currentDetailCid) return;
+  if (!_hdFilesBase) return;
   const area = document.getElementById('hd-files-area');
   if (!area) return;
   const params = new URLSearchParams({
@@ -3960,7 +6018,7 @@ async function refreshHdFiles() {
   if (_hdFilesQ) params.set('q', _hdFilesQ);
   if (_hdFilesExt) params.set('ext', _hdFilesExt);
   let data;
-  try { data = await api(`/api/hunter/candidates/${_currentDetailCid}/files?${params}`); }
+  try { data = await api(`${_hdFilesBase}/files?${params}`); }
   catch(e) { area.innerHTML = `<div style="color:#dc2626">${esc(e.message)}</div>`; return; }
   const summary = data.summary || {};
   const total = summary.total || 0;
@@ -3999,6 +6057,20 @@ async function refreshHdFiles() {
         <span>${esc(t('hd.deepScanLoading'))}</span>
         <small>${esc(t('hd.deepScanLoadingHint', {n: _hdScanProcessed.toLocaleString()}))}</small>
       </div>`;
+    } else if (_hdScanState === 'done') {
+      // Scan finished but found 0 files. Show what we already tried so the
+      // user knows there's no "join + retry" knob to pull anymore.
+      let msg;
+      if (_hdScanTempJoined) {
+        msg = t('hd.noFilesAfterTempJoin') ||
+              '✓ Üye olundu, tarandı, üyelikten ayrılındı — yine dosya bulunamadı. Kanal gerçekten boş ya da içerik kısıtlı.';
+      } else if (_hdScanTempJoinErr) {
+        msg = t('hd.tempJoinFailed', { err: _hdScanTempJoinErr }) ||
+              `⚠ Otomatik üyelik başarısız (${_hdScanTempJoinErr}). Kanala manuel katılırsan Tam Tara tekrar denenebilir.`;
+      } else {
+        msg = t('hd.noFilesAfterScan');
+      }
+      body += `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:.82rem">${esc(msg)}</div>`;
     } else {
       body += `<div style="text-align:center;padding:20px;color:var(--text-4);font-size:.78rem">${esc(t('hd.noFiles'))}</div>`;
     }
@@ -4018,6 +6090,12 @@ async function refreshHdFiles() {
   _resumeActiveFileDownloads();
 }
 
+const _PREVIEWABLE_GROUPS = new Set(['image', 'video']);
+
+function _isPreviewable(f) {
+  return _PREVIEWABLE_GROUPS.has(f.file_group);
+}
+
 // Renders a single <li> for one candidate file. State for an in-flight
 // download (if any) lives in _hdDlStatus[msg_id]; persisted "already
 // downloaded" state lives in f.local_path.
@@ -4025,6 +6103,7 @@ function _renderHdFileRow(f) {
   const msgId = f.message_id;
   const dl    = _hdDlStatus[msgId];
   const dlState = dl ? dl.state : (f.local_path ? 'done' : 'idle');
+  const canPreview = _isPreviewable(f);
 
   let actionsHtml = '';
   let liExtraClass = '';
@@ -4044,15 +6123,18 @@ function _renderHdFileRow(f) {
   } else {
     actionsHtml = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
   }
+  const previewBtn = canPreview
+    ? `<button class="hf-btn hf-btn-preview" data-act="preview" data-msg="${msgId}" data-fname="${esc(f.file_name||'')}" title="${esc(t('hf.preview'))}">👁</button>`
+    : '';
   const kindBadge = (f.is_named === false)
     ? `<span class="hf-kind hf-kind-ephem" title="${esc(t('hf.kindEphemTitle'))}">🎤</span>`
     : `<span class="hf-kind hf-kind-named" title="${esc(t('hf.kindNamedTitle'))}">📄</span>`;
-  return `<li class="hf-row${liExtraClass}${f.is_named === false ? ' hf-ephem' : ''}" data-msg="${msgId}">
+  return `<li class="hf-row${liExtraClass}${f.is_named === false ? ' hf-ephem' : ''}" data-msg="${msgId}" data-group="${esc(f.file_group||'')}">
     ${kindBadge}
     <span class="hf-name" title="${esc(f.file_name||'')}">${esc(f.file_name || '—')}</span>
     <span class="hf-size">${fmtSize(f.file_size||0)}</span>
     <span class="hf-date">${f.date ? fmtDate(f.date).substring(0,16) : '—'}</span>
-    <span class="hf-actions">${actionsHtml}</span>
+    <span class="hf-actions">${previewBtn}${actionsHtml}</span>
   </li>`;
 }
 
@@ -4078,17 +6160,23 @@ async function _onHdFileAction(ev) {
   if (!btn) return;
   const act   = btn.dataset.act;
   const msgId = parseInt(btn.dataset.msg, 10);
-  if (!Number.isFinite(msgId) || _currentDetailCid == null) return;
+  if (!Number.isFinite(msgId) || (_currentDetailCid == null && _currentChannelGid == null)) return;
   switch (act) {
     case 'download':     hfStartDownload(msgId, false); break;
     case 'downloadJoin': hfDownloadWithTempJoin(msgId); break;
     case 'cancel':       hfCancelDownload(msgId); break;
     case 'open':         hfOpenDownloaded(msgId); break;
     case 'delete':       hfDeleteDownloaded(msgId); break;
+    case 'preview':      hfOpenPreview(msgId, btn.dataset.fname || ''); break;
   }
 }
 
 async function hfStartDownload(msgId, withTempJoin) {
+  if (_currentChannelGid != null) {
+    // Channel files: delegate to main download flow (handles destinations, scheduling)
+    triggerDownload(msgId);
+    return;
+  }
   const cid = _currentDetailCid;
   try {
     const qs = withTempJoin ? '?confirm_temp_join=1' : '';
@@ -4139,6 +6227,10 @@ function _refreshHdFileRow(msgId) {
   if (!actions) return;
   const dl = _hdDlStatus[msgId];
   const dlState = dl ? dl.state : 'idle';
+  const canPreview = _PREVIEWABLE_GROUPS.has(li.dataset.group || '');
+  const previewBtn = canPreview
+    ? `<button class="hf-btn hf-btn-preview" data-act="preview" data-msg="${msgId}" title="${esc(t('hf.preview'))}">👁</button>`
+    : '';
   li.classList.remove('hf-downloading', 'hf-error');
   if (dlState === 'downloading') {
     li.classList.add('hf-downloading');
@@ -4146,15 +6238,15 @@ function _refreshHdFileRow(msgId) {
     actions.innerHTML = `<span class="hf-progress">${pct}%</span>
       <button class="hf-btn hf-btn-del" data-act="cancel" data-msg="${msgId}" title="${esc(t('hf.cancel'))}">✕</button>`;
   } else if (dlState === 'done') {
-    actions.innerHTML = `<button class="hf-btn" data-act="open" data-msg="${msgId}" title="${esc(t('hf.open'))}">💾</button>
+    actions.innerHTML = `${previewBtn}<button class="hf-btn" data-act="open" data-msg="${msgId}" title="${esc(t('hf.open'))}">💾</button>
       <button class="hf-btn hf-btn-del" data-act="delete" data-msg="${msgId}" title="${esc(t('hf.delete'))}">🗑</button>`;
   } else if (dlState === 'error') {
     li.classList.add('hf-error');
-    actions.innerHTML = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.retry'))}">↻</button>`;
+    actions.innerHTML = `${previewBtn}<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.retry'))}">↻</button>`;
   } else if (dlState === 'needs_temp_join') {
-    actions.innerHTML = `<button class="hf-btn" data-act="downloadJoin" data-msg="${msgId}" title="${esc(t('hf.needsJoin'))}">🔒</button>`;
+    actions.innerHTML = `${previewBtn}<button class="hf-btn" data-act="downloadJoin" data-msg="${msgId}" title="${esc(t('hf.needsJoin'))}">🔒</button>`;
   } else {
-    actions.innerHTML = `<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
+    actions.innerHTML = `${previewBtn}<button class="hf-btn" data-act="download" data-msg="${msgId}" title="${esc(t('hf.download'))}">📥</button>`;
   }
 }
 
@@ -4173,42 +6265,135 @@ function hfDownloadWithTempJoin(msgId) {
 }
 
 async function hfCancelDownload(msgId) {
-  const cid = _currentDetailCid;
-  try { await api(`/api/hunter/candidates/${cid}/files/${msgId}/download/cancel`, { method: 'POST' }); }
-  catch(e) {}
+  if (_currentChannelGid != null) {
+    try { await api(`/api/files/${msgId}/cancel`, { method: 'POST' }); } catch(e) {}
+  } else {
+    const cid = _currentDetailCid;
+    try { await api(`/api/hunter/candidates/${cid}/files/${msgId}/download/cancel`, { method: 'POST' }); } catch(e) {}
+  }
   _stopFileDlPoller(msgId);
   _hdDlStatus[msgId] = { state: 'idle' };
   _refreshHdFileRow(msgId);
 }
 
 function hfOpenDownloaded(msgId) {
-  const cid = _currentDetailCid;
+  const url = _currentChannelGid != null
+    ? `/api/files/${msgId}/blob`
+    : `/api/hunter/candidates/${_currentDetailCid}/files/${msgId}/blob`;
   const a = document.createElement('a');
-  a.href = `/api/hunter/candidates/${cid}/files/${msgId}/blob`;
-  a.rel = 'noopener';
+  a.href = url; a.rel = 'noopener';
   document.body.appendChild(a); a.click(); a.remove();
 }
 
 async function hfDeleteDownloaded(msgId) {
   if (!confirm(t('hf.deleteConfirm'))) return;
-  const cid = _currentDetailCid;
-  try { await api(`/api/hunter/candidates/${cid}/files/${msgId}/blob`, { method: 'DELETE' }); }
-  catch(e) { showToast(`✗ ${esc(e.message || e)}`, 4000); return; }
+  try {
+    if (_currentChannelGid != null) {
+      await api(`/api/files/${msgId}/local`, { method: 'DELETE' });
+    } else {
+      await api(`/api/hunter/candidates/${_currentDetailCid}/files/${msgId}/blob`, { method: 'DELETE' });
+    }
+  } catch(e) { showToast(`✗ ${esc(e.message || e)}`, 4000); return; }
   _hdDlStatus[msgId] = { state: 'idle' };
   _refreshHdFileRow(msgId);
 }
 
-function closeHunterDetail() {
-  document.getElementById('hunter-detail-overlay').classList.remove('open');
-  if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
-  // Drop any per-file download pollers so they don't keep ticking against a
-  // closed lightbox.
-  Object.keys(_hdDlPollers).forEach(k => _stopFileDlPoller(parseInt(k, 10)));
-  _hdDlStatus = {};
-  _currentDetailCid = null;
-  _hdScanState = null;
-  _hdScanProcessed = 0;
+// ── Media preview lightbox ────────────────────────────────────────────────────
+
+async function hfOpenPreview(msgId, fname) {
+  const isChannel = _currentChannelGid != null;
+  const cid = _currentDetailCid;
+  if (!isChannel && !cid) return;
+  const overlay = document.getElementById('hf-preview-overlay');
+  const spinner = document.getElementById('hf-preview-spinner');
+  const content = document.getElementById('hf-preview-content');
+  const label   = document.getElementById('hf-preview-label');
+  if (!overlay) return;
+
+  // Reset state
+  content.innerHTML = '';
+  label.textContent = fname || '';
+  spinner.classList.remove('hidden');
+  overlay.classList.add('open');
+
+  // For channel files, the blob endpoint serves the file directly (already downloaded).
+  // For hunter files, use the dedicated preview endpoint.
+  const url = isChannel
+    ? `/api/files/${msgId}/blob`
+    : `/api/hunter/candidates/${cid}/files/${msgId}/preview`;
+  const ext = (fname.split('.').pop() || '').toLowerCase();
+  // Tarayıcıların güvenle oynatabildiği konteyner/codec'ler.
+  // mkv/avi/wmv/flv/ts/mov genelde container-codec uyumsuzluğu nedeniyle
+  // oynatılamaz — bu durumda indirilebilir bir fallback gösteriyoruz.
+  const browserVideos = ['mp4','webm','m4v','3gp','ogv'];
+  const allVideos = ['mp4','mkv','avi','mov','wmv','flv','webm','m4v','ts','3gp','ogv','m2ts'];
+  const isVideo = allVideos.includes(ext);
+
+  // Hata mesajını standart bir kapsayıcıyla render edip indirme bağlantısını da ekler.
+  const _renderPreviewError = (msg, color = '#f87171') => {
+    spinner.classList.add('hidden');
+    const dlUrl = isChannel
+      ? `/api/files/${msgId}/blob`
+      : `/api/hunter/candidates/${cid}/files/${msgId}/blob`;
+    content.innerHTML = `
+      <div style="color:${color};padding:20px;text-align:center;max-width:520px">
+        <div style="margin-bottom:14px">${esc(msg)}</div>
+        <a href="${dlUrl}" download="${esc(fname || '')}"
+           style="display:inline-block;padding:6px 16px;border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;font-size:.82rem;font-weight:600">
+          ${esc(t('hf.previewDownload'))}
+        </a>
+      </div>`;
+  };
+
+  const _diagnoseAndRender = async () => {
+    try {
+      const r = await fetch(url, { method: 'HEAD' });
+      if (r.status === 403) return _renderPreviewError(t('hf.previewNeedsJoin'), '#fbbf24');
+      if (r.status === 413) return _renderPreviewError(t('hf.previewTooLarge'), '#fbbf24');
+    } catch {}
+    _renderPreviewError(t('hf.previewError'));
+  };
+
+  if (isVideo) {
+    // Tarayıcının zaten oynatamayacağı formatlar için ön kontrol — sunucudan
+    // gereksiz yere büyük indirme yapmadan kullanıcıya net mesaj göster.
+    if (!browserVideos.includes(ext)) {
+      _renderPreviewError(t('hf.previewUnsupported', { ext: ext.toUpperCase() }), '#fbbf24');
+      return;
+    }
+    const video = document.createElement('video');
+    video.controls = true;
+    video.autoplay = true;
+    video.style.cssText = 'max-width:88vw;max-height:82vh;border-radius:6px;background:#000;outline:none';
+    video.oncanplay = () => spinner.classList.add('hidden');
+    video.onerror   = _diagnoseAndRender;
+    video.src = url;
+    content.appendChild(video);
+  } else {
+    const img = document.createElement('img');
+    img.style.cssText = 'max-width:88vw;max-height:82vh;border-radius:6px;object-fit:contain;display:block';
+    img.onload  = () => spinner.classList.add('hidden');
+    img.onerror = _diagnoseAndRender;
+    img.src = url;
+    content.appendChild(img);
+  }
 }
+
+function hfClosePreview() {
+  const overlay = document.getElementById('hf-preview-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  // Stop any playing video to release the connection
+  const video = overlay.querySelector('video');
+  if (video) { video.pause(); video.src = ''; }
+  document.getElementById('hf-preview-content').innerHTML = '';
+}
+
+function hfPreviewOverlayClick(e) {
+  if (e.target.id === 'hf-preview-overlay') hfClosePreview();
+}
+
+function closeHunterDetail() { closeDetailModal(); }  // compat alias
 
 // Wire the action bar via event delegation. Replaces the old inline-onclick
 // approach: clicks land on a single listener no matter how the inner HTML
@@ -4236,7 +6421,11 @@ function _bindHdActions() {
 }
 
 function hunterDetailOverlayClick(e) {
-  if (e.target.id === 'hunter-detail-overlay') closeHunterDetail();
+  if (e.target.id !== 'hunter-detail-overlay') return;
+  // The same overlay is reused for the Channels-tab popup; close whichever
+  // mode is active so we don't leave stale state behind.
+  if (_currentChannelGid != null) closeChannelDetail();
+  else                            closeHunterDetail();
 }
 
 async function hunterJoin(cid, ev) {
@@ -4248,7 +6437,13 @@ async function hunterJoin(cid, ev) {
   if (!r.ok) { showToast(t('hunter.joinFail') + ' ' + esc(r.error || ''), 4500); return; }
   closeHunterDetail();
   hunterReloadCandidates();
-  if (r.queued) {
+  if (r.pending_approval) {
+    showToast(
+      t('hunter.joinPendingApprovalMsg', { username: esc(c.username) }) ||
+      `@${c.username}: katılım isteği gönderildi, admin onayı bekleniyor.`,
+      5000,
+    );
+  } else if (r.queued && r.wait_s > 0) {
     const wait = _fmtWait(r.wait_s);
     showToast(t('hunter.joinQueuedMsg', { username: esc(c.username), wait }), 4500);
   } else {
@@ -4393,24 +6588,35 @@ function hgClearSelection() {
 function hgUpdateBulkBar() {
   const bar = document.getElementById('hunter-bulk-bar');
   const cnt = document.getElementById('hunter-bulk-count');
-  const wrap = document.getElementById('hunter-grid-wrap');
   if (!bar || !cnt) return;
   const n = S.hunterSelected.size;
   if (n === 0) {
     bar.style.display = 'none';
-    if (wrap) wrap.style.removeProperty('--hg-bar-h');
-    return;
+  } else {
+    bar.style.display = 'flex';
+    cnt.textContent = t('hbb.selected', {n});
   }
-  bar.style.display = 'flex';
-  cnt.textContent = t('hbb.selected', {n});
-  // Push the grid header down so the (sticky) thead sits below the (sticky) bar
-  // instead of behind it.
-  if (wrap) {
-    requestAnimationFrame(() => {
-      const h = bar.offsetHeight;
-      if (h) wrap.style.setProperty('--hg-bar-h', h + 'px');
-    });
-  }
+  requestAnimationFrame(_hgUpdateStickyTop);
+}
+
+// Recalculate sticky offsets for the hunter grid header.
+// Called on tab switch, bulk-bar show/hide, and window resize.
+// Toolbar (always sticky at top:0) must be accounted for first;
+// bulk bar (conditional) stacks below it.
+function _hgUpdateStickyTop() {
+  const panel = document.getElementById('hunter-panel');
+  if (!panel || panel.style.display === 'none') return;
+  const toolbar = panel.querySelector('.hunter-toolbar');
+  const bar     = document.getElementById('hunter-bulk-bar');
+  const wrap    = document.getElementById('hunter-grid-wrap');
+  if (!wrap) return;
+  const toolbarH  = toolbar ? toolbar.offsetHeight : 0;
+  const barVisible = bar && bar.style.display !== 'none';
+  const barH       = barVisible ? bar.offsetHeight : 0;
+  // Bulk bar itself must clear the toolbar.
+  if (bar) bar.style.top = toolbarH + 'px';
+  // Thead must clear toolbar + bulk bar.
+  wrap.style.setProperty('--hg-bar-h', (toolbarH + barH) + 'px');
 }
 
 async function _hgBulkLoop(action, ids, progressMsg, delayMs = 0) {
@@ -4799,6 +7005,7 @@ let _bwSchedules = [];
 let _bwSettings  = { enabled: false, min_size_mb: 0 };
 let _bwClockTimer = null;
 let _bwEditId = null;
+let _bwOpenId = null;
 
 async function loadBandwidthTab() {
   await Promise.all([loadBandwidthSettings(), loadBandwidthSchedules()]);
@@ -4925,16 +7132,128 @@ function renderBandwidthSchedules() {
   }
   list.innerHTML = _bwSchedules.map(s => `
     <div class="bw-rule-item ${s.enabled ? '' : 'bw-rule-disabled'}" id="bw-rule-${s.id}">
-      <div class="bw-rule-name">${esc(s.name)}</div>
-      <div class="bw-rule-meta">${esc(_bwRuleDesc(s))}</div>
-      <button class="td-btn" style="font-size:.75rem;padding:3px 9px" onclick="bwOpenEditRule(${s.id})" data-i18n="common.edit">Düzenle</button>
-      <button class="td-btn td-btn-danger" style="font-size:.75rem;padding:3px 9px" onclick="bwDeleteRule(${s.id})" data-i18n="common.delete">Sil</button>
+      <div class="bw-rule-head" onclick="bwToggleRule(${s.id})">
+        <span class="td-chevron" id="bw-chevron-${s.id}">›</span>
+        <span class="bw-rule-name">${esc(s.name)}</span>
+        <span class="bw-rule-meta">${esc(_bwRuleDesc(s))}</span>
+        <div style="display:flex;gap:4px;flex-shrink:0" onclick="event.stopPropagation()">
+          <button class="td-btn td-btn-danger" style="font-size:.75rem;padding:3px 9px" onclick="bwDeleteRule(${s.id})" data-i18n="common.delete">Sil</button>
+        </div>
+      </div>
+      <div class="bw-rule-body" id="bw-body-${s.id}" style="display:none"></div>
     </div>`).join('');
 }
 
-function bwOpenAddRule() {
+function bwToggleRule(id) {
+  if (_bwOpenId === id) { _bwCloseRuleItem(); return; }
+  _bwOpenRuleItem(id);
+}
+
+function _bwOpenRuleItem(id) {
+  _bwCloseRuleItem();
+  const s = id === 'new' ? null : _bwSchedules.find(x => x.id === id);
+  if (id !== 'new' && !s) return;
+  _bwOpenId = id;
+  _bwEditId = s ? id : null;
+
+  if (s) {
+    document.getElementById('bw-rule-name').value = s.name || '';
+    document.getElementById('bw-rule-type').value = s.rule_type || 'weekly';
+    document.getElementById('bw-rule-start').value = s.start_time || '02:00';
+    document.getElementById('bw-rule-end').value = s.end_time || '06:00';
+    document.getElementById('bw-rule-enabled').checked = !!s.enabled;
+    document.getElementById('bw-rule-date').value = s.specific_date || '';
+    const days = s.days || [];
+    document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => {
+      c.checked = days.includes(parseInt(c.dataset.day));
+    });
+  } else {
+    document.getElementById('bw-rule-name').value = '';
+    document.getElementById('bw-rule-type').value = 'weekly';
+    document.getElementById('bw-rule-start').value = '02:00';
+    document.getElementById('bw-rule-end').value = '06:00';
+    document.getElementById('bw-rule-enabled').checked = true;
+    document.getElementById('bw-rule-date').value = '';
+    document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => { c.checked = true; });
+  }
+  bwOnRuleTypeChange();
+
+  const body = document.getElementById(`bw-body-${id}`);
+  const form = document.getElementById('bw-add-form');
+  if (body && form) {
+    body.style.display = '';
+    body.appendChild(form);
+    document.getElementById('bw-rule-name').focus();
+  }
+  const chevron = document.getElementById(`bw-chevron-${id}`);
+  if (chevron) chevron.classList.add('open');
+}
+
+function _bwCloseRuleItem() {
+  if (_bwOpenId === null) return;
+  const prevId = _bwOpenId;
+  _bwOpenId = null;
   _bwEditId = null;
-  document.getElementById('bw-rule-form-title').textContent = t('bw.ruleFormTitle');
+  const form = document.getElementById('bw-add-form');
+  const container = document.getElementById('bw-form-container');
+  if (form && container) container.appendChild(form);
+  if (prevId === 'new') {
+    const el = document.getElementById('bw-rule-new');
+    if (el) el.remove();
+  } else {
+    const body = document.getElementById(`bw-body-${prevId}`);
+    if (body) body.style.display = 'none';
+    const chevron = document.getElementById(`bw-chevron-${prevId}`);
+    if (chevron) chevron.classList.remove('open');
+  }
+}
+
+function bwToggleAddMenu(e) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  const menu = document.getElementById('bw-add-menu');
+  if (!menu) return;
+  const willOpen = !menu.classList.contains('open');
+  menu.classList.toggle('open', willOpen);
+  if (willOpen) setTimeout(() => document.addEventListener('click', _bwCloseAddMenuOutside), 0);
+  else document.removeEventListener('click', _bwCloseAddMenuOutside);
+}
+
+function _bwCloseAddMenuOutside(e) {
+  const menu = document.getElementById('bw-add-menu');
+  if (!menu) return;
+  if (!menu.contains(e.target)) {
+    menu.classList.remove('open');
+    document.removeEventListener('click', _bwCloseAddMenuOutside);
+  }
+}
+
+function bwHandleAdd(key) {
+  const menu = document.getElementById('bw-add-menu');
+  if (menu) menu.classList.remove('open');
+  document.removeEventListener('click', _bwCloseAddMenuOutside);
+  if (key === 'custom') bwOpenAddRule();
+  else bwAddPreset(key);
+}
+
+function bwOpenAddRule() {
+  _bwCloseRuleItem();
+  _bwOpenId = 'new';
+  _bwEditId = null;
+  const list = document.getElementById('bw-rules-list');
+  if (!list) return;
+  // clear "no rules" empty state if visible
+  if (!_bwSchedules.length) list.innerHTML = '';
+  const newItem = document.createElement('div');
+  newItem.className = 'bw-rule-item';
+  newItem.id = 'bw-rule-new';
+  newItem.innerHTML = `
+    <div class="bw-rule-head">
+      <span class="td-chevron open" id="bw-chevron-new">›</span>
+      <span class="bw-rule-name">${esc(t('bw.ruleFormTitle'))}</span>
+    </div>
+    <div class="bw-rule-body" id="bw-body-new"></div>`;
+  list.appendChild(newItem);
+  // reset form fields
   document.getElementById('bw-rule-name').value = '';
   document.getElementById('bw-rule-type').value = 'weekly';
   document.getElementById('bw-rule-start').value = '02:00';
@@ -4943,33 +7262,13 @@ function bwOpenAddRule() {
   document.getElementById('bw-rule-date').value = '';
   document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => { c.checked = true; });
   bwOnRuleTypeChange();
-  document.getElementById('bw-rule-form').style.display = '';
-  document.getElementById('bw-rule-name').focus();
-}
-
-function bwOpenEditRule(id) {
-  const s = _bwSchedules.find(x => x.id === id);
-  if (!s) return;
-  _bwEditId = id;
-  document.getElementById('bw-rule-form-title').textContent = t('bw.ruleEditTitle');
-  document.getElementById('bw-rule-name').value = s.name || '';
-  document.getElementById('bw-rule-type').value = s.rule_type || 'weekly';
-  document.getElementById('bw-rule-start').value = s.start_time || '02:00';
-  document.getElementById('bw-rule-end').value = s.end_time || '06:00';
-  document.getElementById('bw-rule-enabled').checked = !!s.enabled;
-  document.getElementById('bw-rule-date').value = s.specific_date || '';
-  const days = s.days || [];
-  document.querySelectorAll('#bw-days-wrap input[type=checkbox]').forEach(c => {
-    c.checked = days.includes(parseInt(c.dataset.day));
-  });
-  bwOnRuleTypeChange();
-  document.getElementById('bw-rule-form').style.display = '';
-  document.getElementById('bw-rule-name').focus();
+  const body = document.getElementById('bw-body-new');
+  const form = document.getElementById('bw-add-form');
+  if (body && form) { body.appendChild(form); document.getElementById('bw-rule-name').focus(); }
 }
 
 function bwCancelRule() {
-  _bwEditId = null;
-  document.getElementById('bw-rule-form').style.display = 'none';
+  _bwCloseRuleItem();
 }
 
 function bwOnRuleTypeChange() {

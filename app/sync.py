@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
+from urllib.parse import parse_qs
 
 from telethon import events
 from telethon.tl.types import (
@@ -15,6 +17,7 @@ from telethon.tl.types import (
 )
 
 import database
+import torrent_parse
 from telegram_client import get_client
 
 logger = logging.getLogger("sync")
@@ -129,6 +132,8 @@ _PLATFORMS: List[Tuple[str, str]] = [
 
 def _detect_platform(url: str) -> Optional[str]:
     """Return the platform name if url matches a known file-hosting domain, else None."""
+    if url.lower().startswith('magnet:'):
+        return "Magnet"
     lower = url.lower()
     for platform, domain in _PLATFORMS:
         if domain in lower:
@@ -168,6 +173,94 @@ def _trim_url(s: str) -> str:
             s = s[:i]
             break
     return s
+
+
+_MAGNET_RE = re.compile(r'magnet:\?[^\s<>"\']+', re.I)
+
+
+import re as _re_sync
+_SYNC_BTIH_HEX_RE = _re_sync.compile(r"^[A-Fa-f0-9]{40}$")
+_SYNC_BTIH_B32_RE = _re_sync.compile(r"^[A-Z2-7]{32}$")
+
+
+def _is_valid_btih(infohash: str) -> bool:
+    """Real BitTorrent v1 info-hash: 40 hex or 32 base32 characters. Rejects
+    SERP-scrape pollution like `%22%20database` that decodes to plain text."""
+    if not infohash:
+        return False
+    from urllib.parse import unquote as _unq
+    s = _unq(infohash).strip()
+    return bool(_SYNC_BTIH_HEX_RE.match(s) or _SYNC_BTIH_B32_RE.match(s.upper()))
+
+
+def _parse_magnet_info(uri: str) -> dict:
+    if '?' not in uri:
+        return {}
+    qs_str = uri.split('?', 1)[1]
+    qs = parse_qs(qs_str, keep_blank_values=False)
+    xt = (qs.get('xt') or [''])[0]
+    infohash = ''
+    if 'urn:btih:' in xt.lower():
+        raw = xt.lower().split('urn:btih:', 1)[1]
+        infohash = raw.split('&')[0].strip()
+    # Drop anything that's not a real info-hash — otherwise garbage magnets
+    # from SERP scrapes (e.g. xt=urn:btih:%22%20database) get persisted with
+    # a single placeholder file and pollute the Links grid.
+    if not _is_valid_btih(infohash):
+        return {}
+    name = (qs.get('dn') or [''])[0]
+    try:
+        size = int((qs.get('xl') or ['0'])[0])
+    except (ValueError, TypeError):
+        size = 0
+    return {'infohash': infohash, 'name': name, 'size': size}
+
+
+def _magnet_link_data(uri: str) -> dict:
+    """Return pre-parsed probe fields for a magnet URI (no HTTP needed)."""
+    info = _parse_magnet_info(uri)
+    infohash = info.get('infohash', '')
+    if not infohash:
+        return {}
+    name = info.get('name') or f"Magnet {infohash[:8].upper()}…"
+    size = info.get('size', 0)
+    return {
+        'files_json': [{'name': name, 'size': size}],
+        'available': True,
+        'file_count': 1,
+        'file_size_total': size,
+    }
+
+
+def _extract_all_magnet_urls(message) -> List[str]:
+    """Extract every magnet URI from a message (entities + raw text), deduped.
+    Filtered through _parse_magnet_info so only URIs with a valid BitTorrent
+    info-hash survive."""
+    seen: set = set()
+    results: List[str] = []
+    entities = getattr(message, "entities", None) or []
+    text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+
+    def _accept(url: str) -> bool:
+        return bool(url and url.lower().startswith('magnet:')
+                    and url not in seen
+                    and _parse_magnet_info(url))
+
+    for entity in entities:
+        url: Optional[str] = None
+        if isinstance(entity, MessageEntityUrl):
+            url = _trim_url(_slice_utf16(text, entity.offset, entity.length))
+        elif isinstance(entity, MessageEntityTextUrl):
+            url = _trim_url(entity.url or '')
+        if url and _accept(url):
+            seen.add(url)
+            results.append(url)
+    for m in _MAGNET_RE.finditer(text):
+        uri = _trim_url(m.group(0))
+        if _accept(uri):
+            seen.add(uri)
+            results.append(uri)
+    return results
 
 
 def _extract_platform_urls(message) -> List[Tuple[str, str]]:
@@ -225,9 +318,10 @@ def _extract_file_info(message) -> Optional[dict]:
     }
 
 
-async def _sync_group(account_id: int, client, entity, group_id: int, group_name: str) -> int:
+async def _sync_group(account_id: int, client, entity, group_id: int, group_name: str) -> Tuple[int, List[int]]:
     last_id = await database.get_last_synced_message_id_for_account(account_id, group_id)
     new_files = 0
+    new_torrent_ids: List[int] = []
     max_id = last_id
 
     try:
@@ -248,7 +342,7 @@ async def _sync_group(account_id: int, client, entity, group_id: int, group_name
                 (getattr(message, "text", None) or getattr(message, "caption", None) or "")[:300]
             ) or None
 
-            inserted = await database.insert_file(
+            file_id = await database.insert_file(
                 group_id=group_id,
                 message_id=message.id,
                 **info,
@@ -256,8 +350,10 @@ async def _sync_group(account_id: int, client, entity, group_id: int, group_name
                 context=context,
                 discovered_by_account_id=account_id,
             )
-            if inserted:
+            if file_id is not None:
                 new_files += 1
+                if info.get("file_ext") == "torrent":
+                    new_torrent_ids.append(file_id)
 
             if message.id > max_id:
                 max_id = message.id
@@ -268,7 +364,17 @@ async def _sync_group(account_id: int, client, entity, group_id: int, group_name
     except Exception as e:
         logger.warning(f"[acc {account_id}] Error syncing '{group_name}': {e}")
 
-    return new_files
+    return new_files, new_torrent_ids
+
+
+async def _auto_parse_torrents(file_ids: List[int]):
+    """Background task: parse newly synced .torrent files one by one."""
+    for fid in file_ids:
+        try:
+            await torrent_parse.parse_single(fid)
+        except Exception as e:
+            logger.debug(f"[auto-parse] torrent {fid}: {e}")
+        await asyncio.sleep(0.5)
 
 
 async def _sync_group_links(account_id: int, client, entity, group_id: int, group_name: str) -> int:
@@ -276,6 +382,7 @@ async def _sync_group_links(account_id: int, client, entity, group_id: int, grou
     new_links = 0
     max_id = last_id
 
+    # Pass 1: URL-entity messages — covers platform URLs and magnet: URL entities
     try:
         async for message in client.iter_messages(
             entity,
@@ -285,6 +392,8 @@ async def _sync_group_links(account_id: int, client, entity, group_id: int, grou
         ):
             platform_urls = _extract_platform_urls(message)
             if not platform_urls:
+                if message.id > max_id:
+                    max_id = message.id
                 continue
 
             date_str = (
@@ -295,6 +404,7 @@ async def _sync_group_links(account_id: int, client, entity, group_id: int, grou
             )
 
             for platform, url in platform_urls:
+                link_data = _magnet_link_data(url) if platform == "Magnet" else {}
                 inserted = await database.insert_link(
                     group_id=group_id,
                     message_id=message.id,
@@ -303,6 +413,7 @@ async def _sync_group_links(account_id: int, client, entity, group_id: int, grou
                     context=context,
                     date=date_str,
                     discovered_by_account_id=account_id,
+                    **link_data,
                 )
                 if inserted:
                     new_links += 1
@@ -310,11 +421,49 @@ async def _sync_group_links(account_id: int, client, entity, group_id: int, grou
             if message.id > max_id:
                 max_id = message.id
 
-        if max_id > last_id:
-            await database.update_last_synced_links_for_account(account_id, group_id, max_id)
-
     except Exception as e:
         logger.warning(f"[acc {account_id}] Error syncing links for '{group_name}': {e}")
+
+    # Pass 2: full-text search for "magnet:" — catches plain-text magnets without URL entities
+    try:
+        async for message in client.iter_messages(
+            entity,
+            search="magnet:",
+            min_id=last_id,
+            reverse=True,
+        ):
+            magnet_urls = _extract_all_magnet_urls(message)
+            if not magnet_urls:
+                if message.id > max_id:
+                    max_id = message.id
+                continue
+            date_str = (
+                message.date.isoformat() if message.date else datetime.utcnow().isoformat()
+            )
+            context = (
+                (message.text or getattr(message, "caption", None) or "")[:300]
+            )
+            for uri in magnet_urls:
+                link_data = _magnet_link_data(uri)
+                inserted = await database.insert_link(
+                    group_id=group_id,
+                    message_id=message.id,
+                    platform="Magnet",
+                    url=uri,
+                    context=context,
+                    date=date_str,
+                    discovered_by_account_id=account_id,
+                    **link_data,
+                )
+                if inserted:
+                    new_links += 1
+            if message.id > max_id:
+                max_id = message.id
+    except Exception as e:
+        logger.warning(f"[acc {account_id}] Error in magnet search for '{group_name}': {e}")
+
+    if max_id > last_id:
+        await database.update_last_synced_links_for_account(account_id, group_id, max_id)
 
     return new_links
 
@@ -364,10 +513,12 @@ async def run_sync_account(account_id: int):
         excluded = set(await database.get_excluded_group_ids_for_account(account_id))
 
         dialogs = []
+        seen_gids: set = set()   # ALL group/channel ids still in dialogs (incl. excluded)
         async for dialog in client.iter_dialogs():
             if dialog.is_group or dialog.is_channel:
                 entity = dialog.entity
                 gid = dialog.id
+                seen_gids.add(gid)
                 if gid in excluded:
                     continue
                 name = dialog.name or f"Group {gid}"
@@ -385,17 +536,25 @@ async def run_sync_account(account_id: int):
                         pass
                 dialogs.append((gid, entity, name))
 
+        # Remove channels the user has left since the previous sync.
+        if seen_gids:
+            pruned = await database.prune_account_groups(account_id, seen_gids)
+            if pruned:
+                logger.info(f"[acc {account_id}] Left {pruned} channel(s) removed from tracking")
+
         s["total_groups"] = len(dialogs)
         s["processed_groups"] = 0
         _refresh_aggregate_status()
 
+        all_new_torrent_ids: List[int] = []
         for gid, entity, name in dialogs:
             s["current_group"] = name
             _refresh_aggregate_status()
-            count = await _sync_group(account_id, client, entity, gid, name)
+            count, torrent_ids = await _sync_group(account_id, client, entity, gid, name)
             link_count = await _sync_group_links(account_id, client, entity, gid, name)
             s["new_files"] += count
             s["new_links"] += link_count
+            all_new_torrent_ids.extend(torrent_ids)
             s["processed_groups"] += 1
             _refresh_aggregate_status()
             if count > 0 or link_count > 0:
@@ -403,6 +562,10 @@ async def run_sync_account(account_id: int):
                     f"[acc {account_id} {s['processed_groups']}/{s['total_groups']}]"
                     f" {name}: {count} new files, {link_count} new links"
                 )
+
+        if all_new_torrent_ids:
+            logger.info(f"[acc {account_id}] Auto-parsing {len(all_new_torrent_ids)} new torrent(s)")
+            asyncio.create_task(_auto_parse_torrents(all_new_torrent_ids))
 
         s["last_sync_at"] = datetime.utcnow().isoformat()
         logger.info(
@@ -439,12 +602,122 @@ async def run_sync():
     finally:
         # Watch check after all accounts done
         try:
-            new_matches = await database.check_watches()
+            new_matches, watch_payload = await database.check_watches()
             if new_matches > 0:
                 logger.info(f"Watch terms matched {new_matches} new file(s)")
+            await _push_watch_notifications(watch_payload)
         except Exception as e:
             logger.warning(f"Watch check failed: {e}")
         _refresh_aggregate_status()
+
+
+def _fmt_size_h(n: int) -> str:
+    n = int(n or 0)
+    if n >= 1 << 40: return f"{n / (1 << 40):.1f} TB"
+    if n >= 1 << 30: return f"{n / (1 << 30):.1f} GB"
+    if n >= 1 << 20: return f"{n / (1 << 20):.1f} MB"
+    if n >= 1 << 10: return f"{n / (1 << 10):.1f} KB"
+    return f"{n} B"
+
+
+def _file_telegram_link(row: Dict) -> str:
+    """Build the Telegram deep-link to the message that holds this file."""
+    msg_id = row.get("message_id")
+    if not msg_id:
+        return ""
+    uname = row.get("group_username")
+    if uname:
+        return f"https://t.me/{uname}/{msg_id}"
+    gid = row.get("group_id")
+    if gid is None:
+        return ""
+    gid_str = str(gid)
+    if gid_str.startswith("-100"):
+        gid_str = gid_str[4:]
+    elif gid_str.startswith("-"):
+        gid_str = gid_str[1:]
+    return f"https://t.me/c/{gid_str}/{msg_id}"
+
+
+async def _push_watch_notifications(watch_payload: List[Dict]):
+    """Push each watch match as a single message into the user's own Saved
+    Messages chat (the Telethon "me" peer). Honors the global toggle in
+    `notify_settings.tg_push_enabled` and skips silently when nothing matched.
+    Capped at 10 files per push to keep messages digestible — overflow gets a
+    "+N daha" footer."""
+    if not watch_payload:
+        return
+    try:
+        settings = await database.get_notify_settings()
+    except Exception as e:
+        logger.warning(f"[notify] get_notify_settings failed: {e}")
+        return
+    if not settings.get("tg_push_enabled"):
+        return
+    try:
+        accounts = await database.list_accounts()
+    except Exception as e:
+        logger.warning(f"[notify] list_accounts failed: {e}")
+        return
+    active = [a for a in accounts if a.get("is_active", True)]
+    if not active:
+        return
+
+    # One bulk fetch for all file ids across all watches.
+    all_ids: List[int] = []
+    for m in watch_payload:
+        all_ids.extend(m.get("file_ids") or [])
+    if not all_ids:
+        return
+    rows = await database.get_files_for_notification(all_ids)
+    by_id = {int(r["id"]): r for r in rows}
+
+    CAP = 10  # files per push
+    for m in watch_payload:
+        ids = m.get("file_ids") or []
+        if not ids:
+            continue
+        kw = (m.get("keywords") or "").strip()
+        shown = ids[:CAP]
+        extra = len(ids) - len(shown)
+        lines: List[str] = []
+        for fid in shown:
+            f = by_id.get(int(fid))
+            if not f:
+                continue
+            fname = (f.get("file_name") or f"#{fid}").strip()
+            gname = (f.get("group_name") or "?").strip()
+            size  = _fmt_size_h(f.get("file_size") or 0)
+            link  = _file_telegram_link(f)
+            piece = f"📁 {fname} · {size}\n📡 {gname}"
+            if link:
+                piece += f"\n🔗 {link}"
+            lines.append(piece)
+        if not lines:
+            continue
+        body = f"🎯 İzlem eşleşmesi: {kw}\n\n" + "\n\n".join(lines)
+        if extra > 0:
+            body += f"\n\n…ve {extra} dosya daha"
+
+        # Send via every active account's session into ITS OWN Saved Messages.
+        # We don't deduplicate across accounts on purpose: each user wants
+        # their own alerts on their own device.
+        for acc in active:
+            try:
+                client = await get_client(acc["id"])
+                if not client.is_connected():
+                    await client.connect()
+                if not await client.is_user_authorized():
+                    continue
+                await client.send_message("me", body, link_preview=False)
+            except Exception as e:
+                logger.warning(
+                    f"[notify] send_message failed for account {acc['id']}: {e}"
+                )
+    try:
+        await database.set_notify_settings(last_push_at=datetime.utcnow())
+    except Exception:
+        pass
 
 
 def setup_realtime_handler(client, account_id: int = 1):
@@ -477,38 +750,58 @@ def setup_realtime_handler(client, account_id: int = 1):
         if msg.document:
             info = _extract_file_info(msg)
             if info:
-                inserted = await database.insert_file(
+                file_id = await database.insert_file(
                     group_id=gid,
                     message_id=msg.id,
                     **info,
                     date=date_str,
                     discovered_by_account_id=account_id,
                 )
-                if inserted:
+                if file_id is not None:
                     logger.info(f"[realtime acc {account_id}] {name}: {info['file_name']}")
+                    if info.get("file_ext") == "torrent":
+                        asyncio.create_task(_auto_parse_torrents([file_id]))
 
+        context = (msg.text or getattr(msg, "caption", None) or "")[:300]
         platform_urls = _extract_platform_urls(msg)
-        if platform_urls:
-            context = (
-                (msg.text or getattr(msg, "caption", None) or "")[:300]
+        any_link_inserted = False
+
+        for platform, url in platform_urls:
+            link_data = _magnet_link_data(url) if platform == "Magnet" else {}
+            inserted = await database.insert_link(
+                group_id=gid,
+                message_id=msg.id,
+                platform=platform,
+                url=url,
+                context=context,
+                date=date_str,
+                discovered_by_account_id=account_id,
+                **link_data,
             )
-            any_link_inserted = False
-            for platform, url in platform_urls:
-                inserted = await database.insert_link(
-                    group_id=gid,
-                    message_id=msg.id,
-                    platform=platform,
-                    url=url,
-                    context=context,
-                    date=date_str,
-                    discovered_by_account_id=account_id,
-                )
-                if inserted:
-                    any_link_inserted = True
-            if any_link_inserted:
-                logger.info(
-                    f"[realtime acc {account_id}] {name}: {len(platform_urls)} link(s) indexed"
-                )
+            if inserted:
+                any_link_inserted = True
+
+        # Also catch plain-text magnet links not covered by URL entity detection
+        entity_urls = {url for _, url in platform_urls}
+        for uri in _extract_all_magnet_urls(msg):
+            if uri in entity_urls:
+                continue
+            link_data = _magnet_link_data(uri)
+            inserted = await database.insert_link(
+                group_id=gid,
+                message_id=msg.id,
+                platform="Magnet",
+                url=uri,
+                context=context,
+                date=date_str,
+                discovered_by_account_id=account_id,
+                **link_data,
+            )
+            if inserted:
+                any_link_inserted = True
+
+        if any_link_inserted:
+            logger.info(f"[realtime acc {account_id}] {name}: link(s) indexed")
 
 
 # Active downloads keyed by file id so they can be cancelled mid-flight
@@ -593,3 +886,166 @@ async def download_file(file_id: int) -> str:
         raise
     finally:
         _download_tasks.pop(file_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Magnet link historical backfill
+# ---------------------------------------------------------------------------
+
+magnet_backfill_status: dict = {
+    "running": False,
+    "total_groups": 0,
+    "done_groups": 0,
+    "current_group": None,
+    "new_magnets": 0,
+    # Phase 2 (file-list metadata fetch via aria2c)
+    "enrich_phase": False,        # True while we're in the metadata pass
+    "enrich_total": 0,            # how many magnets queued for enrichment
+    "enrich_done": 0,             # processed (success + fail)
+    "enrich_success": 0,          # got a real file list
+    "enrich_fail": 0,             # timeout / no peers / parse error
+    "current_magnet": None,       # truncated URI of currently-enriching magnet
+    "error": None,
+}
+_magnet_backfill_task: Optional[asyncio.Task] = None
+
+
+def kick_magnet_backfill() -> bool:
+    global _magnet_backfill_task
+    if magnet_backfill_status.get("running"):
+        return False
+    _magnet_backfill_task = asyncio.create_task(run_magnet_backfill())
+    return True
+
+
+async def _backfill_group_magnets(account_id: int, client, group_id, group_name: str):
+    try:
+        entity = await client.get_input_entity(int(group_id))
+    except Exception as e:
+        logger.warning(f"[backfill] Cannot resolve {group_id}: {e}")
+        return
+    async for message in client.iter_messages(entity, search="magnet:", reverse=True):
+        if not magnet_backfill_status.get("running"):
+            return
+        for uri in _extract_all_magnet_urls(message):
+            link_data = _magnet_link_data(uri)
+            date_str = message.date.isoformat() if message.date else datetime.utcnow().isoformat()
+            context = (message.text or getattr(message, "caption", None) or "")[:300]
+            inserted = await database.insert_link(
+                group_id=group_id,
+                message_id=message.id,
+                platform="Magnet",
+                url=uri,
+                context=context,
+                date=date_str,
+                discovered_by_account_id=account_id,
+                **link_data,
+            )
+            if inserted:
+                magnet_backfill_status["new_magnets"] += 1
+
+
+async def _enrich_magnet_metadata_pass(per_link_timeout: int = 60, max_links: int = 500):
+    """Second pass: walk magnet links that still have only the magnet's display
+    name and try to pull the real file list via aria2c (DHT + trackers + ut_metadata).
+
+    Sequential, per-link timeout. Honors the global cancel flag so the user
+    can stop the run from the UI."""
+    import magnet_metadata
+    pending = await database.list_magnet_links_needing_enrich(limit=max_links)
+    magnet_backfill_status["enrich_phase"]   = True
+    magnet_backfill_status["enrich_total"]   = len(pending)
+    magnet_backfill_status["enrich_done"]    = 0
+    magnet_backfill_status["enrich_success"] = 0
+    magnet_backfill_status["enrich_fail"]    = 0
+    logger.info(f"[backfill] enrichment pass: {len(pending)} magnet(s) queued")
+    for row in pending:
+        if not magnet_backfill_status.get("running"):
+            return
+        magnet_backfill_status["current_magnet"] = (row["url"] or "")[:80]
+        try:
+            meta = await magnet_metadata.fetch_magnet_metadata(row["url"], timeout=per_link_timeout)
+        except Exception as e:
+            meta = None
+            logger.warning(f"[backfill enrich] fetch error: {e}")
+        if meta and meta.get("file_count"):
+            files = magnet_metadata.magnet_to_link_files(meta)
+            try:
+                await database.record_probe_result(
+                    link_id=row["id"],
+                    available=True,
+                    files=files,
+                    error=None,
+                )
+                magnet_backfill_status["enrich_success"] += 1
+            except Exception as e:
+                logger.warning(f"[backfill enrich] db update failed for link {row['id']}: {e}")
+                magnet_backfill_status["enrich_fail"] += 1
+        else:
+            # No metadata available (DHT couldn't find peers / aria2c timeout)
+            # → drop the row entirely. User wants the Links grid to contain
+            # only magnets whose file list we can actually display; sticky
+            # `magnet-enrich:no-metadata` placeholders are no longer kept.
+            try:
+                await database._exec("DELETE FROM links WHERE id = $1", row["id"])
+            except Exception as e:
+                logger.warning(f"[backfill enrich] delete failed for link {row['id']}: {e}")
+            magnet_backfill_status["enrich_fail"] += 1
+        magnet_backfill_status["enrich_done"] += 1
+
+
+async def run_magnet_backfill():
+    magnet_backfill_status.update({
+        "running": True,
+        "done_groups": 0,
+        "new_magnets": 0,
+        "enrich_phase": False,
+        "enrich_total": 0,
+        "enrich_done": 0,
+        "enrich_success": 0,
+        "enrich_fail": 0,
+        "current_magnet": None,
+        "error": None,
+        "current_group": None,
+    })
+    try:
+        accounts = await database.list_accounts()
+        active = [a for a in accounts if a.get("is_active", True)]
+        total = 0
+        for a in active:
+            groups = await database.get_groups_for_account(a["id"])
+            excluded = set(await database.get_excluded_group_ids_for_account(a["id"]))
+            total += sum(1 for g in groups if g["id"] not in excluded)
+        magnet_backfill_status["total_groups"] = total
+
+        for a in active:
+            client = await get_client(a["id"])
+            if not client.is_connected():
+                await client.connect()
+            if not await client.is_user_authorized():
+                continue
+            groups = await database.get_groups_for_account(a["id"])
+            excluded = set(await database.get_excluded_group_ids_for_account(a["id"]))
+            for group in groups:
+                gid = group["id"]
+                if gid in excluded:
+                    continue
+                name = group.get("display_name") or group.get("name") or str(gid)
+                magnet_backfill_status["current_group"] = name
+                try:
+                    await _backfill_group_magnets(a["id"], client, gid, name)
+                except Exception as e:
+                    logger.warning(f"[backfill] '{name}': {e}")
+                magnet_backfill_status["done_groups"] += 1
+
+        # Phase 2: enrich magnets with real file listings via aria2c+DHT
+        if magnet_backfill_status.get("running"):
+            await _enrich_magnet_metadata_pass()
+    except Exception as e:
+        magnet_backfill_status["error"] = str(e)
+        logger.error(f"[backfill] Fatal error: {e}")
+    finally:
+        magnet_backfill_status["running"] = False
+        magnet_backfill_status["enrich_phase"] = False
+        magnet_backfill_status["current_group"] = None
+        magnet_backfill_status["current_magnet"] = None

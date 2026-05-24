@@ -28,10 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **Çok hesap** — birden fazla Telegram hesabını tek görünümde birleştirir.
 - **Tam arşiv erişimi** — geçmiş mesajları sayfa sayfa tarar, yeni gelenleri realtime yakalar.
-- **Dosyalar & Linkler için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma.
-- **Kanal Avcısı** — 3 aşamalı keşif: (1) iç linklerden mining, (2) 22 web kaynağı (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + 8 arama motoru + Reddit / HN / GitHub), (3) Telegram'dan örnek mesaj sample'ıyla zenginleştirme & skorlama.
+- **Dosyalar & Linkler & Kanallar için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma; Kanallar sekmesinde üye sayısı, dosya sayısı, toplu işlemler.
+- **Torrent içerik indeksi** — `.torrent` dosyaları otomatik parse edilir; içindeki dosya yolları veritabanına eklenir ve dosyalar sekmesinden tam metin aramasına dahil olur.
+- **İndirmeler & Transfer** — indirilen dosyalar geçmiş sekmesinde listelenir. Yerelde depolanan dosyalar FTP, SFTP veya yerel dizine (NAS / harici disk) otomatik kopyalanır ya da taşınır. **Bant genişliği zamanlama** ile büyük dosyalar yalnızca belirlediğiniz saatlerde indirilir.
+- **Kanal Avcısı** — 3 aşamalı keşif: (1) iç linklerden mining, (2) 22+ web kaynağı (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + arama motorları + Reddit / HN / GitHub + web arşivleri), (3) Telegram'dan örnek mesaj sample'ıyla zenginleştirme & skorlama. Sütun başına sunucu taraflı sıralama; geçici üyelik ile kısıtlı kanalları tarama; 1 yıldan eski kanalları otomatik atlama.
 - **Önce dene, sonra karar ver** — aday kanalın belirli bir dosyasını **üye olmadan** önizleyip indirir; sadece gerekirse onay vererek "temp-join → indir → ayrıl" yapar.
+- **Magnet bağlantıları** — `magnet:` URI'ları parse edilir, meta veri (başlık, boyut, tracker listesi) çekilir; backfill ile mevcut bağlantılar toplu güncellenir.
 - **İzleme kelimeleri** — `fatura 2025` gibi terim setleri tanımlarsınız; eşleşen dosya geldiğinde bildirim oluşur (AND mantığı, dosya-adı bazlı).
+- **PWA** — tarayıcıdan "Uygulamayı yükle" ile mobil veya masaüstüne kurulabilir; çevrimdışı temel UI destekli.
 - **Anonim telemetri** — opsiyonel, sadece kanal username + üye sayısı + dosya sayısı; mesaj/IP/kimlik yok. Tek tık kapatılır.
 - **5 dil** — Türkçe, English, Deutsch, Русский, 中文.
 - **Tek `up -d`** — Docker Compose. Veriler host volume'unda; container'ı silseniz veriniz kalır.
@@ -42,15 +46,15 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/tr/02-files.png"><img src="docs/screenshots/tr/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı.</td>
-<td width="50%"><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, kolon başına sıralama, satır tıklayınca açılan detay lightbox'ında dosya önizleme.</td>
+<td width="50%"><a href="docs/screenshots/tr/02-files.png"><img src="docs/screenshots/tr/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı; torrent içerik genişletme.</td>
+<td width="50%"><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, sunucu taraflı sıralama, detay lightbox'ında dosya önizleme ve indirme.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, erişilebilirlik kontrolü.</td>
+<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, magnet meta verisi, erişilebilirlik kontrolü.</td>
 <td><a href="docs/screenshots/tr/06-status.png"><img src="docs/screenshots/tr/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, RAM / disk kullanımı.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/tr/05-settings.png"><img src="docs/screenshots/tr/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, izleme kelimeleri, dil & tema, parola.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/tr/05-settings.png"><img src="docs/screenshots/tr/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, transfer hedefleri, bant genişliği zamanlama, izleme kelimeleri, dil & tema, parola.</td>
 </tr>
 </table>
 
@@ -119,7 +123,7 @@ Program açılışta GitHub'daki HEAD'i kontrol eder, yeni sürüm varsa UI'da b
 |---|---|
 | Backend | Python 3.12 · FastAPI · Uvicorn · asyncio |
 | Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
-| Veri | PostgreSQL 16 · asyncpg |
+| Veri | PostgreSQL 16 · asyncpg · pgvector |
 | Web scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (stealth Chromium, Stage 2 için) |
 | Frontend | Vanilla JS · CSS · HTML (build adımı yok) |
 | Dağıtım | Docker Compose |
@@ -132,12 +136,17 @@ Konteyner imajı **~302 MB**. Tüm runtime state host volume'larında.
 
 ```
 app/
-├── main.py              # FastAPI + endpoint'ler + 4 background loop
+├── main.py              # FastAPI + endpoint'ler + arka plan döngüleri
 ├── database.py          # asyncpg veri katmanı + şema migrasyonları
 ├── telegram_client.py   # Çok-hesap Telethon yönetimi
 ├── sync.py              # Geçmiş + realtime mesaj tarayıcısı
 ├── hunter.py            # Kanal Avcısı pipeline + per-dosya indirme
 ├── link_prober.py       # Bağlantı erişilebilirlik kontrolcüsü
+├── transfer.py          # FTP / SFTP / yerel dizin transfer motoru
+├── embed.py             # pgvector semantik gömme API'si
+├── embed_worker.py      # Arka plan embedding işçisi
+├── magnet_metadata.py   # Magnet URI meta veri çekici
+├── torrent_parse.py     # .torrent dosya ayrıştırıcı
 ├── telemetry.py         # Anonim istatistik gönderici
 ├── ui_auth.py           # Web parolası + oturum
 └── static/              # index.html, app.js, i18n.js — single-page UI

@@ -28,10 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **多账户** — 将多个 Telegram 账户合并到单一视图中。
 - **完整存档访问** — 分页浏览历史记录，实时捕获新消息。
-- **文件和链接的独立表格** — 按列排序 + 筛选，按频道 / 类型 / 大小 / 日期缩小范围。
-- **频道猎人** — 三阶段发现：(1) 从内部链接挖掘，(2) 22 个网络来源（TGStat、Telemetr.io、Combot、t-do.ru、telega.io + 8 个搜索引擎 + Reddit / HN / GitHub），(3) 通过 Telegram 示例消息进行丰富和评分。
-- **先试后决定** — 无需加入即可预览和下载候选频道中的特定文件；仅在明确批准时才执行"临时加入 → 下载 → 离开"操作。
+- **文件、链接和频道的独立表格** — 按列排序 + 筛选，按频道 / 类型 / 大小 / 日期缩小范围；「频道」选项卡显示成员数、文件数，并支持批量操作。
+- **Torrent 内容索引** — `.torrent` 文件自动解析；其内部文件路径被添加到数据库，并包含在「文件」选项卡的全文搜索中。
+- **下载与传输** — 已下载文件在历史选项卡中追踪显示。存储的文件可通过 FTP、SFTP 或本地目录（NAS / 外置硬盘）自动复制或移动。**带宽调度**功能允许大文件仅在指定时间窗口内下载。
+- **频道猎人** — 三阶段发现：(1) 从内部链接挖掘，(2) 22+ 个网络来源（TGStat、Telemetr.io、Combot、t-do.ru、telega.io + 搜索引擎 + Reddit / HN / GitHub + 网页存档），(3) 通过 Telegram 示例消息进行丰富和评分。服务端按列排序；临时加入以扫描受限频道；自动跳过最新文件超过一年的频道。
+- **先试后决定** — 无需加入即可预览和下载候选频道中的特定文件；仅在明确批准时才执行「临时加入 → 下载 → 离开」操作。
+- **Magnet 链接** — 解析 `magnet:` URI，获取元数据（标题、大小、Tracker 列表）；批量回填更新现有链接。
 - **监控关键词** — 定义如 `发票 2025` 的词集；当匹配的文件到达时创建通知（AND 逻辑，基于文件名）。
+- **PWA** — 通过「添加到主屏幕」安装到移动设备或桌面；支持基本离线界面。
 - **匿名遥测** — 可选；仅包含频道用户名 + 成员数 + 文件数。无消息、IP 或身份信息。一键禁用。
 - **5 种语言** — Türkçe、English、Deutsch、Русский、中文。
 - **单次 `up -d`** — Docker Compose。数据存储在主机卷中；删除容器不影响您的数据。
@@ -42,15 +46,15 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/zh/02-files.png"><img src="docs/screenshots/zh/02-files.png" alt="文件"></a><br><b>📁 文件</b> — 跨所有账户的统一搜索、类型分类、频道筛选、大小滑块。</td>
-<td width="50%"><a href="docs/screenshots/zh/03-hunter.png"><img src="docs/screenshots/zh/03-hunter.png" alt="频道猎人"></a><br><b>📡 频道猎人</b> — 发现流水线、按列排序、在详情灯箱中预览文件。</td>
+<td width="50%"><a href="docs/screenshots/zh/02-files.png"><img src="docs/screenshots/zh/02-files.png" alt="文件"></a><br><b>📁 文件</b> — 跨所有账户的统一搜索、类型分类、频道筛选、大小滑块；Torrent 内容展开。</td>
+<td width="50%"><a href="docs/screenshots/zh/03-hunter.png"><img src="docs/screenshots/zh/03-hunter.png" alt="频道猎人"></a><br><b>📡 频道猎人</b> — 发现流水线、服务端按列排序、在详情灯箱中预览和下载文件。</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/zh/04-links.png"><img src="docs/screenshots/zh/04-links.png" alt="链接"></a><br><b>🔗 链接</b> — 从 Google Drive / Mega / MediaFire 等解析的 URL，并进行可访问性检查。</td>
+<td><a href="docs/screenshots/zh/04-links.png"><img src="docs/screenshots/zh/04-links.png" alt="链接"></a><br><b>🔗 链接</b> — 从 Google Drive / Mega / MediaFire 等解析的 URL、Magnet 元数据，并进行可访问性检查。</td>
 <td><a href="docs/screenshots/zh/06-status.png"><img src="docs/screenshots/zh/06-status.png" alt="状态"></a><br><b>📊 状态</b> — 同步指标、文件类型分布、基于平台的链接统计、RAM / 磁盘使用情况。</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/zh/05-settings.png"><img src="docs/screenshots/zh/05-settings.png" alt="设置" width="72%"></a><br><b>⚙️ 设置</b> — 群组管理、监控关键词、语言和主题、密码。</td>
+<td colspan="2" align="center"><a href="docs/screenshots/zh/05-settings.png"><img src="docs/screenshots/zh/05-settings.png" alt="设置" width="72%"></a><br><b>⚙️ 设置</b> — 群组管理、传输目标、带宽调度、监控关键词、语言和主题、密码。</td>
 </tr>
 </table>
 
@@ -81,7 +85,7 @@ docker compose up -d --build
 1. **界面密码** — 使用 `admin` 登录，然后在**设置 → 账户 → 界面密码**中更改。
 2. **Telegram 账户** — 设置 → 账户 → ➕ 添加账户 → 电话 → Telegram 发来的验证码 → （如已启用）2FA。连接后扫描自动开始。
 
-> 如果 `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` 为空，"发送验证码"将无法工作。填写 `.env` 后运行 `docker compose restart telfiles-app`。
+> 如果 `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` 为空，「发送验证码」将无法工作。填写 `.env` 后运行 `docker compose restart telfiles-app`。
 
 ### 更新
 
@@ -119,7 +123,7 @@ docker compose up -d --build
 |---|---|
 | 后端 | Python 3.12 · FastAPI · Uvicorn · asyncio |
 | Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
-| 数据 | PostgreSQL 16 · asyncpg |
+| 数据 | PostgreSQL 16 · asyncpg · pgvector |
 | 网页抓取 | aiohttp + [CloakBrowser](https://github.com/cloakbrowser)（隐身 Chromium，阶段 2） |
 | 前端 | 原生 JS · CSS · HTML（无构建步骤） |
 | 部署 | Docker Compose |
@@ -132,12 +136,17 @@ docker compose up -d --build
 
 ```
 app/
-├── main.py              # FastAPI + 端点 + 4 个后台循环
+├── main.py              # FastAPI + 端点 + 后台循环
 ├── database.py          # asyncpg 数据层 + 模式迁移
 ├── telegram_client.py   # 多账户 Telethon 管理
 ├── sync.py              # 历史 + 实时消息扫描器
 ├── hunter.py            # 频道猎人流水线 + 文件下载
 ├── link_prober.py       # 链接可访问性检查器
+├── transfer.py          # FTP / SFTP / 本地目录传输引擎
+├── embed.py             # pgvector 语义嵌入 API
+├── embed_worker.py      # 后台嵌入工作进程
+├── magnet_metadata.py   # Magnet URI 元数据获取器
+├── torrent_parse.py     # .torrent 文件解析器
 ├── telemetry.py         # 匿名统计发送器
 ├── ui_auth.py           # 网页密码 + 会话
 └── static/              # index.html, app.js, i18n.js — 单页 UI
@@ -178,7 +187,7 @@ docker exec -it telfiles-postgres psql -U telfiles -d telfiles
 
 **从不发送：** 消息、文件名、文件内容、电话号码、账户信息、IP。
 
-标识符：安装时本地生成的随机 UUID。禁用方法：设置 → 账户 → 取消勾选"发送使用统计"。
+标识符：安装时本地生成的随机 UUID。禁用方法：设置 → 账户 → 取消勾选「发送使用统计」。
 
 如需使用自己的接收端点，修改 `app/telemetry.py` 中的 `ENDPOINT_URL`。
 

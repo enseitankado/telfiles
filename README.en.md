@@ -28,10 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **Multi-account** — combines multiple Telegram accounts into a single view.
 - **Full archive access** — paginates through history and captures new messages in real time.
-- **Separate grids for Files & Links** — per-column sorting + filters, narrow by channel / type / size / date.
-- **Channel Hunter** — 3-stage discovery: (1) mining from internal links, (2) 22 web sources (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + 8 search engines + Reddit / HN / GitHub), (3) enrichment & scoring with sample messages from Telegram.
+- **Separate grids for Files, Links & Channels** — per-column sorting + filters, narrow by channel / type / size / date; the Channels tab shows member counts, file counts, and supports bulk operations.
+- **Torrent content index** — `.torrent` files are parsed automatically; their internal file paths are added to the database and included in the full-text search on the Files tab.
+- **Downloads & Transfer** — downloaded files are tracked in a history tab. Stored files can be automatically copied or moved to FTP, SFTP, or a local directory (NAS / external drive). **Bandwidth scheduling** lets large files download only during hours you specify.
+- **Channel Hunter** — 3-stage discovery: (1) mining from internal links, (2) 22+ web sources (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + search engines + Reddit / HN / GitHub + web archives), (3) enrichment & scoring with sample messages from Telegram. Server-side per-column sorting; temporary membership to scan restricted channels; automatic skipping of channels whose newest file is over a year old.
 - **Try before you commit** — preview and download a specific file from a candidate channel **without joining**; only performs "temp-join → download → leave" when you explicitly approve.
+- **Magnet links** — `magnet:` URIs are parsed, metadata (title, size, tracker list) is fetched; bulk backfill updates existing links.
 - **Watch keywords** — define term sets like `invoice 2025`; a notification is created when a matching file arrives (AND logic, filename-based).
+- **PWA** — installable on mobile or desktop via "Add to Home Screen"; supports basic offline UI.
 - **Anonymous telemetry** — optional; only channel username + member count + file count. No messages, IPs, or identities. One click to disable.
 - **5 languages** — Türkçe, English, Deutsch, Русский, 中文.
 - **Single `up -d`** — Docker Compose. Data lives in host volumes; deleting the container leaves your data intact.
@@ -42,15 +46,15 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/en/02-files.png"><img src="docs/screenshots/en/02-files.png" alt="Files"></a><br><b>📁 Files</b> — unified search across all accounts, type categories, channel filter, size slider.</td>
-<td width="50%"><a href="docs/screenshots/en/03-hunter.png"><img src="docs/screenshots/en/03-hunter.png" alt="Channel Hunter"></a><br><b>📡 Channel Hunter</b> — discovery pipeline, per-column sorting, file preview in the detail lightbox.</td>
+<td width="50%"><a href="docs/screenshots/en/02-files.png"><img src="docs/screenshots/en/02-files.png" alt="Files"></a><br><b>📁 Files</b> — unified search across all accounts, type categories, channel filter, size slider; torrent content expansion.</td>
+<td width="50%"><a href="docs/screenshots/en/03-hunter.png"><img src="docs/screenshots/en/03-hunter.png" alt="Channel Hunter"></a><br><b>📡 Channel Hunter</b> — discovery pipeline, server-side per-column sorting, file preview and download in the detail lightbox.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/en/04-links.png"><img src="docs/screenshots/en/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — URLs parsed from Google Drive / Mega / MediaFire etc., with accessibility checks.</td>
+<td><a href="docs/screenshots/en/04-links.png"><img src="docs/screenshots/en/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — URLs parsed from Google Drive / Mega / MediaFire etc., magnet metadata, accessibility checks.</td>
 <td><a href="docs/screenshots/en/06-status.png"><img src="docs/screenshots/en/06-status.png" alt="Status"></a><br><b>📊 Status</b> — sync metrics, file type distribution, platform-based link stats, RAM / disk usage.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/en/05-settings.png"><img src="docs/screenshots/en/05-settings.png" alt="Settings" width="72%"></a><br><b>⚙️ Settings</b> — group management, watch keywords, language & theme, password.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/en/05-settings.png"><img src="docs/screenshots/en/05-settings.png" alt="Settings" width="72%"></a><br><b>⚙️ Settings</b> — group management, transfer destinations, bandwidth scheduling, watch keywords, language & theme, password.</td>
 </tr>
 </table>
 
@@ -119,7 +123,7 @@ On startup the app checks the HEAD on GitHub and notifies you in the UI if a new
 |---|---|
 | Backend | Python 3.12 · FastAPI · Uvicorn · asyncio |
 | Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
-| Data | PostgreSQL 16 · asyncpg |
+| Data | PostgreSQL 16 · asyncpg · pgvector |
 | Web scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (stealth Chromium, Stage 2) |
 | Frontend | Vanilla JS · CSS · HTML (no build step) |
 | Deployment | Docker Compose |
@@ -132,12 +136,17 @@ Container image **~302 MB**. All runtime state is in host volumes.
 
 ```
 app/
-├── main.py              # FastAPI + endpoints + 4 background loops
+├── main.py              # FastAPI + endpoints + background loops
 ├── database.py          # asyncpg data layer + schema migrations
 ├── telegram_client.py   # Multi-account Telethon management
 ├── sync.py              # History + realtime message scanner
 ├── hunter.py            # Channel Hunter pipeline + per-file download
 ├── link_prober.py       # Link accessibility checker
+├── transfer.py          # FTP / SFTP / local directory transfer engine
+├── embed.py             # pgvector semantic embedding API
+├── embed_worker.py      # Background embedding worker
+├── magnet_metadata.py   # Magnet URI metadata fetcher
+├── torrent_parse.py     # .torrent file parser
 ├── telemetry.py         # Anonymous stats sender
 ├── ui_auth.py           # Web password + session
 └── static/              # index.html, app.js, i18n.js — single-page UI

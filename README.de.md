@@ -28,10 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **Multi-Account** — fasst mehrere Telegram-Konten in einer einzigen Ansicht zusammen.
 - **Vollständiger Archivzugriff** — paginiert durch den Verlauf und erfasst neue Nachrichten in Echtzeit.
-- **Separate Grids für Dateien & Links** — Sortierung + Filter pro Spalte, Eingrenzung nach Kanal / Typ / Größe / Datum.
-- **Kanal-Jäger** — 3-stufige Entdeckung: (1) Mining aus internen Links, (2) 22 Webquellen (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + 8 Suchmaschinen + Reddit / HN / GitHub), (3) Anreicherung & Bewertung mit Beispielnachrichten aus Telegram.
+- **Separate Grids für Dateien, Links & Kanäle** — Sortierung + Filter pro Spalte, Eingrenzung nach Kanal / Typ / Größe / Datum; der Kanäle-Tab zeigt Mitgliederzahlen, Dateianzahlen und unterstützt Massenoperationen.
+- **Torrent-Inhaltsindex** — `.torrent`-Dateien werden automatisch geparst; die enthaltenen Dateipfade werden zur Datenbank hinzugefügt und in die Volltextsuche im Dateien-Tab aufgenommen.
+- **Downloads & Transfer** — heruntergeladene Dateien werden im Verlaufs-Tab verfolgt. Gespeicherte Dateien können automatisch per FTP, SFTP oder in ein lokales Verzeichnis (NAS / externe Festplatte) kopiert oder verschoben werden. **Bandbreitenplanung** ermöglicht Downloads großer Dateien nur in festgelegten Zeitfenstern.
+- **Kanal-Jäger** — 3-stufige Entdeckung: (1) Mining aus internen Links, (2) 22+ Webquellen (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + Suchmaschinen + Reddit / HN / GitHub + Webarchive), (3) Anreicherung & Bewertung mit Beispielnachrichten aus Telegram. Serverseitige Sortierung pro Spalte; temporäre Mitgliedschaft zum Scannen eingeschränkter Kanäle; automatisches Überspringen von Kanälen, deren neueste Datei über ein Jahr alt ist.
 - **Erst ausprobieren, dann entscheiden** — Vorschau und Download einer bestimmten Datei aus einem Kandidatenkanal **ohne beizutreten**; führt nur bei ausdrücklicher Bestätigung "temp-join → herunterladen → verlassen" durch.
+- **Magnet-Links** — `magnet:`-URIs werden geparst, Metadaten (Titel, Größe, Tracker-Liste) abgerufen; Massen-Backfill aktualisiert bestehende Links.
 - **Beobachtungsbegriffe** — Definieren Sie Begriffssets wie `Rechnung 2025`; bei Übereinstimmung mit eingehenden Dateien wird eine Benachrichtigung erstellt (AND-Logik, dateinamenbasiert).
+- **PWA** — über „Zum Startbildschirm hinzufügen" auf Mobilgeräten oder dem Desktop installierbar; unterstützt grundlegende Offline-UI.
 - **Anonyme Telemetrie** — optional; nur Kanal-Username + Mitgliederzahl + Dateianzahl. Keine Nachrichten, IPs oder Identitäten. Mit einem Klick deaktivierbar.
 - **5 Sprachen** — Türkçe, English, Deutsch, Русский, 中文.
 - **Einmaliges `up -d`** — Docker Compose. Daten liegen in Host-Volumes; das Löschen des Containers lässt Ihre Daten unberührt.
@@ -42,15 +46,15 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/de/02-files.png"><img src="docs/screenshots/de/02-files.png" alt="Dateien"></a><br><b>📁 Dateien</b> — einheitliche Suche über alle Konten, Typkategorien, Kanalfilter, Größen-Slider.</td>
-<td width="50%"><a href="docs/screenshots/de/03-hunter.png"><img src="docs/screenshots/de/03-hunter.png" alt="Kanal-Jäger"></a><br><b>📡 Kanal-Jäger</b> — Discovery-Pipeline, Sortierung pro Spalte, Dateivorschau in der Detail-Lightbox.</td>
+<td width="50%"><a href="docs/screenshots/de/02-files.png"><img src="docs/screenshots/de/02-files.png" alt="Dateien"></a><br><b>📁 Dateien</b> — einheitliche Suche über alle Konten, Typkategorien, Kanalfilter, Größen-Slider; Torrent-Inhaltserweiterung.</td>
+<td width="50%"><a href="docs/screenshots/de/03-hunter.png"><img src="docs/screenshots/de/03-hunter.png" alt="Kanal-Jäger"></a><br><b>📡 Kanal-Jäger</b> — Discovery-Pipeline, serverseitige Sortierung pro Spalte, Dateivorschau und -download in der Detail-Lightbox.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/de/04-links.png"><img src="docs/screenshots/de/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — aus Google Drive / Mega / MediaFire usw. geparste URLs mit Erreichbarkeitsprüfung.</td>
+<td><a href="docs/screenshots/de/04-links.png"><img src="docs/screenshots/de/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — aus Google Drive / Mega / MediaFire usw. geparste URLs, Magnet-Metadaten, Erreichbarkeitsprüfung.</td>
 <td><a href="docs/screenshots/de/06-status.png"><img src="docs/screenshots/de/06-status.png" alt="Status"></a><br><b>📊 Status</b> — Sync-Metriken, Dateityp-Verteilung, plattformbasierte Link-Statistiken, RAM / Festplattennutzung.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/de/05-settings.png"><img src="docs/screenshots/de/05-settings.png" alt="Einstellungen" width="72%"></a><br><b>⚙️ Einstellungen</b> — Gruppenverwaltung, Beobachtungsbegriffe, Sprache & Theme, Passwort.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/de/05-settings.png"><img src="docs/screenshots/de/05-settings.png" alt="Einstellungen" width="72%"></a><br><b>⚙️ Einstellungen</b> — Gruppenverwaltung, Transferziele, Bandbreitenplanung, Beobachtungsbegriffe, Sprache & Theme, Passwort.</td>
 </tr>
 </table>
 
@@ -119,7 +123,7 @@ Beim Start prüft die App den HEAD auf GitHub und benachrichtigt Sie in der Ober
 |---|---|
 | Backend | Python 3.12 · FastAPI · Uvicorn · asyncio |
 | Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
-| Daten | PostgreSQL 16 · asyncpg |
+| Daten | PostgreSQL 16 · asyncpg · pgvector |
 | Web-Scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (Stealth Chromium, Stufe 2) |
 | Frontend | Vanilla JS · CSS · HTML (kein Build-Schritt) |
 | Deployment | Docker Compose |
@@ -132,12 +136,17 @@ Container-Image **~302 MB**. Alle Laufzeitzustände in Host-Volumes.
 
 ```
 app/
-├── main.py              # FastAPI + Endpunkte + 4 Hintergrundschleifen
+├── main.py              # FastAPI + Endpunkte + Hintergrundschleifen
 ├── database.py          # asyncpg-Datenschicht + Schema-Migrationen
 ├── telegram_client.py   # Multi-Account-Telethon-Verwaltung
 ├── sync.py              # Verlaufs- + Echtzeit-Nachrichten-Scanner
 ├── hunter.py            # Kanal-Jäger-Pipeline + Datei-Download
 ├── link_prober.py       # Link-Erreichbarkeitsprüfer
+├── transfer.py          # FTP / SFTP / lokaler Verzeichnis-Transfer-Motor
+├── embed.py             # pgvector semantische Einbettungs-API
+├── embed_worker.py      # Hintergrund-Embedding-Worker
+├── magnet_metadata.py   # Magnet-URI-Metadaten-Abrufer
+├── torrent_parse.py     # .torrent-Datei-Parser
 ├── telemetry.py         # Anonymer Statistik-Sender
 ├── ui_auth.py           # Web-Passwort + Sitzung
 └── static/              # index.html, app.js, i18n.js — Single-Page-UI

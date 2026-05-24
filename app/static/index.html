@@ -132,16 +132,22 @@ a{color:inherit;text-decoration:none}
 .tab-btn.active .tab-ico{opacity:1}
 [data-theme="dark"] .tab-btn.active,[data-theme="nord"] .tab-btn.active,[data-theme="forest"] .tab-btn.active,[data-theme="slate"] .tab-btn.active,[data-theme="crimson"] .tab-btn.active,[data-theme="rosepine"] .tab-btn.active{box-shadow:inset 0 0 0 1px var(--accent-soft),0 1px 6px rgba(0,0,0,.18)}
 /* (#top-stats deprecated — values now live in #app-status-bar as .sb-stats) */
+/* Stat blocks: label above, value below */
 #top-actions{display:flex;gap:5px;align-items:center;padding:0 14px 0 10px;border-left:1px solid var(--border-1);flex-shrink:0}
 .tab-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;background:transparent;border:1px solid transparent;border-radius:10px;cursor:pointer;font-size:1.18rem;color:var(--text-3);transition:all .15s ease;flex-shrink:0;line-height:1;padding:0}
 .tab-icon-btn:hover{background:var(--bg-3);color:var(--text-1);border-color:var(--border-2)}
 .tab-icon-btn.active{background:var(--bg-selected);border-color:var(--accent-soft);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.04)}
 [data-theme="dark"] .tab-icon-btn.active,[data-theme="nord"] .tab-icon-btn.active,[data-theme="forest"] .tab-icon-btn.active,[data-theme="slate"] .tab-icon-btn.active,[data-theme="crimson"] .tab-icon-btn.active,[data-theme="rosepine"] .tab-icon-btn.active{box-shadow:inset 0 0 0 1px var(--accent-soft),0 1px 6px rgba(0,0,0,.18)}
 /* Status-bar inline stats (Son 24S / Son 7G / Tümü) — match the bar's .72rem family */
-.sb-stats{white-space:nowrap;flex-shrink:0;color:var(--text-3)}
-.sb-stat-lbl{color:var(--text-4)}
-.sb-stats span#ts-24h,.sb-stats span#ts-7d,.sb-stats span#ts-all{color:var(--text-2);font-weight:600}
-.ts-sz{font-size:.66rem;color:var(--text-4);font-weight:400;white-space:nowrap}
+.sb-stats{display:inline-flex;flex-direction:column;align-items:center;white-space:nowrap;flex-shrink:0;gap:2px;padding:0 4px;position:relative}
+.sb-stat-lbl{font-size:.58rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em;line-height:1}
+.sb-stat-val{display:flex;flex-direction:column;align-items:center;gap:0;line-height:1.15}
+.sb-stat-cnt{color:var(--text-2);font-weight:700;font-size:.74rem;line-height:1}
+.ts-sz{font-size:.60rem;color:var(--text-2);font-weight:400;white-space:nowrap;line-height:1}
+.sb-vdiv{width:1px;background:var(--border-1);align-self:stretch;flex-shrink:0;margin:0 2px}
+/* data-tip tooltip (used for torrent inner file count on hover) */
+.sb-stats[data-tip]{cursor:default}
+#sb-tip{position:fixed;background:#1e293b;color:#f1f5f9;font-size:.72rem;border-radius:6px;padding:5px 9px;white-space:pre;pointer-events:none;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.35);line-height:1.55;display:none;max-width:320px}
 
 /* ── Layout ── */
 #layout{display:flex;flex:1;overflow:hidden}
@@ -253,14 +259,16 @@ a{color:inherit;text-decoration:none}
 #downloads-panel{flex:1;overflow:hidden;display:none;flex-direction:column;background:var(--bg-2)}
 #dl-hist-hd{padding:8px 16px 6px;font-size:.73rem;color:var(--text-3);font-weight:600;border-bottom:1px solid var(--border-1);flex-shrink:0;background:var(--bg-2);display:flex;align-items:center;gap:8px}
 #dl-hist-body-wrap{flex:1;overflow-y:auto;background:var(--bg-2)}
-.dlt-table{width:100%;border-collapse:collapse;font-size:.79rem}
+/* Downloads grid — inherits the same global thead/td look as #files-table.
+   Only kept here: sticky positioning, the local sort/filter class aliases
+   (dlt-sortable / dl-flt-row → mirror the .sortable / .flt-row globals so
+   the markup keeps its existing class names). */
+.dlt-table{width:100%;border-collapse:collapse}
 .dlt-table thead{position:sticky;top:0;z-index:3}
-.dlt-table th{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:6px 10px;font-weight:600;color:var(--text-2);text-align:left;white-space:nowrap}
-.dlt-table td{padding:5px 10px;border-bottom:1px solid var(--border-3);color:var(--text-1);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dlt-table tr:hover td{background:var(--bg-hover)}
 .dlt-table th.dlt-sortable{cursor:pointer;user-select:none}
 .dlt-table th.dlt-sortable:hover{background:var(--bg-hover)}
-.dlt-table tr.dl-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);padding:3px 6px}
+.dlt-table tr.dl-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);border-right:1px solid var(--border-2);padding:3px 6px}
+.dlt-table tr.dl-flt-row th:last-child{border-right:none}
 .dlt-table tr.dl-flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
 .dlt-table tr.dl-flt-row input:focus{border-color:var(--accent)}
 .dl-st-active{color:var(--accent);font-weight:600;font-size:.73rem}
@@ -268,6 +276,9 @@ a{color:inherit;text-decoration:none}
 .dl-st-queued{color:var(--text-4);font-size:.73rem}
 .dl-bar{width:70px;height:4px;background:var(--border-2);border-radius:2px;overflow:hidden;flex-shrink:0}
 .dl-bar-fill{height:100%;background:var(--accent);transition:width .3s}
+.dl-fname-wrap{position:relative;display:inline-block;max-width:100%}
+.dl-path-tip{display:none;position:absolute;bottom:calc(100% + 4px);left:0;z-index:200;background:var(--bg-2);border:1px solid var(--border-1);border-radius:6px;padding:5px 8px;font-size:.72rem;color:var(--text-2);white-space:pre;box-shadow:0 3px 10px rgba(0,0,0,.15);pointer-events:none;max-width:480px;word-break:break-all;white-space:normal}
+.dl-fname-wrap:hover .dl-path-tip{display:block}
 .dl-act{padding:2px 8px;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);cursor:pointer;font-size:.78rem;margin-right:4px;color:var(--text-2);line-height:1}
 .dl-act:hover{background:var(--bg-hover);border-color:var(--accent-soft)}
 .dl-act-del:hover{background:#fee2e2;border-color:#fca5a5;color:#dc2626}
@@ -295,6 +306,8 @@ a{color:inherit;text-decoration:none}
 .sep{color:var(--input-border)}
 #chip-list{display:flex;flex-wrap:wrap;gap:4px}
 .flt-count-pill{display:inline-flex;align-items:center;font-size:.74rem;font-weight:600;color:var(--text-2);background:var(--bg-3);padding:4px 11px;border-radius:99px;border:1px solid var(--border-2);white-space:nowrap;line-height:1.3}
+/* Footer "loaded / total" indicator on the Files-tab infinite-scroll grid. */
+.files-loaded-pill{display:inline-flex;align-items:center;gap:4px;font-size:.74rem;font-weight:600;color:var(--text-2);background:var(--bg-3);padding:3px 10px;border-radius:99px;border:1px solid var(--border-2);font-variant-numeric:tabular-nums;white-space:nowrap}
 .chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;background:var(--bg-info);color:var(--accent-h);border-radius:99px;font-size:.72rem;font-weight:600;cursor:pointer}
 .chip::after{content:'×'}
 .chip:hover{background:var(--bg-info-h)}
@@ -318,15 +331,64 @@ a{color:inherit;text-decoration:none}
 /* ── Table ── */
 #table-wrap{flex:1;overflow:auto;position:relative;background:var(--bg-2)}
 table{width:100%;border-collapse:collapse;font-size:.79rem}
-#files-table{table-layout:fixed;min-width:860px;width:100%}
-#files-table .col-group{width:16%}
-#files-table .col-size {width:9%}
-#files-table .col-date {width:14%}
-#files-table .col-ext  {width:60px}    /* fixed so the sticky col 4 (name) can use a px left offset */
-#files-table .col-dl   {width:10%}
-#files-table .col-ctx  {width:13%}
+/* Auto layout + width:1% + nowrap is the classic trick that shrinks a column
+   to exactly its content width. Date/Size/Shares/Download all hug their text;
+   Name + Context share the remaining flex space. Ext stays at 60px so the
+   sticky offsets below (left:126px) stay correct. */
+#files-table{table-layout:auto;width:100%}
+#files-table .col-ext   {width:60px}
+#files-table .col-size  {width:1%;white-space:nowrap}
+#files-table .col-date  {width:1%;white-space:nowrap}
+#files-table .col-shares{width:1%;white-space:nowrap;text-align:center}
+#files-table .col-dl    {width:1%;white-space:nowrap}
+/* Share marker: subtle text with a desaturated icon. Hot/veryhot bump
+   weight and color only — no chunky pill background that fights with the
+   row. */
+.share-pill{display:inline-flex;align-items:baseline;gap:3px;font-size:.78rem;color:var(--text-2);background:none;border:none;padding:0;line-height:1.2;cursor:default}
+.share-pill .share-icon{font-size:.68rem;opacity:.5;line-height:1}
+.share-pill .share-num{font-variant-numeric:tabular-nums;font-weight:500}
+.share-pill.hot     .share-num{color:var(--text-1);font-weight:600}
+.share-pill.veryhot .share-num{color:var(--accent);font-weight:700}
+.rise-badge{display:inline-block;font-size:.7rem;font-weight:700;color:#dc2626;margin-left:3px;line-height:1}
+[data-theme="dark"] .rise-badge,[data-theme="nord"] .rise-badge,[data-theme="forest"] .rise-badge,[data-theme="slate"] .rise-badge,[data-theme="crimson"] .rise-badge,[data-theme="rosepine"] .rise-badge{color:#fca5a5}
+.trend-divider{display:inline-block;width:1px;height:18px;background:var(--border-2);margin:0 4px}
+.trend-flex{flex:1}
+.trend-window-toggle{display:inline-flex;border:1px solid var(--border-2);border-radius:6px;overflow:hidden}
+.trend-win-btn{padding:5px 10px;font-size:.78rem;background:var(--bg-2);color:var(--text-2);border:none;cursor:pointer;border-right:1px solid var(--border-2)}
+.trend-win-btn:last-child{border-right:none}
+.trend-win-btn:hover{background:var(--bg-hover)}
+.trend-win-btn.active{background:var(--accent);color:#fff;font-weight:600}
+#trend-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px}
+.trend-card{background:var(--bg-3);border:1px solid var(--border-2);border-radius:10px;padding:13px 14px;display:flex;flex-direction:column;gap:8px;transition:border-color .12s}
+.trend-card:hover{border-color:var(--accent-soft)}
+.trend-card-head{display:flex;align-items:flex-start;gap:8px}
+.trend-rank{font-size:1.1rem;font-weight:800;color:var(--accent);min-width:28px;line-height:1.1}
+.trend-name{font-weight:600;font-size:.88rem;color:var(--text-1);line-height:1.35;word-break:break-word;flex:1;min-width:0}
+.trend-meta-row{display:flex;align-items:center;gap:8px;font-size:.74rem;color:var(--text-3);flex-wrap:wrap}
+.trend-size{font-weight:600;color:var(--text-2)}
+.trend-share-big{display:inline-flex;align-items:baseline;gap:4px;font-weight:700}
+.trend-share-big .num{font-size:1.15rem;color:var(--text-1)}
+.trend-share-big .lbl{font-size:.7rem;color:var(--text-3)}
+.trend-groups{font-size:.72rem;color:var(--text-3);line-height:1.45}
+.trend-groups b{color:var(--text-2);font-weight:600}
+.trend-spark{display:inline-flex;align-items:flex-end;gap:2px;height:24px;padding:1px 0}
+.trend-spark .bar{display:inline-block;width:6px;background:var(--accent-soft);border-radius:2px;min-height:1px;transition:background .12s}
+.trend-spark .bar.peak{background:var(--accent)}
+.trend-actions{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}
+.trend-act-btn{padding:4px 10px;font-size:.74rem;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);color:var(--text-2);cursor:pointer}
+.trend-act-btn:hover{background:var(--bg-hover);border-color:var(--accent-soft);color:var(--text-1)}
+.trend-act-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.trend-act-btn.primary:hover{background:var(--accent-h)}
+#trend-cards .trend-empty,#trend-cards .trend-loading{grid-column:1/-1;text-align:center;padding:50px 20px;color:var(--text-3);font-size:.85rem}
+.type-btn#trend-mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 thead{position:sticky;top:0;z-index:5}
-thead tr:first-child th{background:var(--bg-3);border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);padding:7px 10px;white-space:nowrap;text-align:left;font-weight:600;color:var(--text-2);position:relative;user-select:none}
+/* `border-collapse:collapse` (set on global `table{}`) breaks sticky-on-thead
+   in some browsers, so we make BOTH thead rows sticky at the cell level. The
+   header row sits at top:0 and the filter row stacks below it. Using `--th-h`
+   keeps the offset consistent across themes / font sizes. */
+:root{--th-h:32px}
+thead tr:first-child th{position:sticky;top:0;z-index:6;background:var(--bg-3);border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);padding:7px 10px;white-space:nowrap;text-align:left;font-weight:600;color:var(--text-2);user-select:none}
+thead tr.flt-row th{position:sticky;top:var(--th-h);z-index:5}
 thead tr:first-child th:last-child{border-right:none}
 thead tr:first-child th.sortable{cursor:pointer;user-select:none}
 thead tr:first-child th.sortable:hover{background:var(--bg-hover)}
@@ -378,6 +440,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .link-files-ok{color:var(--text-1);font-weight:500;cursor:default}
 .link-files-pending{color:var(--text-4);cursor:default}
 .link-files-dead{color:#dc2626;font-style:italic;cursor:default}
+.link-files-retry{cursor:pointer;font-style:normal;text-decoration:underline dotted}
+.link-files-retry:hover{color:#b91c1c;background:rgba(220,38,38,.08);border-radius:4px;padding:0 4px}
 .link-files-unknown{color:var(--text-4);cursor:default}
 
 /* ── Sticky frozen columns (files table) ──
@@ -392,13 +456,12 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #files-table tbody tr:hover td:nth-child(1),#files-table tbody tr:hover td:nth-child(2),#files-table tbody tr:hover td:nth-child(3),#files-table tbody tr:hover td:nth-child(4){background:var(--bg-hover)}
 #files-table tbody tr.row-selected td:nth-child(1),#files-table tbody tr.row-selected td:nth-child(2),#files-table tbody tr.row-selected td:nth-child(3),#files-table tbody tr.row-selected td:nth-child(4){background:var(--bg-selected)}
 
-/* ── Sticky frozen columns (links table) ── */
-#links-table{table-layout:fixed;min-width:780px;width:100%}
-#links-table .lcol-platform{width:12%}
-#links-table .lcol-files   {width:16%}
-#links-table .lcol-group   {width:14%}
-#links-table .lcol-date    {width:9%}
-#links-table .lcol-ctx     {width:12%}
+/* ── Sticky frozen columns (links table) ──
+   Same auto+width:1%+nowrap pattern as #files-table for visual consistency:
+   Platform/Date hug their content, URL+Files+Group+Context share the rest. */
+#links-table{table-layout:auto;width:100%}
+#links-table .lcol-platform{width:1%;white-space:nowrap}
+#links-table .lcol-date    {width:1%;white-space:nowrap}
 #links-table th:nth-child(1),#links-table td:nth-child(1){position:sticky;left:0}
 #links-table th:nth-child(2),#links-table td:nth-child(2){position:sticky;left:26px}
 #links-table th:nth-child(3),#links-table td:nth-child(3){position:sticky;left:66px;border-right:1px solid var(--border-1);box-shadow:4px 0 6px -2px var(--frozen-shadow)}
@@ -406,8 +469,92 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #links-table tbody td:nth-child(1),#links-table tbody td:nth-child(2),#links-table tbody td:nth-child(3){z-index:3;background:var(--bg-2)}
 #links-table tbody tr:hover td:nth-child(1),#links-table tbody tr:hover td:nth-child(2),#links-table tbody tr:hover td:nth-child(3){background:var(--bg-hover)}
 
+/* ── Channels tab (same look as #files-table) ── */
+#channels-panel{flex:1;display:flex;flex-direction:column;background:var(--bg-2);overflow:hidden}
+#channels-toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-3);border-bottom:1px solid var(--border-1);flex-wrap:wrap}
+.ch-btn{padding:6px 12px;font-size:.8rem;border:1px solid var(--input-border);border-radius:7px;background:var(--bg-2);color:var(--text-1);cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-weight:500}
+.ch-btn:hover{background:var(--bg-hover);border-color:var(--accent-soft)}
+.ch-btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.ch-btn-primary:hover{background:var(--accent-h);border-color:var(--accent-h)}
+.ch-btn-alt{background:var(--bg-3);color:var(--text-2)}
+.ch-btn.active{background:var(--bg-selected);border-color:var(--accent)}
+.ch-search-wrap{display:flex;align-items:center}
+#ch-search{padding:5px 10px;font-size:.8rem;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);min-width:200px}
+.ch-spacer{flex:1}
+.ch-bulk-info{padding:3px 9px;background:var(--accent-soft);color:var(--accent);border-radius:99px;font-size:.74rem;font-weight:600}
+.ch-bulk-btn{padding:5px 10px;font-size:.76rem;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);cursor:pointer}
+.ch-bulk-btn:hover{background:var(--bg-hover)}
+.ch-bulk-btn-danger{color:#c62828;border-color:rgba(198,40,40,.4)}
+.ch-bulk-btn-danger:hover{background:rgba(198,40,40,.08)}
+.ch-bulk-btn-alt{background:var(--bg-3);color:var(--text-3)}
+#ch-bulk-bar{display:none;align-items:center;gap:6px}
+
+.ch-add-card{background:var(--bg-2);border-bottom:1px solid var(--border-1);padding:14px 18px;display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow:hidden;flex-shrink:0}
+.ch-add-head{display:flex;align-items:center;justify-content:space-between}
+.ch-add-head h3{margin:0;font-size:.92rem;color:var(--text-1);font-weight:600}
+.ch-add-close{background:none;border:none;font-size:1.2rem;color:var(--text-3);cursor:pointer;padding:0 6px}
+.ch-add-close:hover{color:var(--text-1)}
+.ch-add-hint{margin:0;font-size:.78rem;color:var(--text-3);line-height:1.45}
+.ch-add-input{width:100%;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:.82rem;padding:8px 10px;border:1px solid var(--input-border);border-radius:7px;background:var(--bg-3);color:var(--text-1);resize:vertical;line-height:1.45}
+.ch-add-input:focus{outline:none;border-color:var(--accent)}
+.ch-add-preview{padding:7px 10px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:7px;font-size:.76rem;color:var(--text-2);max-height:200px;overflow-y:auto}
+.ch-add-preview-label{font-weight:600;color:var(--text-1);margin-right:6px}
+.ch-add-preview .ch-tok{display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;background:var(--bg-2);border:1px solid var(--border-2);border-radius:99px;font-size:.74rem;color:var(--text-1);font-family:'SFMono-Regular',Menlo,monospace}
+.ch-add-actions{display:flex;gap:8px;flex-wrap:wrap}
+.ch-add-card.ch-busy{cursor:progress}
+.ch-add-card.ch-busy .ch-add-input,.ch-add-card.ch-busy .ch-btn{opacity:.6}
+.ch-prog-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.ch-prog-count{color:var(--text-3);font-variant-numeric:tabular-nums;font-size:.74rem}
+.ch-prog-bar{height:6px;width:100%;background:var(--bg-3);border-radius:4px;overflow:hidden;margin-top:2px}
+.ch-prog-fill{height:100%;background:var(--accent);transition:width .15s ease}
+.ch-add-result{padding:8px 12px;border-radius:7px;font-size:.78rem;line-height:1.5}
+.ch-add-result.ok{background:rgba(34,197,94,.08);color:#15803d;border:1px solid rgba(34,197,94,.25)}
+.ch-add-result.err{background:rgba(239,68,68,.08);color:#b91c1c;border:1px solid rgba(239,68,68,.25)}
+.ch-add-result.warn{background:rgba(234,179,8,.08);color:#a16207;border:1px solid rgba(234,179,8,.25)}
+.ch-add-result ul{margin:6px 0 0 18px;padding:0}
+.ch-add-result li{margin:2px 0}
+
+/* Channels table — visually aligned with #hunter-grid: same global td padding
+   (4px 10px), same font-size (.79rem from `table`), same sticky header look,
+   same filter-row chrome (.hg-flt-row analog). Only column widths differ. */
+#channels-table-wrap{flex:1;overflow:auto;background:var(--bg-2)}
+#channels-table{width:100%;border-collapse:collapse;table-layout:auto}
+#channels-table thead{position:sticky;top:0;z-index:5}
+#channels-table thead th{background:var(--bg-3);padding:7px 10px;font-weight:600;color:var(--text-2);text-align:left;border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);font-size:.79rem;white-space:nowrap;position:relative;user-select:none}
+#channels-table thead th:last-child{border-right:none}
+#channels-table tbody tr:hover{background:var(--bg-hover);cursor:pointer}
+#channels-table tbody tr.row-selected{background:var(--bg-selected)!important}
+#channels-table tbody tr.row-hidden{opacity:.55}
+#channels-table .ch-sortable{cursor:pointer;user-select:none}
+#channels-table .ch-sortable:hover{background:var(--bg-hover)}
+#channels-table tr.flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);border-right:1px solid var(--border-2);padding:3px 6px}
+#channels-table tr.flt-row th:last-child{border-right:none}
+#channels-table tr.flt-row input,#channels-table tr.flt-row select{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:inherit}
+#channels-table tr.flt-row input:focus,#channels-table tr.flt-row select:focus{border-color:var(--accent)}
+#channels-table .ch-col-count,#channels-table .ch-col-size,#channels-table .ch-col-members,#channels-table .ch-col-sync,#channels-table .ch-col-msg{width:1%;white-space:nowrap;text-align:right}
+#channels-table .ch-col-mini{width:44px;text-align:right;font-size:.72rem;padding:4px 6px}
+#channels-table tbody .ch-col-mini{color:var(--text-3);font-variant-numeric:tabular-nums}
+#channels-table tbody td.ch-col-mini.zero{color:var(--text-4)}
+#channels-table .ch-col-user{width:1%;white-space:nowrap}
+#channels-table .ch-col-state{width:1%;white-space:nowrap;text-align:center}
+#channels-table .ch-col-act{width:1%;white-space:nowrap;text-align:right}
+/* Kanal Adı: dinamik (geri kalan boşluğu alır) ama uzun adlar ellipsis ile kesilir. */
+#channels-table .ch-col-name{width:auto;max-width:0}
+#channels-table tbody .ch-name-cell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0}
+.ch-state{display:inline-block;padding:2px 8px;border-radius:99px;font-size:.7rem;font-weight:600;line-height:1.5}
+.ch-state-active{background:rgba(34,197,94,.12);color:#16a34a}
+.ch-state-hidden{background:var(--bg-3);color:var(--text-3)}
+.ch-state-excl{background:rgba(234,179,8,.12);color:#a16207}
+.ch-row-acts{display:inline-flex;gap:4px;justify-content:flex-end}
+.ch-row-acts .ga{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--input-border);border-radius:5px;background:var(--bg-2);color:var(--text-2);cursor:pointer;text-decoration:none;font-size:.78rem}
+.ch-row-acts .ga:hover{background:var(--bg-hover);color:var(--text-1)}
+
 /* ── Context tooltip ── */
-#ctx-tip{position:fixed;z-index:999;background:#1e293b;color:#f1f5f9;border-radius:8px;padding:8px 12px;font-size:.78rem;max-width:320px;line-height:1.5;pointer-events:none;display:none;box-shadow:0 8px 24px rgba(0,0,0,.25);word-break:break-word;white-space:pre-wrap}
+#ctx-tip{position:fixed;z-index:999;background:#1e293b;color:#f1f5f9;border-radius:8px;padding:8px 12px;font-size:.78rem;max-width:380px;line-height:1.5;pointer-events:none;display:none;box-shadow:0 8px 24px rgba(0,0,0,.25);word-break:break-word;white-space:pre-wrap}
+#ctx-tip .dup-tip-head{font-weight:600;color:#cbd5e1;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:3px}
+#ctx-tip .dup-tip-row{font-size:.74rem;color:#e2e8f0;padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ctx-tip .dup-tip-uname{color:#7dd3fc;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:.72rem}
+#ctx-tip .dup-tip-date{color:#94a3b8;font-size:.7rem}
 
 /* ── Platform badges ── */
 .plat-badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:.7rem;font-weight:700;white-space:nowrap}
@@ -424,11 +571,9 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .pg-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .pg-btn:disabled{opacity:.4;cursor:default}
 .pg-ellipsis{color:var(--text-4);padding:0 2px;font-size:.78rem}
-#hunter-pager{display:none;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border-1);background:var(--bg-2);flex-wrap:wrap;font-size:.73rem;color:var(--text-3)}
-#hunter-pager.has-rows{display:flex}
-#hunter-pager .hp-info{font-size:.72rem;color:var(--text-3)}
-#hunter-pager .hp-info b{color:var(--text-1);font-variant-numeric:tabular-nums}
-#hunter-pager select{padding:3px 6px;border:1px solid var(--input-border);border-radius:6px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
+/* Infinite-scroll grid: total candidate count lives in the toolbar pill */
+.hunter-total-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:99px;font-size:.74rem;color:var(--text-2);font-weight:600;white-space:nowrap}
+.hunter-total-pill b{color:var(--text-1);font-variant-numeric:tabular-nums}
 
 /* ── Toast notifications ── */
 #toast-container{position:fixed;bottom:54px;right:16px;z-index:200;display:flex;flex-direction:column;gap:8px;pointer-events:none}
@@ -438,7 +583,7 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .toast a{color:var(--accent);font-weight:600;cursor:pointer;text-decoration:underline}
 
 /* ── App status bar (sync + bulk + last-sync) ── */
-#app-status-bar{background:var(--bg-2);border-top:1px solid var(--border-1);padding:5px 16px;flex-shrink:0;display:flex;align-items:center;gap:10px;font-size:.72rem;color:var(--text-3);min-height:32px;flex-wrap:nowrap;overflow:hidden}
+#app-status-bar{background:var(--bg-2);border-top:1px solid var(--border-1);padding:4px 16px;flex-shrink:0;display:flex;align-items:center;gap:8px;font-size:.72rem;color:var(--text-3);min-height:42px;flex-wrap:nowrap;overflow:hidden}
 #app-status-bar #pag-sync{font-weight:600;white-space:nowrap;flex-shrink:0}
 #app-status-bar #pag-current-group{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2);font-style:italic;flex-shrink:1}
 #app-status-bar #pag-next{white-space:nowrap;flex-shrink:0;color:var(--text-4)}
@@ -537,8 +682,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hd-actions-help{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding:10px 12px;background:var(--bg-3);border-radius:7px;font-size:.74rem;color:var(--text-2);line-height:1.45}
 .hd-actions-help .hd-help-row{display:flex;gap:6px}
 .hd-actions-help .hd-help-row b{flex-shrink:0;min-width:80px;color:var(--accent-h)}
-#hunter-panel{flex:1;overflow-y:auto;display:none;flex-direction:column;background:var(--bg-1);padding:12px 16px;gap:10px;min-height:0}
-.hunter-toolbar{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;padding:8px 12px;flex-wrap:wrap}
+#hunter-panel{flex:1;overflow-y:auto;display:none;flex-direction:column;background:var(--bg-2);padding:12px 16px;gap:10px;min-height:0}
+.hunter-toolbar{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:none;border-bottom:1px solid var(--border-1);padding:8px 16px;flex-wrap:wrap;position:sticky;top:0;z-index:10;margin:-12px -16px 0;flex-shrink:0}
 .hunter-flex{flex:1}
 .hunter-live{font-size:.75rem;color:var(--text-3);font-style:italic}
 .hunter-btn-primary{padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.78rem;font-weight:600}
@@ -549,6 +694,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 /* Aktif (kalıcı toggle) durumda — örn. Ayarlar paneli açıkken. */
 .hunter-btn-alt.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .hunter-btn-alt.active:hover{background:var(--accent-h)}
+.mh-meta{font-size:.7rem;color:var(--text-3);margin-left:4px}
+.hunter-btn-alt.active .mh-meta{color:#fff;background:rgba(255,255,255,.22);padding:1px 7px;border-radius:9px;font-weight:600}
 .hunter-sel{padding:4px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.76rem;background:var(--bg-2);color:var(--text-1);outline:none}
 .hunter-card{background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;padding:12px 16px}
 .hunter-card h3{font-size:.78rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
@@ -558,6 +705,23 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hunter-row input[type="text"],.hunter-row input[type="number"],.hunter-row select{padding:5px 8px;border:1px solid var(--input-border);border-radius:6px;font-size:.78rem;background:var(--bg-2);color:var(--text-1);outline:none}
 .hunter-row input[type="text"]:focus,.hunter-row input[type="number"]:focus,.hunter-row select:focus{border-color:var(--accent)}
 .hunter-row input[type="checkbox"]{width:16px;height:16px;align-self:flex-start;margin-top:3px;accent-color:var(--accent)}
+
+/* Telegram-push row: full-width label, toggle pushed to the trailing edge. */
+.notify-push-row{display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;user-select:none}
+.notify-push-row .notify-push-label{font-size:.86rem;color:var(--text-1);font-weight:500}
+.notify-push-row .hf-help{margin-right:auto}
+
+/* Generic toggle-switch component. Uses a hidden checkbox so it stays
+   keyboard-accessible and form-submittable; the visual slider is the
+   .tf-toggle-slider span. Color flips to accent when checked. */
+.tf-toggle{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+.tf-toggle input{position:absolute;width:100%;height:100%;opacity:0;cursor:pointer;margin:0;z-index:2}
+.tf-toggle-slider{position:absolute;inset:0;background:var(--bg-3);border:1px solid var(--input-border);border-radius:99px;transition:background .15s ease,border-color .15s ease}
+.tf-toggle-slider::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .18s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.tf-toggle input:checked + .tf-toggle-slider{background:var(--accent);border-color:var(--accent)}
+.tf-toggle input:checked + .tf-toggle-slider::before{transform:translateX(18px)}
+.tf-toggle input:focus-visible + .tf-toggle-slider{box-shadow:0 0 0 3px var(--accent-soft)}
+.tf-toggle input:disabled + .tf-toggle-slider{opacity:.45;cursor:not-allowed}
 .hf-help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--bg-3);color:var(--text-3);font-size:.65rem;font-weight:700;cursor:help;border:1px solid var(--border-2);position:relative;margin-left:4px;line-height:1;user-select:none;flex-shrink:0;vertical-align:middle}
 .hf-help:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
 .hf-help::after{content:attr(data-help);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e293b;color:#f1f5f9;padding:8px 11px;border-radius:7px;font-size:.74rem;font-weight:400;white-space:normal;width:max-content;max-width:300px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .12s;z-index:300;text-align:left;font-style:normal;letter-spacing:0}
@@ -571,28 +735,47 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hunter-meta{font-size:.72rem;color:var(--text-3)}
 
 #hunter-candidates-list
-#hunter-grid-wrap{background:var(--bg-2);border:1px solid var(--border-1);border-radius:10px;overflow:auto;max-height:calc(100vh - 280px)}
-#hunter-grid{width:100%;border-collapse:collapse;font-size:.78rem;table-layout:fixed}
+/* Match #table-wrap (Files): seamless bg-2 surface, no card chrome.
+   No max-height: the panel itself scrolls so the grid can grow infinitely
+   via IntersectionObserver (see hunterLoadMore). */
+#hunter-grid-wrap{background:var(--bg-2);flex:1;min-height:0}
+#hunter-grid-sentinel{height:1px}
+#hunter-grid-loading{padding:14px;text-align:center;color:var(--text-3);font-size:.78rem}
+/* Hunter grid — uses the same global thead/td/tr rules as #files-table so
+   the look (font, padding, bg, borders, hover, selection) is byte-for-byte
+   identical. Local rules are limited to sticky positioning + class aliases
+   (hg-sortable / hg-flt-row → mirror the .sortable / .flt-row globals). */
+#hunter-grid{width:100%;border-collapse:collapse;table-layout:auto}
+/* Sıkı sütunlar: içerik kadar yer kaplasın */
+#hunter-grid > thead > tr > th:not(:nth-child(3)):not(.hg-chk-cell),
+#hunter-grid > tbody > tr > td:not(:nth-child(3)):not(.hg-chk-cell){
+  width:1%;white-space:nowrap;
+}
+/* Kanal sütunu: kalan tüm genişliği kullan, overflow'u içeride yönet */
+#hunter-grid > thead > tr > th:nth-child(3),
+#hunter-grid > tbody > tr > td:nth-child(3){
+  width:auto;max-width:0;
+}
 #hunter-grid thead{position:sticky;top:var(--hg-bar-h,0);z-index:5}
-#hunter-grid thead th{background:var(--bg-3);border-bottom:1px solid var(--border-1);padding:7px 10px;text-align:left;font-weight:600;color:var(--text-2);white-space:nowrap;font-size:.74rem;user-select:none}
-#hunter-grid th.hg-sortable{cursor:pointer}
+#hunter-grid th.hg-sortable{cursor:pointer;user-select:none}
 #hunter-grid th.hg-sortable:hover{background:var(--bg-hover)}
-#hunter-grid tr.hg-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);padding:3px 6px}
-#hunter-grid tr.hg-flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.72rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:inherit}
+#hunter-grid tr.hg-flt-row th{background:var(--bg-3);border-bottom:2px solid var(--border-1);border-right:1px solid var(--border-2);padding:3px 6px}
+#hunter-grid tr.hg-flt-row th:last-child{border-right:none}
+#hunter-grid tr.hg-flt-row input{width:100%;padding:3px 6px;border:1px solid var(--input-border);border-radius:4px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none;font-family:inherit}
 #hunter-grid tr.hg-flt-row input:focus{border-color:var(--accent)}
-#hunter-grid tbody tr{border-bottom:1px solid var(--border-2);cursor:pointer;transition:background .1s}
-#hunter-grid tbody tr:hover{background:var(--bg-hover)}
-#hunter-grid tbody td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border-3)}
-#hunter-grid tbody td:last-child{border-right:none}
-#hunter-grid .hg-channel{display:flex;align-items:center;gap:6px;min-width:0}
-#hunter-grid .hg-channel .hg-title{font-weight:400;font-style:normal;text-decoration:none;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;font-family:inherit}
-#hunter-grid .hg-channel code{background:var(--bg-info);color:var(--accent-h);padding:0 6px;border-radius:4px;font-size:.72rem}
+#hunter-grid .hg-channel{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+#hunter-grid .hg-channel .hg-title{font-weight:400;font-style:normal;font-family:inherit;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
+#hunter-grid .hg-channel .hg-uname{color:var(--text-3);font-size:.72rem;white-space:nowrap;flex-shrink:0}
 #hunter-grid .hg-queue-badge{display:inline-flex;align-items:center;gap:3px;background:#fff7e0;color:#92400e;border:1px solid #fcd34d;padding:0 6px;border-radius:99px;font-size:.7rem;font-weight:600;cursor:help;flex-shrink:0}
 #hunter-grid .hg-already-joined{display:inline-flex;align-items:center;padding:2px 9px;background:#dcfce7;color:#166534;border:1px solid #86efac;border-radius:99px;font-size:.7rem;font-weight:600;cursor:help}
 #hunter-grid .hg-score{display:inline-flex;align-items:center;justify-content:center;width:36px;height:24px;border-radius:6px;background:var(--bg-3);color:var(--text-2);font-weight:700;font-size:.78rem;border:1px solid var(--border-2)}
 #hunter-grid .hg-score.zero{background:var(--bg-3);color:var(--text-4)}
 #hunter-grid .hg-types{display:flex;gap:1px;height:14px;width:100%}
 #hunter-grid .hg-types-seg{border-radius:1px}
+#hunter-grid td.hg-tc{text-align:right;font-size:.72rem;font-weight:600;padding:4px 6px;white-space:nowrap;min-width:0}
+#hunter-grid td.hg-tc.zero{color:var(--text-4);font-weight:400}
+#hunter-grid th.hg-ev-col,#hunter-grid td.hg-ev-col{display:none}
+#hunter-grid.hg-show-ev th.hg-ev-col,#hunter-grid.hg-show-ev td.hg-ev-col{display:table-cell}
 #hunter-grid .hg-status{display:inline-block;padding:1px 7px;border-radius:99px;font-size:.66rem;font-weight:600}
 #hunter-grid .hg-status.s-discovered{background:var(--bg-info);color:var(--accent-h)}
 #hunter-grid .hg-status.s-enriched{background:#dcfce7;color:#166534}
@@ -787,8 +970,16 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hunter-cand .h-status-pill.s-blacklisted{background:#1e293b;color:#fca5a5}
 .hunter-cand .h-status-pill.s-failed{background:#fef3c7;color:#92400e}
 
-#hunter-log-card{flex-shrink:0}
-#hunter-log-list{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.73rem;line-height:1.55;max-height:360px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:8px 12px;color:var(--text-2)}
+/* Sticky log drawer — pinned to the bottom of #hunter-panel so the grid
+   above can scroll infinitely without the log scrolling off-screen. The
+   collapsed (default) state shows only the title bar; the open state
+   reveals up to 40vh of log lines. Grid content beneath stays clickable
+   when drawer is collapsed; only the open drawer overlaps it. */
+#hunter-log-card{position:sticky;bottom:-12px;z-index:30;flex-shrink:0;background:var(--bg-2);border-top:1px solid var(--border-1);margin:0 -16px -12px;padding:0;box-shadow:0 -2px 12px rgba(0,0,0,.05)}
+#hunter-log-card .hunter-collapsible-head{margin:0;padding:7px 16px;font-size:.78rem;font-weight:600;color:var(--text-2);background:var(--bg-2)}
+#hunter-log-card .hunter-collapsible-head:hover{background:var(--bg-3)}
+#hunter-log-card .hl-evt-pulse{margin-left:auto;font-size:.7rem;color:var(--text-3);font-family:'Cascadia Code','JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;min-width:0;text-align:right}
+#hunter-log-list{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.73rem;line-height:1.55;max-height:40vh;overflow-y:auto;background:var(--bg-3);padding:8px 16px;color:var(--text-2);border-top:1px solid var(--border-2)}
 #hunter-log-list.collapsed{display:none}
 .hunter-collapsible-head{cursor:pointer;user-select:none;display:flex;gap:7px;align-items:center}
 .hunter-collapsible-head:hover{color:var(--accent)}
@@ -890,24 +1081,45 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .torrent-toggle{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1px solid var(--border-2);border-radius:3px;background:var(--bg-3);cursor:pointer;font-size:.6rem;color:var(--text-3);flex-shrink:0;transition:transform .15s,color .15s;margin-right:4px;vertical-align:middle;padding:0;line-height:1}
 .torrent-toggle:hover{color:var(--accent);border-color:var(--accent-soft)}
 .torrent-toggle.open{transform:rotate(90deg);color:var(--accent)}
-tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;border-bottom:2px solid var(--accent-soft)!important}
-.torrent-tree-panel{padding:8px 14px 12px}
-.torrent-tree-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
-.torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%}
-.torrent-tree-stats{color:var(--text-3);font-size:.72rem;flex-shrink:0}
-.torrent-tree-filter{flex:1;min-width:140px;max-width:260px;padding:3px 8px;border:1px solid var(--input-border);border-radius:5px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none}
-.torrent-tree-filter:focus{border-color:var(--accent)}
-.torrent-tree-list{font-size:.73rem;max-height:280px;overflow-y:auto;border:1px solid var(--border-3);border-radius:5px;background:var(--bg-2)}
-.tt-entry{display:flex;align-items:center;gap:5px;padding:3px 8px;border-bottom:1px solid var(--border-3);min-height:22px}
-.tt-entry:last-child{border-bottom:none}
-.tt-entry.tt-dir{background:var(--bg-3);font-weight:600;color:var(--text-2);font-size:.7rem;position:sticky;top:0;z-index:1}
-.tt-entry .tt-icon{flex-shrink:0;width:14px;text-align:center;font-size:.68rem;opacity:.75}
-.tt-entry .tt-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
-.tt-entry .tt-size{flex-shrink:0;color:var(--text-3);font-size:.69rem;min-width:60px;text-align:right}
-.tt-entry.tt-match .tt-path{color:var(--accent);font-weight:600}
-.tt-loading{padding:14px 16px;text-align:center;color:var(--text-3);font-size:.76rem;display:flex;align-items:center;justify-content:center;gap:7px}
-.tt-error{padding:9px 12px;color:#dc2626;font-size:.75rem}
+/* Torrent contains a file matching the current search — gentle accent ring
+   so user notices "click here to see the match" without auto-expanding. */
+.torrent-toggle.has-match{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft);color:var(--accent)}
+tr.torrent-tree-row>td{padding:0!important;background:var(--bg-3)!important;border-bottom:1px solid var(--border-1)!important;box-shadow:inset 3px 0 0 var(--border-1)}
+.torrent-tree-panel{padding:10px 16px 14px 20px}
+.torrent-tree-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px dashed var(--border-2)}
+.torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%;letter-spacing:.01em}
+.torrent-tree-stats{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:.7rem;flex-shrink:0;background:var(--bg-2);border:1px solid var(--border-2);border-radius:10px;padding:2px 10px;font-variant-numeric:tabular-nums}
+.torrent-tree-filter{flex:1;min-width:160px;max-width:300px;padding:4px 10px;border:1px solid var(--border-2);border-radius:14px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none;transition:border-color .12s,box-shadow .12s}
+.torrent-tree-filter:focus{border-color:var(--text-3);box-shadow:0 0 0 2px var(--border-1)}
+.torrent-tree-list{font-size:.73rem;max-height:300px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);box-shadow:inset 0 1px 0 rgba(0,0,0,.02)}
+.tt-entry{display:flex;align-items:center;gap:7px;padding:4px 10px;min-height:24px;position:relative;transition:background .1s}
+.tt-entry:hover{background:var(--bg-hover)}
+.tt-entry+.tt-entry:not(.tt-dir){border-top:1px solid var(--border-3)}
+.tt-entry.tt-dir{background:var(--bg-3);color:var(--text-2);font-weight:600;font-size:.71rem;letter-spacing:.02em;border-top:1px solid var(--border-2)!important;border-bottom:1px solid var(--border-3);padding-top:5px;padding-bottom:5px}
+.tt-entry.tt-dir:first-child{border-top:none!important}
+.tt-entry.tt-dir .tt-icon{opacity:.85}
+.tt-entry.tt-dir .tt-path{color:var(--text-2)}
+.tt-guide{flex-shrink:0;display:inline-block;width:14px;height:24px;border-left:1px dotted var(--border-1);margin-right:-1px}
+.tt-entry.tt-dir .tt-guide{height:26px}
+.tt-entry .tt-icon{flex-shrink:0;width:16px;text-align:center;font-size:.74rem;opacity:.6;line-height:1}
+/* File-name filter match: subtle yellow highlight on the matched substring
+   plus a soft accent tint on the whole row to make matches scannable. */
+.tt-entry .tt-path mark{background:#fde68a;color:inherit;padding:0 2px;border-radius:2px}
+.tt-entry-match{background:rgba(253,224,71,.10)}
+.tt-entry-match:hover{background:rgba(253,224,71,.18)}
+[data-theme="dark"] .tt-entry .tt-path mark,[data-theme="nord"] .tt-entry .tt-path mark{background:#a16207;color:#fff}
+.tt-entry .tt-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1);font-variant-numeric:tabular-nums}
+.tt-entry .tt-size{flex-shrink:0;color:var(--text-3);font-size:.68rem;min-width:64px;text-align:right;font-variant-numeric:tabular-nums;padding-left:8px}
+.tt-entry.tt-match{background:var(--bg-hover)}
+.tt-entry.tt-match .tt-path{color:var(--text-1);font-weight:600;text-decoration:underline;text-decoration-color:var(--text-4);text-underline-offset:2px}
+.tt-entry.tt-match:hover{background:var(--bg-selected)}
+.tt-loading{padding:18px 16px;text-align:center;color:var(--text-3);font-size:.76rem;display:flex;align-items:center;justify-content:center;gap:8px}
+.tt-error{padding:10px 14px;color:#dc2626;font-size:.75rem;background:rgba(220,38,38,.06);border-radius:5px}
+tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;border-bottom:2px solid #6d28d9!important}
+.magnet-tree-panel{padding:8px 14px 12px}
+.magnet-infohash{font-size:.68rem;color:var(--text-3);font-family:monospace;flex-shrink:0;cursor:default}
 .tt-empty{padding:10px 12px;color:var(--text-3);font-size:.75rem;text-align:center}
+.tt-more-notice{padding:7px 14px;color:var(--text-3);font-size:.72rem;text-align:center;border-top:1px dashed var(--border-2);font-style:italic}
 /* ── Torrent parse bar ─────────────────────────────────────────── */
 #torrent-parse-bar{display:flex;align-items:center;gap:8px;padding:6px 16px;background:linear-gradient(90deg,var(--bg-selected),var(--bg-info));border-bottom:1px solid var(--accent-soft);font-size:.74rem;color:var(--text-1);flex-shrink:0;animation:hbbslide .2s ease}
 .tpb-label{font-weight:600;color:var(--accent-h);white-space:nowrap}
@@ -986,21 +1198,54 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 /* ── Download destinations modal ── */
 #dl-dest-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:center;justify-content:center}
 #dl-dest-overlay.open{display:flex}
-#dl-dest-modal{background:var(--bg-2);border-radius:12px;padding:20px 22px;width:360px;max-width:95vw;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+#dl-dest-modal{background:var(--bg-2);border-radius:12px;padding:20px 22px;width:360px;max-width:95vw;max-height:80vh;overflow-y:auto;overflow-x:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 #dl-dest-modal h3{font-size:.9rem;font-weight:700;color:var(--text-1);margin-bottom:4px}
 #dl-dest-modal .ddm-sub{font-size:.72rem;color:var(--text-4);margin-bottom:14px}
-.ddm-option{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-2);border-radius:8px;cursor:pointer;margin-bottom:6px;background:var(--bg-3)}
+.ddm-option{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-2);border-radius:8px;cursor:pointer;margin-bottom:6px;background:var(--bg-3);min-width:0;overflow:hidden}
 .ddm-option:hover{border-color:var(--accent-soft);background:var(--bg-hover)}
 .ddm-option.selected{border-color:var(--accent);background:var(--bg-info)}
 .ddm-option input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;flex-shrink:0;cursor:pointer}
-.ddm-opt-name{font-size:.83rem;font-weight:600;color:var(--text-1);flex:1}
-.ddm-opt-path{font-size:.68rem;color:var(--text-4)}
+.ddm-opt-name{font-size:.83rem;font-weight:600;color:var(--text-1);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ddm-opt-path{font-size:.68rem;color:var(--text-4);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px}
 .ddm-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
 .ddm-btn{padding:7px 18px;border-radius:8px;font-size:.83rem;font-weight:600;cursor:pointer;border:none}
 .ddm-confirm{background:var(--accent);color:#fff}
 .ddm-confirm:hover{background:var(--accent-h)}
 .ddm-skip{background:var(--bg-3);border:1px solid var(--input-border)!important;color:var(--text-2)}
 .ddm-skip:hover{background:var(--bg-hover)}
+.plat-magnet{background:#6d28d9;color:#fff}
+.magnet-name{font-size:.8rem;color:var(--text-2);cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;display:inline-block;vertical-align:middle}
+.magnet-copy-btn{padding:1px 6px;border:1px solid var(--border-2);border-radius:4px;background:var(--bg-3);color:var(--text-3);font-size:.78rem;cursor:pointer;margin-left:4px;vertical-align:middle;line-height:1.4}
+.magnet-copy-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+#magnet-backfill-bar{display:flex;align-items:center;gap:10px;padding:7px 12px;margin-bottom:8px;background:var(--bg-2);border:1px solid var(--border-1);border-radius:6px;font-size:.82rem;color:var(--text-2)}
+#magnet-backfill-bar button{padding:3px 10px;border:1px solid var(--border-2);border-radius:4px;background:var(--bg-3);color:var(--text-1);font-size:.8rem;cursor:pointer;white-space:nowrap}
+#magnet-backfill-bar button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+#magnet-backfill-bar button:disabled{opacity:.5;cursor:not-allowed}
+.backfill-progress{flex:1;font-size:.8rem;color:var(--text-3)}
+.backfill-done{color:#16a34a;font-weight:600}
+#hf-preview-overlay{display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.85);align-items:center;justify-content:center}
+#hf-preview-overlay.open{display:flex}
+#hf-preview-modal{position:relative;max-width:92vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;gap:10px}
+.hf-preview-close{position:absolute;top:-14px;right:-14px;width:32px;height:32px;border-radius:50%;border:none;background:#374151;color:#f9fafb;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:1;line-height:1}
+.hf-preview-close:hover{background:#6b7280}
+.hf-preview-spinner{color:#fff;font-size:2rem;min-height:60px;display:flex;align-items:center;justify-content:center}
+.hf-preview-spinner.hidden{display:none}
+#hf-preview-content img{max-width:88vw;max-height:82vh;border-radius:6px;object-fit:contain;display:block}
+#hf-preview-content video{max-width:88vw;max-height:82vh;border-radius:6px;background:#000;outline:none}
+#hf-preview-label{color:#d1d5db;font-size:.8rem;text-align:center;max-width:88vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hf-btn-preview{background:#7c3aed;color:#fff;border-color:#7c3aed}
+.hf-btn-preview:hover{background:#6d28d9;border-color:#6d28d9}
+#ddm-schedule-section{margin:12px 0 4px;border-top:1px solid var(--border-2);padding-top:10px}
+.ddm-sched-toggle{display:flex;gap:8px;align-items:center;margin-bottom:0}
+.ddm-sched-radio{display:flex;align-items:center;gap:5px;font-size:.8rem;color:var(--text-2);cursor:pointer;padding:5px 10px;border-radius:6px;border:1px solid var(--border-2);background:var(--bg-3);transition:background .15s,border-color .15s}
+.ddm-sched-radio input{accent-color:var(--accent);cursor:pointer}
+.ddm-sched-radio:has(input:checked){border-color:var(--accent);background:var(--bg-info);color:var(--text-1);font-weight:600}
+.ddm-schedule-form{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+.ddm-sched-label{font-size:.75rem;color:var(--text-3);font-weight:600}
+#ddm-schedule-at{width:100%;padding:7px 10px;border-radius:7px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--text-1);font-size:.82rem}
+.ddm-sched-presets{display:flex;flex-wrap:wrap;gap:5px}
+.ddm-sched-preset{padding:4px 10px;border-radius:6px;border:1px solid var(--border-2);background:var(--bg-3);font-size:.73rem;color:var(--text-2);cursor:pointer}
+.ddm-sched-preset:hover{background:var(--bg-hover);border-color:var(--accent-soft);color:var(--text-1)}
 /* ── Name edit modal ── */
 #gn-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
 #gn-overlay.open{display:flex}
@@ -1034,7 +1279,10 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 #ui-greeter input[type=password]:focus{border-color:var(--accent)}
 #ui-greeter .ug-remember{display:flex;align-items:center;gap:8px;font-size:.82rem;color:var(--text-2);user-select:none;cursor:pointer}
 #ui-greeter button{padding:10px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:.92rem;font-weight:600}
-#ui-greeter button:hover{background:var(--accent-h)}
+#ui-greeter button:hover:not(:disabled){background:var(--accent-h)}
+#ui-greeter button:disabled{opacity:.5;cursor:not-allowed}
+#ug-startup-bar{flex-direction:column;align-items:center;gap:5px;padding:4px 0 2px}
+#ug-startup-msg{font-size:.74rem;color:var(--text-3);text-align:center;line-height:1.5;max-width:260px}
 #ui-greeter .ug-hint{font-size:.74rem;color:var(--text-3);text-align:center;line-height:1.5}
 #ui-greeter .ug-hint code{background:var(--bg-3);padding:1px 5px;border-radius:4px;font-family:'Cascadia Code','JetBrains Mono',monospace;color:var(--text-1)}
 
@@ -1071,6 +1319,17 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 .st-bar{height:10px;border-radius:5px;background:var(--border-2);overflow:hidden;flex:1}
 .st-bar-fill{height:100%;border-radius:5px;background:var(--accent);transition:width .4s}
 .bar-val{width:auto;min-width:72px;max-width:170px;flex-shrink:0;text-align:right;color:var(--text-3);font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act-grid{display:grid;grid-template-columns:32px repeat(24,1fr);gap:2px;min-width:480px}
+.act-corner,.act-hlabel{height:16px}
+.act-hlabel{font-size:.6rem;color:var(--text-4);text-align:center;line-height:16px}
+.act-dlabel{font-size:.7rem;color:var(--text-3);text-align:right;padding-right:5px;line-height:20px;height:20px}
+.act-cell{height:20px;border-radius:2px;background:var(--bg-3);position:relative;cursor:default;transition:opacity .1s}
+.act-cell::after{content:'';position:absolute;inset:0;border-radius:2px;background:var(--accent);opacity:var(--act-i,0)}
+.act-cell:hover{outline:1px solid var(--accent-soft)}
+.act-peak{font-size:.73rem;color:var(--text-3);margin-top:8px}
+.act-peak b{color:var(--accent-h)}
+.act-legend{display:flex;align-items:center;gap:6px;font-size:.65rem;color:var(--text-4);margin-top:6px}
+.act-leg-bar{height:6px;border-radius:3px;background:linear-gradient(to right,var(--bg-3),var(--accent));flex:1;max-width:100px}
 .log-wrap{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.71rem;line-height:1.7;max-height:220px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:6px 10px}
 .log-entry{border-bottom:1px solid var(--border-3);white-space:pre-wrap;word-break:break-all}
 .log-entry:last-child{border-bottom:none}
@@ -1088,12 +1347,25 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 .bw-form-grid{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;align-items:center;margin-top:8px}
 .bw-form-label{font-size:.8rem;color:var(--text-3);font-weight:500}
 .bw-form-input{padding:5px 8px;border:1px solid var(--border-2);border-radius:5px;background:var(--bg-2);color:var(--text-1);font-size:.85rem;width:100%;box-sizing:border-box}
-.bw-rule-item{border:1px solid var(--border-2);border-radius:7px;background:var(--bg-3);padding:9px 12px;display:flex;align-items:center;gap:8px}
+.bw-rule-item{border:1px solid var(--border-2);border-radius:8px;background:var(--bg-3);overflow:hidden}
 .bw-rule-item.bw-rule-disabled{opacity:.55}
-.bw-rule-name{font-weight:600;font-size:.85rem;flex:1;min-width:0}
-.bw-rule-meta{font-size:.75rem;color:var(--text-3);white-space:nowrap}
+.bw-rule-head{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;transition:background .12s}
+.bw-rule-head:hover{background:var(--bg-hover)}
+.bw-rule-body{border-top:1px solid var(--border-2);padding:14px 12px}
+.bw-rule-body #bw-add-form{margin:0}
+#bw-rules-list{display:flex;flex-direction:column;gap:6px}
+.bw-rule-name{font-weight:600;font-size:.85rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bw-rule-meta{font-size:.75rem;color:var(--text-3);white-space:nowrap;flex-shrink:0}
 .bw-day-chk{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border:1px solid var(--border-2);border-radius:5px;cursor:pointer;font-size:.78rem;background:var(--bg-2);user-select:none}
 .bw-day-chk input{accent-color:var(--accent);cursor:pointer}
+.bw-add-wrap{position:relative;display:inline-block}
+.bw-add-menu{position:absolute;right:0;top:calc(100% + 4px);min-width:230px;background:var(--bg-1);border:1px solid var(--border-2);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:80;padding:5px;display:none}
+.bw-add-menu.open{display:block}
+.bw-menu-item{display:block;width:100%;text-align:left;padding:7px 10px;border:none;background:transparent;color:var(--text-1);font-size:.82rem;cursor:pointer;border-radius:5px;font-family:inherit}
+.bw-menu-item:hover{background:var(--bg-hover)}
+.bw-menu-label{padding:6px 10px 4px;font-size:.7rem;color:var(--text-4);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.bw-menu-divider{height:1px;background:var(--border-2);margin:4px 0}
+.bw-field-hint{font-size:.72rem;color:var(--text-3);margin:4px 0 0;line-height:1.45}
 /* scheduled download badge */
 .dl-scheduled-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:.72rem;font-weight:600;background:#fef9c3;color:#92400e}
 </style>
@@ -1105,6 +1377,10 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 <div id="loading-screen">
   <div style="font-size:2rem">📡</div>
   <div style="color:var(--text-3);font-size:.9rem" data-i18n="common.loading">Bağlanıyor…</div>
+  <div id="loading-startup-bar" style="display:none;flex-direction:column;align-items:center;gap:8px">
+    <span class="hd-spinner" style="width:18px;height:18px;border-width:2.5px"></span>
+    <div id="loading-startup-msg" style="font-size:.78rem;color:var(--text-3);text-align:center;max-width:280px;line-height:1.5"></div>
+  </div>
 </div>
 
 <div id="login-screen">
@@ -1142,6 +1418,10 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
     <input id="ug-pass" type="password" placeholder="Parola" data-i18n-ph="uiauth.passPlaceholder" autocomplete="current-password" onkeydown="if(event.key==='Enter')uiAuthLogin()">
     <label class="ug-remember"><input id="ug-remember" type="checkbox"> <span data-i18n="creds.remember">Bu bilgisayarda hatırla</span></label>
     <button id="ug-login" onclick="uiAuthLogin()" data-i18n="uiauth.loginBtn">Giriş</button>
+    <div id="ug-startup-bar" style="display:none">
+      <span class="hd-spinner" style="width:14px;height:14px;border-width:2px"></span>
+      <div id="ug-startup-msg"></div>
+    </div>
     <div class="ug-msg" id="ug-msg"></div>
     <div class="ug-hint" id="ug-hint" data-i18n-html="uiauth.hint">Varsayılan parola: <code>admin</code> · Ayarlar → Hesap'tan değiştirebilirsin.</div>
   </div>
@@ -1152,6 +1432,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
     <div id="brand">📡 <span>TelFiles</span></div>
     <div id="tabs">
       <button class="tab-btn active" id="tab-files"     onclick="switchTab('files')"><span class="tab-ico">📁</span><span data-i18n="tab.files">Dosyalar</span></button>
+      <button class="tab-btn"        id="tab-channels"  onclick="switchTab('channels')"><span class="tab-ico">📋</span><span data-i18n="tab.channels">Kanallar</span></button>
       <button class="tab-btn"        id="tab-links"     onclick="switchTab('links')"><span class="tab-ico">🔗</span><span data-i18n="tab.links">Linkler</span></button>
       <button class="tab-btn"        id="tab-downloads" onclick="switchTab('downloads')"><span class="tab-ico">⬇</span><span data-i18n="tab.downloads">İndirmeler</span></button>
       <button class="tab-btn"        id="tab-hunter"    onclick="switchTab('hunter')"><span class="tab-ico">📡</span><span data-i18n="tab.hunter">Kanal Avcısı</span></button>
@@ -1173,6 +1454,10 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
         <button class="type-btn" data-group="archive"  onclick="setTypeFilter('archive')" data-i18n="filter.archive">🗜 Arşiv</button>
         <button class="type-btn" data-group="document" onclick="setTypeFilter('document')" data-i18n="filter.document">📄 Döküman</button>
         <button class="type-btn" data-group="software" onclick="setTypeFilter('software')" data-i18n="filter.software">💾 Yazılım</button>
+        <button class="type-btn" data-group="torrent"  onclick="setTypeFilter('torrent')" data-i18n="filter.torrent">📦 Torrent</button>
+        <button class="type-btn" data-group="magnet"   onclick="jumpToMagnetLinks()" data-i18n-title="filter.magnetTip" title="Linkler sekmesinde tüm magnet'leri göster"><span data-i18n="filter.magnet">🧲 Magnet</span></button>
+        <span class="trend-divider"></span>
+        <button class="type-btn" id="trend-mode-btn" onclick="toggleTrendMode()" data-i18n-title="trend.tip" title="Birden çok kanalda paylaşılan dosyaları sırala"><span data-i18n="trend.btn">🔁 En Çok Paylaşılan</span></button>
         <div id="type-divider"></div>
         <div class="flt-group">
           <span class="flt-label" data-i18n="filter.ext">Uzantı</span>
@@ -1198,6 +1483,15 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             </div>
           </div>
         </div>
+        <button id="caption-toggle" class="type-btn" onclick="toggleCaptionSearch()"
+                title="Dosya adının yanı sıra mesaj açıklamasında (caption) da ara">
+          <span>📝 Açıklama</span>
+        </button>
+        <button id="sem-toggle" class="type-btn" onclick="toggleSemanticSearch()"
+                data-i18n-title="sem.tip" title="Anlamsal arama: dosya adının anlamına göre eşleşir (örn. 'yarış arabaları' → F1 Documentary). Kapalıyken klasik kelime/substring araması yapılır."
+                style="display:none">
+          <span data-i18n="sem.btn">🧠 Anlam</span>
+        </button>
         <span id="flt-count" class="flt-count-pill" data-i18n-title="filter.fileCountTitle" title="Eşleşen benzersiz dosya sayısı">—</span>
         <div id="chip-list"></div>
       </div>
@@ -1208,19 +1502,18 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
           <input id="link-search" type="search" placeholder="URL veya içerik…" data-i18n-ph="filter.linkSearchPh" oninput="debouncedLoadLinks()">
         </div>
         <span id="link-flt-count" class="flt-count-pill" data-i18n-title="filter.linkCountTitle" title="Eşleşen benzersiz link sayısı">—</span>
+        <button class="type-btn" id="link-retry-dead-btn" onclick="retryDeadMagnets()" data-i18n-title="links.retryDeadTip" title="Daha önce peer bulunamadığı için pas geçilmiş magnetlerin probe_error işaretini temizler. Sonraki magnet backfill turunda yeniden denenirler."><span data-i18n="links.retryDeadBtn">↻ Ölü magnetleri yeniden dene</span></button>
       </div>
 
       <!-- Settings: sub-tabs (Groups | Account & Theme) -->
       <div id="settings-panel" style="display:none">
         <div id="settings-sub-tabs">
-          <button class="sub-tab-btn active" data-stab="groups"  onclick="switchSettingsTab('groups')" data-i18n="settings.subtab.groups">📋 Gruplar</button>
-          <button class="sub-tab-btn"        data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
+          <button class="sub-tab-btn active" data-stab="account" onclick="switchSettingsTab('account')" data-i18n="settings.subtab.account">⚙ Hesap & Tema</button>
           <button class="sub-tab-btn"        data-stab="transfer" onclick="switchSettingsTab('transfer')" data-i18n="settings.subtab.transfer">📤 Transfer Hedefleri</button>
           <button class="sub-tab-btn"        data-stab="watches" onclick="switchSettingsTab('watches')"><span data-i18n="settings.subtab.notifications">🔔 Bildirimler</span> <span id="settings-watch-count" class="settings-tab-badge" style="display:none">0</span></button>
-          <button class="sub-tab-btn"        data-stab="bandwidth" onclick="switchSettingsTab('bandwidth')" data-i18n="settings.subtab.bandwidth">⏱ Zamanlama</button>
         </div>
 
-        <div id="settings-tab-account" class="settings-tab-content">
+        <div id="settings-tab-account" class="settings-tab-content active">
         <div class="settings-card" id="ui-pw-card">
           <h3 data-i18n="settings.uiPass.title">Arabirim Parolası</h3>
           <div class="creds-current" id="ui-pw-current">
@@ -1294,123 +1587,46 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 
         <div class="settings-card">
           <h3 data-i18n="settings.theme.title">Tema</h3>
-          <div class="theme-grid">
-            <div class="theme-card" data-theme="light" onclick="setTheme('light')">
-              <div class="theme-preview" style="background:#f0f2f5">
-                <div class="prev-card" style="background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)"></div>
-                <div class="prev-line" style="background:#2563eb;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#9ca3af;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#d1d5db;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.light">Aydınlık</span>
-            </div>
-            <div class="theme-card" data-theme="dark" onclick="setTheme('dark')">
-              <div class="theme-preview" style="background:#0f172a">
-                <div class="prev-card" style="background:#1e293b"></div>
-                <div class="prev-line" style="background:#3b82f6;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#94a3b8;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#475569;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.dark">Karanlık</span>
-            </div>
-            <div class="theme-card" data-theme="nord" onclick="setTheme('nord')">
-              <div class="theme-preview" style="background:#2e3440">
-                <div class="prev-card" style="background:#3b4252"></div>
-                <div class="prev-line" style="background:#88c0d0;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#d8dee9;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#5e81ac;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.nord">Nord</span>
-            </div>
-            <div class="theme-card" data-theme="solarized" onclick="setTheme('solarized')">
-              <div class="theme-preview" style="background:#fdf6e3">
-                <div class="prev-card" style="background:#fefaf3;box-shadow:0 1px 2px rgba(0,0,0,.08)"></div>
-                <div class="prev-line" style="background:#268bd2;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#586e75;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#93a1a1;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.solarized">Solarized</span>
-            </div>
-            <div class="theme-card" data-theme="sepia" onclick="setTheme('sepia')">
-              <div class="theme-preview" style="background:#f4ecd8">
-                <div class="prev-card" style="background:#fbf6e8;box-shadow:0 1px 2px rgba(0,0,0,.06)"></div>
-                <div class="prev-line" style="background:#a64b1c;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#5d4a26;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#9b8762;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.sepia">Sepia</span>
-            </div>
-            <div class="theme-card" data-theme="forest" onclick="setTheme('forest')">
-              <div class="theme-preview" style="background:#0d1f17">
-                <div class="prev-card" style="background:#142c20"></div>
-                <div class="prev-line" style="background:#4ade80;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#bcd6c5;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#5e8474;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.forest">Forest</span>
-            </div>
-            <div class="theme-card" data-theme="slate" onclick="setTheme('slate')">
-              <div class="theme-preview" style="background:#0f172a">
-                <div class="prev-card" style="background:#1e293b"></div>
-                <div class="prev-line" style="background:#a78bfa;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#cbd5e1;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#64748b;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.slate">Slate</span>
-            </div>
-            <div class="theme-card" data-theme="crimson" onclick="setTheme('crimson')">
-              <div class="theme-preview" style="background:#1a0d11">
-                <div class="prev-card" style="background:#291418"></div>
-                <div class="prev-line" style="background:#ef4444;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#e2c3c8;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#8b6470;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.crimson">Crimson</span>
-            </div>
-            <div class="theme-card" data-theme="rosepine" onclick="setTheme('rosepine')">
-              <div class="theme-preview" style="background:#191724">
-                <div class="prev-card" style="background:#1f1d2e"></div>
-                <div class="prev-line" style="background:#ebbcba;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#c4c1d8;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#6e6a86;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.rosepine">Rosé Pine</span>
-            </div>
-            <div class="theme-card" data-theme="mocha" onclick="setTheme('mocha')">
-              <div class="theme-preview" style="background:#f3eee6">
-                <div class="prev-card" style="background:#faf6ee;box-shadow:0 1px 2px rgba(0,0,0,.06)"></div>
-                <div class="prev-line" style="background:#7c5a30;left:22%;top:32%;width:30%"></div>
-                <div class="prev-line" style="background:#5a4a30;left:22%;top:50%;width:50%"></div>
-                <div class="prev-line" style="background:#9c8966;left:22%;top:62%;width:40%"></div>
-              </div>
-              <span data-i18n="theme.mocha">Mocha</span>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <select id="theme-select" onchange="setTheme(this.value)" style="padding:6px 10px;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);font-size:.85rem;cursor:pointer;outline:none">
+              <option value="light" data-i18n="theme.light">Aydınlık</option>
+              <option value="dark" data-i18n="theme.dark">Karanlık</option>
+              <option value="nord">Nord</option>
+              <option value="solarized">Solarized</option>
+              <option value="sepia">Sepia</option>
+              <option value="forest">Forest</option>
+              <option value="slate">Slate</option>
+              <option value="crimson">Crimson</option>
+              <option value="rosepine">Rosé Pine</option>
+              <option value="mocha">Mocha</option>
+            </select>
+            <div id="theme-prev" class="theme-preview" style="width:90px;height:52px;border:1px solid var(--border-1);border-radius:6px;flex-shrink:0">
+              <div id="theme-prev-card" class="prev-card"></div>
+              <div id="theme-prev-l1" class="prev-line" style="left:22%;top:32%;width:30%"></div>
+              <div id="theme-prev-l2" class="prev-line" style="left:22%;top:50%;width:50%"></div>
+              <div id="theme-prev-l3" class="prev-line" style="left:22%;top:62%;width:40%"></div>
             </div>
           </div>
         </div>
 
         <div class="settings-card">
           <h3 data-i18n="settings.lang.title">Dil</h3>
-          <div class="lang-grid">
-            <div class="lang-card" data-lang="tr" onclick="setLanguage('tr')">
-              <span class="lang-flag">🇹🇷</span>
-              <span class="lang-name">Türkçe</span>
-            </div>
-            <div class="lang-card" data-lang="en" onclick="setLanguage('en')">
-              <span class="lang-flag">🇬🇧</span>
-              <span class="lang-name">English</span>
-            </div>
-            <div class="lang-card" data-lang="de" onclick="setLanguage('de')">
-              <span class="lang-flag">🇩🇪</span>
-              <span class="lang-name">Deutsch</span>
-            </div>
-            <div class="lang-card" data-lang="ru" onclick="setLanguage('ru')">
-              <span class="lang-flag">🇷🇺</span>
-              <span class="lang-name">Русский</span>
-            </div>
-            <div class="lang-card" data-lang="zh" onclick="setLanguage('zh')">
-              <span class="lang-flag">🇨🇳</span>
-              <span class="lang-name">中文</span>
-            </div>
+          <select id="lang-select" onchange="setLanguage(this.value)" style="padding:6px 10px;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);font-size:.85rem;cursor:pointer;outline:none">
+            <option value="tr">Türkçe</option>
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="ru">Русский</option>
+            <option value="zh">中文</option>
+          </select>
+        </div>
+
+
+        <div class="settings-card" id="export-card">
+          <h3 data-i18n="export.title">Veri Dışa Aktarma</h3>
+          <p class="creds-hint" data-i18n="export.hint">Tüm dosya adlarını, kanal adreslerini ve boyut bilgisini sıkıştırılmış TSV dosyası olarak indirir.</p>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap">
+            <a id="export-btn" class="creds-btn" href="/api/export/files" download data-i18n="export.btn">⬇ İndir (TSV.GZ)</a>
+            <span id="export-meta" style="font-size:.75rem;color:var(--text-3)"></span>
           </div>
         </div>
 
@@ -1421,32 +1637,6 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             <span data-i18n="telemetry.enabledLabel">Bu kuruluma ait istatistikleri gönder</span>
           </label>
         </div>
-        </div>
-
-        <div id="settings-tab-groups" class="settings-tab-content active">
-          <div id="settings-inner">
-            <div id="sidebar-head">
-              <input id="group-filter" type="search" placeholder="Grup ara…" data-i18n-ph="groups.searchPh" oninput="renderSidebar()">
-              <div id="sidebar-sort">
-                <button class="gsort-btn" id="gsort-name"  onclick="setGroupSort('name')">A–Z</button>
-                <button class="gsort-btn active" id="gsort-count" onclick="setGroupSort('count')">Sayı ↓</button>
-              </div>
-            </div>
-            <div id="group-list"></div>
-            <div id="sidebar-bulk">
-              <span id="bulk-count" class="bulk-info">0 grup</span>
-              <div class="bulk-actions">
-                <button class="bulk-btn" id="bulk-hide-btn" onclick="bulkToggleHide()" data-i18n="groups.bulkHide">Gizle</button>
-                <button class="bulk-btn" id="bulk-excl-btn" onclick="bulkToggleExcluded()" data-i18n="groups.bulkUntrack">Takip Etme</button>
-                <button class="bulk-btn" onclick="bulkRescanGroups()" data-i18n="groups.bulkRescan">Yeniden Tara</button>
-                <button class="bulk-btn bulk-btn-danger" onclick="bulkLeaveGroups()" data-i18n="groups.bulkLeave">Telegram'dan Ayrıl</button>
-                <button class="bulk-btn cancel" onclick="bulkClearSelection()" data-i18n="common.cancel">İptal</button>
-              </div>
-            </div>
-            <div id="sidebar-foot">
-              <button id="show-hidden-btn" onclick="toggleShowHidden()"></button>
-            </div>
-          </div>
         </div>
 
         <div id="settings-tab-transfer" class="settings-tab-content">
@@ -1544,43 +1734,25 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             </div>
             </div>
           </div>
-        </div>
 
-        <div id="settings-tab-watches" class="settings-tab-content">
-          <div class="settings-card">
-            <h3 data-i18n="watch.title">İzlenen Anahtar Kelimeler</h3>
-            <div class="watches-help" data-i18n-html="watch.help">Buraya eklediğin terimler dosya adı ve açıklamada %like% ile aranır. Birden fazla kelime girersen aralarında <b>OR</b> uygulanır. Sonraki tarama turunda eşleşen yeni dosyalar gelirse bildirim oluşur.</div>
-            <div class="watch-form">
-              <input id="watch-input" type="text" placeholder="örn: linux iso, ubuntu, kitap pdf" data-i18n-ph="watch.placeholder" onkeydown="if(event.key==='Enter')addWatch()">
-              <button onclick="addWatch()" data-i18n="watch.add">Ekle</button>
-            </div>
-            <div id="watches-list"></div>
-          </div>
-          <div class="settings-card">
-            <h3 data-i18n="watch.history">Bildirim Geçmişi</h3>
-            <div id="notif-log"></div>
-          </div>
-        </div>
-
-        <!-- Bandwidth Scheduling tab -->
-        <div id="settings-tab-bandwidth" class="settings-tab-content">
-
+          <!-- Bandwidth scheduling (moved from former Zamanlama sub-tab) -->
           <!-- Enable + clock card -->
           <div class="settings-card">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-              <div>
+              <div style="flex:1;min-width:0">
                 <h3 data-i18n="bw.title">Bant Genişliği Zamanlaması</h3>
-                <p class="creds-hint" data-i18n="bw.hint">Etkinleştirildiğinde indirmeler yalnızca tanımlı zaman dilimlerinde başlar.</p>
+                <p class="creds-hint" data-i18n="bw.hint">Açıkken indirmeler yalnızca aşağıda tanımladığın zaman pencerelerinde başlar; pencere dışında talep edilenler kuyruğa alınır ve sıradaki pencere açılınca otomatik başlar. Kapalıyken indirmeler her zaman anında başlar.</p>
               </div>
-              <label class="toggle-label" style="flex-shrink:0">
+              <label class="td-toggle" style="flex-shrink:0">
                 <input type="checkbox" id="bw-enabled" onchange="bwToggleEnabled(this.checked)">
-                <span class="toggle-track"></span>
+                <span class="td-toggle-track"></span>
               </label>
             </div>
-            <div style="margin-top:10px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-              <div>
+            <div style="margin-top:10px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
+              <div style="flex:1;min-width:240px">
                 <label class="creds-hint" data-i18n="bw.minSizeLabel">Minimum dosya boyutu (MB, 0 = tümü):</label>
                 <input id="bw-min-size" type="number" min="0" step="1" value="0" style="width:80px;margin-left:6px;padding:4px 6px;border:1px solid var(--border-2);border-radius:5px;background:var(--bg-2);color:var(--text-1);font-size:.85rem" onchange="bwSaveSettings()">
+                <p class="bw-field-hint" data-i18n="bw.minSizeHint">Yalnızca bu boyut ve üzeri dosyalar zaman kurallarına tabidir; daha küçük dosyalar pencere kapalıyken bile hemen indirilir. 0 = istisna yok, tüm dosyalar kurallara tabidir.</p>
               </div>
               <div id="bw-clock-wrap" style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:.8rem;color:var(--text-3)" data-i18n="bw.now">Şu an:</span>
@@ -1591,29 +1763,29 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             <div id="bw-next-window" style="font-size:.78rem;color:var(--text-3);margin-top:6px;display:none"></div>
           </div>
 
-          <!-- Preset templates -->
-          <div class="settings-card">
-            <h3 data-i18n="bw.presetsTitle">Hazır Şablonlar</h3>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-              <button class="bw-preset-btn" onclick="bwAddPreset('night')"     data-i18n="bw.presetNight">🌙 Gece (00:00–08:00)</button>
-              <button class="bw-preset-btn" onclick="bwAddPreset('latenight')" data-i18n="bw.presetLateNight">🌃 Geç Gece (22:00–06:00)</button>
-              <button class="bw-preset-btn" onclick="bwAddPreset('weekend')"   data-i18n="bw.presetWeekend">📅 Hafta Sonu</button>
-              <button class="bw-preset-btn" onclick="bwAddPreset('offhours')"  data-i18n="bw.presetOffHours">🏢 İş Saati Dışı (20:00–08:00)</button>
-            </div>
-          </div>
-
-          <!-- Rules list + Add button -->
+          <!-- Rules list + Add button (with preset menu) -->
           <div class="settings-card">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
               <h3 style="margin:0" data-i18n="bw.rulesTitle">Zaman Kuralları</h3>
-              <button class="td-btn" style="font-size:.8rem;padding:5px 12px" onclick="bwOpenAddRule()" data-i18n="bw.addRule">+ Kural Ekle</button>
+              <div class="bw-add-wrap">
+                <button class="td-btn" style="font-size:.8rem;padding:5px 12px" onclick="bwToggleAddMenu(event)"><span data-i18n="bw.addRule">+ Kural Ekle</span> <span style="font-size:.7rem">▾</span></button>
+                <div id="bw-add-menu" class="bw-add-menu">
+                  <button class="bw-menu-item" onclick="bwHandleAdd('custom')" data-i18n="bw.menuCustom">✏ Özel Kural…</button>
+                  <div class="bw-menu-divider"></div>
+                  <div class="bw-menu-label" data-i18n="bw.presetsTitle">Hazır Şablonlar</div>
+                  <button class="bw-menu-item" onclick="bwHandleAdd('night')"     data-i18n="bw.presetNight">🌙 Gece (00:00–08:00)</button>
+                  <button class="bw-menu-item" onclick="bwHandleAdd('latenight')" data-i18n="bw.presetLateNight">🌃 Geç Gece (22:00–06:00)</button>
+                  <button class="bw-menu-item" onclick="bwHandleAdd('weekend')"   data-i18n="bw.presetWeekend">📅 Hafta Sonu</button>
+                  <button class="bw-menu-item" onclick="bwHandleAdd('offhours')"  data-i18n="bw.presetOffHours">🏢 İş Saati Dışı (20:00–08:00)</button>
+                </div>
+              </div>
             </div>
             <div id="bw-rules-list"><div style="font-size:.78rem;color:var(--text-4);padding:4px 0" data-i18n="bw.noRules">Henüz kural eklenmedi.</div></div>
           </div>
 
-          <!-- Add/Edit rule form (hidden by default) -->
-          <div class="settings-card" id="bw-rule-form" style="display:none">
-            <h3 id="bw-rule-form-title" data-i18n="bw.ruleFormTitle">Yeni Kural</h3>
+          <!-- Rule add/edit form — moved into accordion body by JS, kept here as parking spot -->
+          <div id="bw-form-container" style="display:none">
+          <div id="bw-add-form">
             <div class="bw-form-grid">
               <label class="bw-form-label" data-i18n="bw.labelName">Ad</label>
               <input id="bw-rule-name" type="text" class="bw-form-input" placeholder="örn: Gece İndirme" data-i18n-ph="bw.namePh">
@@ -1647,9 +1819,9 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
               <input id="bw-rule-end" type="time" class="bw-form-input" value="06:00">
 
               <label class="bw-form-label" data-i18n="bw.labelEnabled">Etkin</label>
-              <label class="toggle-label" style="margin:0">
+              <label class="td-toggle" style="margin:0">
                 <input type="checkbox" id="bw-rule-enabled" checked>
-                <span class="toggle-track"></span>
+                <span class="td-toggle-track"></span>
               </label>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px">
@@ -1657,7 +1829,158 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
               <button class="creds-btn" style="background:var(--bg-2);color:var(--text-2)" onclick="bwCancelRule()" data-i18n="common.cancel">İptal</button>
             </div>
           </div>
+          </div>
+        </div>
 
+        <div id="settings-tab-watches" class="settings-tab-content">
+          <div class="settings-card" id="notify-push-card">
+            <h3 data-i18n="notify.pushTitle">📲 Telegram'a Anlık Bildirim</h3>
+            <p class="creds-hint" data-i18n="notify.pushHint">Aktif olduğunda, izlenen anahtar kelimelere uyan her yeni dosya kendi Telegram hesabınızın <b>Kaydedilenler (Saved Messages)</b> sohbetine düşer. Bot kullanılmaz; mevcut Telethon oturumunuz üzerinden kendi hesabınız size mesaj atar.</p>
+            <label class="notify-push-row">
+              <span class="notify-push-label" data-i18n="notify.pushToggle">Telegram bildirimi gönder</span>
+              <span class="hf-help" data-i18n-help="notify.pushHelp">?</span>
+              <span class="tf-toggle">
+                <input type="checkbox" id="notify-tg-push" onchange="saveNotifyPushToggle()">
+                <span class="tf-toggle-slider"></span>
+              </span>
+            </label>
+            <div id="notify-tg-push-status" style="font-size:.74rem;color:var(--text-3);margin-top:6px"></div>
+          </div>
+          <div class="settings-card">
+            <h3 data-i18n="watch.title">İzlenen Anahtar Kelimeler</h3>
+            <div class="watches-help" data-i18n-html="watch.help">Buraya eklediğin terimler dosya adı ve açıklamada %like% ile aranır. Birden fazla kelime girersen aralarında <b>OR</b> uygulanır. Sonraki tarama turunda eşleşen yeni dosyalar gelirse bildirim oluşur.</div>
+            <div class="watch-form">
+              <input id="watch-input" type="text" placeholder="örn: linux iso, ubuntu, kitap pdf" data-i18n-ph="watch.placeholder" onkeydown="if(event.key==='Enter')addWatch()">
+              <button onclick="addWatch()" data-i18n="watch.add">Ekle</button>
+            </div>
+            <div id="watches-list"></div>
+          </div>
+          <div class="settings-card">
+            <h3 data-i18n="watch.history">Bildirim Geçmişi</h3>
+            <div id="notif-log"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Channels tab (moved from Settings → Groups) -->
+      <div id="channels-panel" style="display:none">
+        <div id="channels-toolbar">
+          <button class="ch-btn ch-btn-primary" id="ch-add-btn" onclick="channelsToggleAddCard()" data-i18n-title="channels.addBtnTip" title="Telegram kanallarını yapıştırarak toplu üye ol veya Avcı kuyruğuna gönder.">
+            <span data-i18n="channels.addBtn">＋ Kanal Ekle</span>
+          </button>
+          <div class="ch-search-wrap">
+            <input id="ch-search" type="search" placeholder="Kanal ara…" data-i18n-ph="channels.searchPh" oninput="renderChannelsTable()">
+          </div>
+          <button class="ch-btn" id="ch-show-hidden" onclick="channelsToggleShowHidden()" data-i18n-title="channels.showHiddenTip" title="Sadece gizlenmiş kanalları göster / tüm aktifleri göster arasında geçiş yapar.">
+            <span data-i18n="channels.showHidden">Gizliler</span>
+          </button>
+          <span id="ch-count-pill" class="flt-count-pill">—</span>
+          <span class="ch-spacer"></span>
+          <span id="ch-bulk-bar" style="display:none">
+            <span id="ch-bulk-count" class="ch-bulk-info">0</span>
+            <button class="ch-bulk-btn" id="ch-bulk-hide" onclick="bulkToggleHide()"
+                    data-i18n="groups.bulkHide"
+                    data-i18n-title="channels.tipHide"
+                    title="Bu kanalı arayüzden gizle. Dosyalar veritabanında kalır ama listede görünmez. Yeni mesajlar senkronlanmaya devam eder.">Gizle</button>
+            <button class="ch-bulk-btn" id="ch-bulk-excl" onclick="bulkToggleExcluded()"
+                    data-i18n="groups.bulkUntrack"
+                    data-i18n-title="channels.tipUntrack"
+                    title="Yeni senkronizasyonlarda bu kanalı atla. Geçmiş dosyalar kalır, ama yeni mesajlar yakalanmaz. (Telegram üyeliğin bozulmaz.)">Takip Etme</button>
+            <button class="ch-bulk-btn" onclick="bulkRescanGroups()"
+                    data-i18n="groups.bulkRescan"
+                    data-i18n-title="channels.tipRescan"
+                    title="Bu kanalın geçmiş mesajlarını baştan tara. Mevcut dosyalar korunur, eksikler doldurulur.">Yeniden Tara</button>
+            <button class="ch-bulk-btn ch-bulk-btn-danger" onclick="bulkLeaveGroups()"
+                    data-i18n="groups.bulkLeave"
+                    data-i18n-title="channels.tipLeave"
+                    title="Telegram üyeliğini sonlandır. Geri dönüş yok; isteğe bağlı olarak yerel verileri de silebilirsin.">Telegram'dan Ayrıl</button>
+            <button class="ch-bulk-btn ch-bulk-btn-alt" onclick="bulkClearSelection()"
+                    data-i18n="common.cancel"
+                    data-i18n-title="channels.tipCancel"
+                    title="Seçimi temizle.">İptal</button>
+          </span>
+        </div>
+
+        <div id="channels-add-card" class="ch-add-card" style="display:none">
+          <div class="ch-add-head">
+            <h3 data-i18n="channels.addTitle">Kanal Ekle</h3>
+            <button class="ch-add-close" onclick="channelsToggleAddCard()" title="Kapat">×</button>
+          </div>
+          <p class="ch-add-hint" data-i18n="channels.addHint">
+            @kullaniciadi, t.me/kanal veya tg://resolve?domain=… formatında bir veya birden çok adres yapıştırın.
+            Uzun bir metin yapıştırdığınızda içindeki kanal adresleri otomatik çıkarılır.
+          </p>
+          <textarea id="ch-add-input" class="ch-add-input"
+                    rows="6"
+                    placeholder="@kanal1&#10;https://t.me/kanal2&#10;…veya bir sayfa URL'si, veya içinde @kanal_adi geçen uzun bir metin…"
+                    data-i18n-ph="channels.addPlaceholder"></textarea>
+          <div class="ch-add-preview" id="ch-add-preview" style="display:none">
+            <span class="ch-add-preview-label" data-i18n="channels.addPreviewLabel">Bulunanlar:</span>
+            <span id="ch-add-preview-list"></span>
+          </div>
+          <div class="ch-add-actions">
+            <button class="ch-btn" onclick="channelsParsePreview()">
+              <span data-i18n="channels.parseBtn">🔍 Çözümle</span>
+            </button>
+            <button class="ch-btn ch-btn-primary" onclick="channelsSubmitJoin()">
+              <span data-i18n="channels.joinBtn">📥 Bu Kanallara Üye Ol</span>
+            </button>
+            <button class="ch-btn ch-btn-alt" onclick="channelsSubmitHunter()">
+              <span data-i18n="channels.huntBtn">🎯 Avcıya İncele Olarak Gönder</span>
+            </button>
+          </div>
+          <div id="ch-add-result" class="ch-add-result" style="display:none"></div>
+        </div>
+
+        <div id="channels-table-wrap">
+          <table id="channels-table">
+            <thead>
+              <tr>
+                <th class="chk-cell"><input type="checkbox" id="ch-select-all" onchange="channelsToggleAll(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
+                <th class="num-cell" style="font-size:.72rem">#</th>
+                <th class="ch-sortable ch-col-name" onclick="channelsSortBy('name')"><span data-i18n="channels.colName">Kanal Adı</span> <span class="sort-arrow" id="ch-arr-name"></span></th>
+                <th class="ch-sortable ch-col-user" onclick="channelsSortBy('username')"><span data-i18n="channels.colUsername">@username</span> <span class="sort-arrow" id="ch-arr-username"></span></th>
+                <th class="ch-sortable ch-col-members" onclick="channelsSortBy('members')"><span data-i18n="channels.colMembers">Üye</span> <span class="sort-arrow" id="ch-arr-members"></span></th>
+                <th class="ch-sortable ch-col-count" onclick="channelsSortBy('count')"><span data-i18n="channels.colCount">Dosya</span> <span class="sort-arrow" id="ch-arr-count"></span></th>
+                <th class="ch-sortable ch-col-size" onclick="channelsSortBy('size')"><span data-i18n="channels.colSize">Boyut</span> <span class="sort-arrow" id="ch-arr-size"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Video" onclick="channelsSortBy('type_video')"><span style="color:#ef4444">vid</span> <span class="sort-arrow" id="ch-arr-tv"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Ses" onclick="channelsSortBy('type_audio')"><span style="color:#7c3aed">ses</span> <span class="sort-arrow" id="ch-arr-ta"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Resim" onclick="channelsSortBy('type_image')"><span style="color:#059669">res</span> <span class="sort-arrow" id="ch-arr-ti"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Arşiv" onclick="channelsSortBy('type_archive')"><span style="color:#f59e0b">arş</span> <span class="sort-arrow" id="ch-arr-tar"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Belge" onclick="channelsSortBy('type_document')"><span style="color:#2563eb">bel</span> <span class="sort-arrow" id="ch-arr-td"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Yazılım" onclick="channelsSortBy('type_software')"><span style="color:#374151">yaz</span> <span class="sort-arrow" id="ch-arr-ts"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Torrent" onclick="channelsSortBy('type_torrent')"><span style="color:#0ea5e9">tor</span> <span class="sort-arrow" id="ch-arr-tt"></span></th>
+                <th class="ch-sortable ch-col-mini" title="Diğer" onclick="channelsSortBy('type_other')"><span style="color:#9ca3af">dğr</span> <span class="sort-arrow" id="ch-arr-to"></span></th>
+                <th class="ch-sortable ch-col-msg" onclick="channelsSortBy('msg')"><span data-i18n="channels.colLastMsg">Son Mesaj</span> <span class="sort-arrow" id="ch-arr-msg"></span></th>
+                <th class="ch-sortable ch-col-sync" onclick="channelsSortBy('sync')"><span data-i18n="channels.colSync">Son Senkron</span> <span class="sort-arrow" id="ch-arr-sync"></span></th>
+                <th class="ch-sortable ch-col-state" onclick="channelsSortBy('state')"><span data-i18n="channels.colState">Durum</span> <span class="sort-arrow" id="ch-arr-state"></span></th>
+                <th class="ch-col-act" data-i18n="channels.colAct">İşlemler</th>
+              </tr>
+              <tr class="flt-row">
+                <th class="chk-cell"></th>
+                <th></th>
+                <th><input id="ch-flt-name" type="text" placeholder="ad…" data-i18n-ph="channels.fltName" oninput="renderChannelsTable()"></th>
+                <th><input id="ch-flt-user" type="text" placeholder="user…" data-i18n-ph="channels.fltUser" oninput="renderChannelsTable()"></th>
+                <th><input id="ch-flt-min-members" type="number" placeholder="min" title="Üye sayısı min" oninput="renderChannelsTable()"></th>
+                <th><input id="ch-flt-min-files" type="number" placeholder="min" oninput="renderChannelsTable()"></th>
+                <th><input id="ch-flt-min-size" type="number" placeholder="MB" title="Toplam boyut min (MB)" oninput="renderChannelsTable()"></th>
+                <th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th>
+                <th></th>
+                <th></th>
+                <th>
+                  <select id="ch-flt-state" onchange="renderChannelsTable()" style="width:100%;font-family:inherit">
+                    <option value="" data-i18n="channels.stAll">Tümü</option>
+                    <option value="active" data-i18n="channels.stActive">Takipte</option>
+                    <option value="excluded" data-i18n="channels.stUntracked">Takip Edilmiyor</option>
+                    <option value="hidden" data-i18n="channels.stHidden">Gizli</option>
+                  </select>
+                </th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="channels-tbody"></tbody>
+          </table>
+          <div id="channels-empty" class="no-data" data-i18n="channels.empty" style="display:none">Henüz takip edilen kanal yok.</div>
         </div>
       </div>
 
@@ -1665,7 +1988,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
       <div id="downloads-panel" style="display:none">
         <div id="dl-hist-hd">
           <span data-i18n="downloads.title">İndirmeler</span> <span id="dl-hist-count" style="color:var(--text-4);font-weight:400"></span>
-          <span id="dl-space-notice" style="display:none;margin-left:10px;font-size:.72rem;color:var(--text-3);font-weight:400">⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span></span>
+          <span id="dl-space-notice" style="display:none;margin-left:10px;font-size:.72rem;color:var(--text-3);font-weight:400;align-items:center;gap:8px">⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span><button onclick="deleteAllLocalFiles()" data-i18n="dl.deleteAll" style="font-size:.7rem;padding:2px 8px;border:1px solid #fca5a5;border-radius:5px;background:#fee2e2;color:#dc2626;cursor:pointer;white-space:nowrap;flex-shrink:0">🗑 Tümünü Sil</button></span>
           <span id="dl-bulk-actions" style="display:none;align-items:center;gap:6px;margin-left:14px">
             <span id="dl-bulk-count" style="font-size:.72rem;color:var(--accent-h);font-weight:600"></span>
             <button class="dl-bulk-btn" id="dl-bulk-dl" onclick="bulkDownloadDownloaded()" data-i18n="dl.bulkDownload">⬇ Seçilenleri İndir</button>
@@ -1734,6 +2057,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
           <button id="hunter-run-btn" class="hunter-btn-primary" onclick="hunterRun()" data-i18n="hunter.runNow">▶ Şimdi Çalıştır</button>
           <span id="hunter-live-status" class="hunter-live"></span>
           <span class="hunter-flex"></span>
+          <span id="hunter-total-count" class="hunter-total-pill" style="display:none"></span>
           <button class="hunter-btn-alt" onclick="hunterClearList()" data-i18n="hunter.clearListBtn" title="">🗑 Listeyi Temizle</button>
           <button class="hunter-btn-alt" id="hunter-settings-btn" onclick="hunterToggleSettings()" data-i18n="hunter.settingsBtn">⚙ Ayarlar</button>
           <select id="hunter-filter-status" class="hunter-sel" onchange="hunterFilterChange()">
@@ -1746,11 +2070,6 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             <option value="blacklisted" data-i18n="hunter.statusBlacklisted">Kara Listede</option>
             <option value="failed" data-i18n="hunter.statusFailed">Başarısız</option>
           </select>
-          <select id="hunter-sort" class="hunter-sel" onchange="hunterFilterChange()">
-            <option value="score" data-i18n="hunter.sortScore">Puan</option>
-            <option value="discovered_at" data-i18n="hunter.sortDate">Keşif tarihi</option>
-            <option value="members" data-i18n="hunter.sortMembers">Üye sayısı</option>
-          </select>
           <button class="hunter-whatis-btn" onclick="hunterShowWhatis()" data-i18n-title="hunter.infoTitle" title="Kanal Avcısı nedir?">?</button>
         </div>
 
@@ -1760,6 +2079,8 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             <label class="hunter-row"><span data-i18n="hunter.enabled">Etkin</span><span class="hf-help" data-i18n-help="hunter.helpEnabled">?</span><input type="checkbox" id="h-enabled"></label>
             <label class="hunter-row"><span data-i18n="hunter.stage1">Stage 1: Dahili tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage1">?</span><input type="checkbox" id="h-stage1"></label>
             <label class="hunter-row"><span data-i18n="hunter.stage2">Stage 2: Web tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage2">?</span><input type="checkbox" id="h-stage2"></label>
+            <label class="hunter-row"><span data-i18n="hunter.magnetHunt">🧲 Magnet Avı (Stage 2 ↔ 3 arası)</span><span class="hf-help" data-i18n-help="hunter.helpMagnetHunt">?</span><input type="checkbox" id="h-magnethunt"></label>
+            <label class="hunter-row"><span data-i18n="hunter.magnetBackfill">📥 Magnet Backfill (geçmiş tarama + dosya listesi)</span><span class="hf-help" data-i18n-help="hunter.helpMagnetBackfill">?</span><input type="checkbox" id="h-magnet-backfill"></label>
             <label class="hunter-row"><span data-i18n="hunter.webDelay">Web istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpWebDelay">?</span><input type="number" min="500" id="h-web-delay"></label>
             <label class="hunter-row"><span data-i18n="hunter.webConcurrency">Web eşzamanlı</span><span class="hf-help" data-i18n-help="hunter.helpWebConc">?</span><input type="number" min="1" max="8" id="h-web-conc"></label>
             <label class="hunter-row"><span data-i18n="hunter.tgDelay">Telegram istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpTgDelay">?</span><input type="number" min="500" id="h-tg-delay"></label>
@@ -1767,6 +2088,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
             <label class="hunter-row"><span data-i18n="hunter.tgSample">Örneklenecek mesaj</span><span class="hf-help" data-i18n-help="hunter.helpTgSample">?</span><input type="number" min="20" max="2000" id="h-tg-sample"></label>
             <label class="hunter-row"><span data-i18n="hunter.tgAccount">Telegram hesabı</span><span class="hf-help" data-i18n-help="hunter.helpTgAccount">?</span><input type="number" min="1" id="h-tg-account"></label>
             <label class="hunter-row"><span data-i18n="hunter.tempJoin">Geçici üyelik ile tara</span><span class="hf-help" data-i18n-help="hunter.helpTempJoin">?</span><input type="checkbox" id="h-temp-join"></label>
+            <label class="hunter-row"><span data-i18n="hunter.skipOld">1 yıldan eski kanalları atla</span><span class="hf-help" data-i18n-help="hunter.helpSkipOld">?</span><input type="checkbox" id="h-skip-old"></label>
             <label class="hunter-row"><span data-i18n="hunter.scheduleKind">Zamanlama</span><span class="hf-help" data-i18n-help="hunter.helpScheduleKind">?</span>
               <select id="h-schedule-kind">
                 <option value="manual" data-i18n="hunter.schManual">Manuel</option>
@@ -1827,19 +2149,26 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
                 <th class="hg-sortable" onclick="hgSort('username')"><span data-i18n="hg.channel">Kanal</span> <span class="sort-arrow" id="hg-arr-username"></span></th>
                 <th class="hg-sortable" onclick="hgSort('members')" style="width:80px"><span data-i18n="hunter.members">Üye</span> <span class="sort-arrow" id="hg-arr-members"></span></th>
                 <th class="hg-sortable" onclick="hgSort('estimated_files')" style="width:80px"><span data-i18n="hg.files">Dosya</span> <span class="sort-arrow" id="hg-arr-files"></span></th>
-                <th style="width:130px"><span data-i18n="hg.types">Tür Dağılımı</span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Video" onclick="hgSort('type_video')"><span style="color:#ef4444">vid</span> <span class="sort-arrow" id="hg-arr-type-video"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Ses" onclick="hgSort('type_audio')"><span style="color:#7c3aed">ses</span> <span class="sort-arrow" id="hg-arr-type-audio"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Resim" onclick="hgSort('type_image')"><span style="color:#059669">res</span> <span class="sort-arrow" id="hg-arr-type-image"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Arşiv" onclick="hgSort('type_archive')"><span style="color:#f59e0b">arş</span> <span class="sort-arrow" id="hg-arr-type-archive"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Belge" onclick="hgSort('type_document')"><span style="color:#2563eb">bel</span> <span class="sort-arrow" id="hg-arr-type-document"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Yazılım" onclick="hgSort('type_software')"><span style="color:#374151">yaz</span> <span class="sort-arrow" id="hg-arr-type-software"></span></th>
+                <th class="hg-sortable" style="width:44px;text-align:right" title="Diğer" onclick="hgSort('type_other')"><span style="color:#9ca3af">dğr</span> <span class="sort-arrow" id="hg-arr-type-other"></span></th>
                 <th class="hg-sortable" onclick="hgSort('last_message_at')" style="width:118px"><span data-i18n="hg.lastMsg">Son Mesaj</span> <span class="sort-arrow" id="hg-arr-last"></span></th>
                 <th class="hg-sortable" onclick="hgSort('discovered_at')" style="width:118px"><span data-i18n="hg.discovered">Keşif</span> <span class="sort-arrow" id="hg-arr-disc"></span></th>
+                <th class="hg-ev-col" id="hg-th-event" style="width:118px;font-size:.72rem">Olay Tarihi</th>
                 <th class="hg-sortable" onclick="hgSort('status')" style="width:96px"><span data-i18n="table.status">Durum</span> <span class="sort-arrow" id="hg-arr-status"></span></th>
                 <th class="hg-sortable" onclick="hgSort('sources')" style="width:130px"><span data-i18n="hg.sources">Kaynaklar</span> <span class="sort-arrow" id="hg-arr-sources"></span></th>
-                <th style="width:155px"><span data-i18n="hg.actions">Aksiyon</span></th>
               </tr>
               <tr class="hg-flt-row">
                 <th></th><th></th>
                 <th><input id="hg-flt-username" type="text" placeholder="@ ara…" data-i18n-ph="hg.searchPh" oninput="hgFilterChange()"></th>
                 <th><input id="hg-flt-min-members" type="number" placeholder="min" oninput="hgFilterChange()"></th>
                 <th><input id="hg-flt-min-files" type="number" placeholder="min" oninput="hgFilterChange()"></th>
-                <th></th><th></th><th></th>
+                <th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th>
+                <th class="hg-ev-col"></th>
                 <th>
                   <select id="hg-flt-status" onchange="hgFilterChange()" style="width:100%;font-family:inherit">
                     <option value="" data-i18n="hunter.statusAll">Tüm durumlar</option>
@@ -1851,35 +2180,43 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
                   </select>
                 </th>
                 <th><input id="hg-flt-sources" type="text" placeholder="ör. brave" data-i18n-ph="hg.sourcesPh" oninput="hgFilterChange()"></th>
-                <th></th>
               </tr>
             </thead>
             <tbody id="hunter-grid-body"></tbody>
           </table>
           <div id="hunter-grid-empty" style="display:none;text-align:center;padding:30px;color:var(--text-4);font-size:.86rem"></div>
-          <div id="hunter-pager"></div>
+          <div id="hunter-grid-loading" style="display:none"><span class="hm-spinner"></span> <span data-i18n="hg.loadingMore">Daha fazla yükleniyor…</span></div>
+          <div id="hunter-grid-sentinel"></div>
         </div>
 
         <div id="hunter-log-card" class="hunter-card">
           <h3 class="hunter-collapsible-head" onclick="hunterToggleLog()">
-            <span class="hc-arrow open" id="hc-log-arrow">▶</span>
+            <span class="hc-arrow" id="hc-log-arrow">▶</span>
             <span data-i18n="hunter.log">📋 Avlama Detay Logu</span>
+            <span class="hl-evt-pulse" id="hunter-log-pulse"></span>
           </h3>
-          <div id="hunter-log-list"></div>
-        </div>
-
-        <div id="hunter-detail-overlay" class="hunter-overlay" onclick="hunterDetailOverlayClick(event)">
-          <div class="hunter-detail-modal" id="hunter-detail-body"></div>
+          <div id="hunter-log-list" class="collapsed"></div>
         </div>
 
         <div id="hunter-help-overlay" class="hunter-overlay" onclick="hunterHelpOverlayClick(event)">
           <div class="hunter-help-modal" id="hunter-help-body"></div>
+        </div>
+
+        <div id="hf-preview-overlay" onclick="hfPreviewOverlayClick(event)">
+          <div id="hf-preview-modal">
+            <button class="hf-preview-close" onclick="hfClosePreview()" title="Kapat">✕</button>
+            <div id="hf-preview-spinner" class="hf-preview-spinner"><span class="hd-spinner"></span></div>
+            <div id="hf-preview-content"></div>
+            <div id="hf-preview-label"></div>
+          </div>
         </div>
       </div>
 
       <div id="status-panel" style="display:none"></div>
 
       <div id="watch-banner" style="display:none"></div>
+
+      <div id="sb-tip"></div>
 
       <div id="torrent-parse-bar" style="display:none">
         <span class="tpb-label">📦</span>
@@ -1890,26 +2227,6 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
         <button class="tpb-btn tpb-btn-danger" onclick="cancelTorrentParse()" data-i18n="common.cancel">İptal</button>
       </div>
 
-      <div id="torrent-parse-ctrl" style="display:none">
-        <button class="tpc-close" onclick="torrentCtrlClose()">✕</button>
-        <h4 data-i18n="torrent.ctrlTitle">📦 Torrent Ayrıştırıcı</h4>
-        <div id="tpc-stats-area"></div>
-        <hr class="tpc-sep">
-        <div class="tpc-row">
-          <span data-i18n="torrent.concurrency">Eşzamanlı kanal</span>
-          <select id="tpc-concurrency">
-            <option value="1">1</option>
-            <option value="3">3</option>
-            <option value="5" selected>5</option>
-            <option value="8">8</option>
-            <option value="10">10</option>
-          </select>
-        </div>
-        <div class="tpc-actions">
-          <button class="tpc-btn tpc-btn-secondary" onclick="torrentCtrlClose()" data-i18n="common.close">Kapat</button>
-          <button class="tpc-btn tpc-btn-primary" onclick="startTorrentParse()" id="tpc-start-btn" data-i18n="torrent.startParse">🚀 Taramayı Başlat</button>
-        </div>
-      </div>
 
       <div id="table-wrap">
         <table id="files-table">
@@ -1923,13 +2240,14 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
               <th class="sortable col-size" onclick="sortBy('size')"><span data-i18n="table.size">Boyut</span> <span class="sort-arrow" id="arr-size"></span></th>
               <th class="sortable col-group" onclick="sortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="arr-group"></span></th>
               <th class="sortable col-date" onclick="sortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="arr-date"></span></th>
+              <th class="sortable col-shares" onclick="sortBy('shares')" data-i18n-title="table.sharesTip" title="Dosyanın kaç farklı grupta paylaşıldığı"><span data-i18n="table.shares">🔁 Paylaşım</span> <span class="sort-arrow" id="arr-shares"></span></th>
               <th class="col-dl" data-i18n="table.download">İndir</th>
             </tr>
             <tr class="flt-row">
               <th class="chk-cell"></th>
               <th></th>
               <th><input id="col-ext"   type="text" placeholder="ext…"  data-i18n-ph="filter.colExt" oninput="debouncedLoad()"></th>
-              <th><input id="col-name"  type="text" placeholder="ad…"   data-i18n-ph="filter.colName" oninput="debouncedLoad()"></th>
+              <th><input id="col-name"  type="text" placeholder="ad…"   data-i18n-ph="filter.colName" title="Dosya adı ara. Boru filtresi: 'kelime|vid' (video), 'kelime|ses' (ses), 'kelime|resim' (resim), 'kelime|arşiv' (arşiv), 'kelime|belge' (belge), 'kelime|yazılım' (yazılım), 'kelime|torrent'. Açıklama araması için 📝 Açıklama butonunu kullan." oninput="debouncedLoad()"></th>
               <th></th>
               <th>
                 <div class="range-input-wrap">
@@ -1952,6 +2270,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
                   </div>
                 </div>
               </th>
+              <th></th>
               <th></th>
               <th></th>
             </tr>
@@ -1983,7 +2302,7 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
                   <option>pCloud</option><option>Yandex Disk</option><option>Box</option>
                   <option>Zippyshare</option><option>Gofile</option><option>Pixeldrain</option>
                   <option>Filebin</option><option>GitHub</option><option>YouTube</option>
-                  <option>Archive.org</option>
+                  <option>Archive.org</option><option>Magnet</option>
                 </select>
               </th>
               <th><input id="lcol-files-name" type="text" placeholder="dosya adı…" data-i18n-ph="filter.colFileName" oninput="debouncedLoadLinks()"></th>
@@ -1999,6 +2318,28 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
           </thead>
           <tbody id="links-body"></tbody>
         </table>
+
+        <!-- Infinite-scroll sentinel + loading indicator for the Files grid.
+             IntersectionObserver triggers the next page when this scrolls
+             into view. -->
+        <div id="files-grid-loading" style="display:none;padding:12px;text-align:center;color:var(--text-3);font-size:.78rem"><span class="hm-spinner"></span> <span data-i18n="common.loadingData">Yükleniyor…</span></div>
+        <div id="files-grid-sentinel" style="height:1px"></div>
+      </div>
+
+      <!-- Trend Mode: "Most Shared Files" card view -->
+      <div id="trend-view" style="display:none;flex:1;overflow:auto;background:var(--bg-2);padding:14px">
+        <div id="trend-controls" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:1rem;color:var(--text-1)" data-i18n="trend.title">🔁 En Çok Paylaşılan Dosyalar</h2>
+          <span style="color:var(--text-3);font-size:.82rem" data-i18n="trend.subtitle">Birden çok kanalda paylaşılan dosyaları, en yaygından başlayarak gösterir.</span>
+          <span class="trend-flex"></span>
+          <div class="trend-window-toggle">
+            <button class="trend-win-btn active" data-window="all" onclick="setTrendWindow('all')" data-i18n="trend.winAll">Tüm zamanlar</button>
+            <button class="trend-win-btn"        data-window="30d" onclick="setTrendWindow('30d')" data-i18n="trend.win30d">Son 30g</button>
+            <button class="trend-win-btn"        data-window="7d"  onclick="setTrendWindow('7d')"  data-i18n="trend.win7d">Son 7g</button>
+          </div>
+          <button class="td-btn" onclick="loadTopShared()" data-i18n="trend.refresh">↻ Yenile</button>
+        </div>
+        <div id="trend-cards"></div>
       </div>
 
       <div id="pagination"></div>
@@ -2010,19 +2351,25 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
   <div id="app-status-bar">
     <span id="pag-sync">● Canlı</span>
     <span id="pag-current-group" style="display:none"></span>
-    <button id="pg-sync-btn" onclick="startSync()">Tara</button>
+    <button id="pg-sync-btn" onclick="startSync()" data-i18n="sync.scan">Kanalları Tara</button>
     <span id="pag-next"></span>
     <span class="sb-spacer"></span>
-    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last24h">Son 24S</span>: <span id="ts-24h">—</span></span>
-    <span class="sb-sep">·</span>
-    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last7d">Son 7G</span>: <span id="ts-7d">—</span></span>
-    <span class="sb-sep">·</span>
-    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.all">Tümü</span>: <span id="ts-all">—</span></span>
+    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last24h">Son 24S</span><span class="sb-stat-val"><span id="ts-24h" class="sb-stat-cnt">—</span></span></span>
+    <span class="sb-vdiv"></span>
+    <span class="sb-stats"><span class="sb-stat-lbl" data-i18n="topstats.last7d">Son 7G</span><span class="sb-stat-val"><span id="ts-7d" class="sb-stat-cnt">—</span></span></span>
+    <span class="sb-vdiv"></span>
+    <span class="sb-stats" id="sb-stats-all"><span class="sb-stat-lbl" data-i18n="topstats.all">Tümü</span><span class="sb-stat-val"><span id="ts-all" class="sb-stat-cnt">—</span></span></span>
     <span class="sb-sep">·</span>
     <span id="sb-last-sync">Son tarama: —</span>
     <span class="sb-sep">·</span>
     <span id="sb-elapsed">—</span>
   </div>
+</div>
+
+<!-- Channel/Hunter detail popup — body-level so position:fixed is always
+     relative to the viewport, regardless of any parent overflow:hidden. -->
+<div id="hunter-detail-overlay" class="hunter-overlay" onclick="hunterDetailOverlayClick(event)">
+  <div class="hunter-detail-modal" id="hunter-detail-body"></div>
 </div>
 
 <!-- Group name-edit modal -->
@@ -2049,12 +2396,40 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-1)!important;bord
 <!-- Download destinations modal -->
 <div id="dl-dest-overlay" onclick="if(event.target===this)closeDlDestModal()">
   <div id="dl-dest-modal">
-    <h3 data-i18n="ddm.title">Transfer Hedefi Seç</h3>
-    <div class="ddm-sub" data-i18n="ddm.sub">Dosya önce sunucuya indirilir, ardından seçtiğin hedeflere kopyalanır.</div>
+    <h3 data-i18n="ddm.title">İndirme Seçenekleri</h3>
+    <div class="ddm-sub" data-i18n="ddm.sub">Dosya sunucuya indirilir. Transfer hedefi seçiliyse oraya da kopyalanır.</div>
     <div id="ddm-options"></div>
+    <!-- Forward-to-self pseudo-destination — uses Telegram's server-side
+         forward instead of an actual disk download, so it costs zero bandwidth
+         even when no transfer destinations are configured. -->
+    <label class="notify-push-row ddm-forward-row" id="ddm-forward-row">
+      <span class="notify-push-label">📥 <span data-i18n="ddm.forwardSelf">Kendi Telegram Hesabıma (Saved Messages)</span></span>
+      <span class="hf-help" data-i18n-help="ddm.forwardSelfHelp">?</span>
+      <span class="tf-toggle">
+        <input type="checkbox" id="ddm-forward-self">
+        <span class="tf-toggle-slider"></span>
+      </span>
+    </label>
+    <div id="ddm-schedule-section">
+      <div class="ddm-sched-toggle">
+        <label class="ddm-sched-radio">
+          <input type="radio" name="ddm-when" value="now" checked onchange="ddmToggleSchedule()">
+          <span data-i18n="ddm.now">Şimdi</span>
+        </label>
+        <label class="ddm-sched-radio">
+          <input type="radio" name="ddm-when" value="later" onchange="ddmToggleSchedule()">
+          <span data-i18n="ddm.later">Zamanla</span>
+        </label>
+      </div>
+      <div id="ddm-schedule-form" class="ddm-schedule-form" style="display:none">
+        <span class="ddm-sched-label" data-i18n="ddm.scheduleAt">İndirilecek zaman:</span>
+        <input type="datetime-local" id="ddm-schedule-at">
+        <div id="ddm-sched-presets" class="ddm-sched-presets"></div>
+      </div>
+    </div>
     <div class="ddm-actions">
-      <button class="ddm-btn ddm-skip" onclick="confirmDlDestModal(false)" data-i18n="ddm.skipBtn">Sadece Sunucuya İndir</button>
-      <button class="ddm-btn ddm-confirm" onclick="confirmDlDestModal(true)" data-i18n="ddm.confirmBtn">İndir ve Transfer Et</button>
+      <button class="ddm-btn ddm-skip" onclick="closeDlDestModal()" data-i18n="common.cancel">İptal</button>
+      <button class="ddm-btn ddm-confirm" onclick="confirmDlDestModal()" data-i18n="ddm.confirmBtn">İndir</button>
     </div>
   </div>
 </div>
