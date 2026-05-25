@@ -378,7 +378,43 @@ CREATE TABLE IF NOT EXISTS torrent_files (
 );
 CREATE INDEX IF NOT EXISTS idx_tf_torrent ON torrent_files (torrent_id);
 CREATE INDEX IF NOT EXISTS idx_tf_path_trgm ON torrent_files USING GIN (path gin_trgm_ops);
+
+-- Versioned migration tracker. Created here so it exists before
+-- _run_migrations() is called. Version 0 = everything built by _SCHEMA above.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     INTEGER PRIMARY KEY,
+    description TEXT,
+    applied_at  TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO schema_migrations (version, description)
+VALUES (0, 'baseline — full schema created by _SCHEMA block')
+ON CONFLICT DO NOTHING;
 """
+
+
+# ---------------------------------------------------------------------------
+# Versioned migration list
+# ---------------------------------------------------------------------------
+# Each entry: (version: int, description: str, sql: str)
+#
+# Rules:
+#   • version numbers must be consecutive and never reused.
+#   • sql runs inside a single transaction; keep each migration atomic.
+#   • _SCHEMA above handles idempotent additions (ADD COLUMN IF NOT EXISTS).
+#     Use _MIGRATIONS only for changes that _SCHEMA cannot express safely:
+#       - ALTER COLUMN … TYPE …  (type change)
+#       - ALTER TABLE … RENAME … (table or column rename)
+#       - DROP TABLE / DROP COLUMN (destructive removals)
+#       - Data-shape transforms that must run exactly once
+#   • Once a version is shipped, never edit its sql — add a new version.
+#
+# Example:
+#   (1, "rename files.context to files.caption",
+#    "ALTER TABLE files RENAME COLUMN context TO caption;"),
+# ---------------------------------------------------------------------------
+_MIGRATIONS: list[tuple[int, str, str]] = [
+    # future breaking migrations go here
+]
 
 # Optional pgvector setup — applied separately so failures (extension not
 # installed in Postgres, etc.) degrade gracefully to "semantic search off".
@@ -505,6 +541,7 @@ async def init_db():
     )
     async with _pool.acquire() as conn:
         await conn.execute(_SCHEMA)
+        await _run_migrations(conn, log)
         # Vector column + HNSW index on raw `files` (skipped if extension missing)
         if _VECTOR_AVAILABLE:
             try:
@@ -577,6 +614,45 @@ async def init_db():
     except Exception as e:
         import logging as _lg
         _lg.getLogger(__name__).warning("files_canonical init refresh failed: %s", e)
+
+
+async def _run_migrations(conn, log) -> None:
+    """Apply any pending entries from _MIGRATIONS in version order.
+
+    Each migration runs inside its own transaction. On failure the transaction
+    is rolled back, an error is logged, and a RuntimeError is raised so that
+    init_db() surfaces the problem at startup rather than letting the app run
+    on a broken schema.
+    """
+    if not _MIGRATIONS:
+        return
+    applied = {r["version"] for r in await conn.fetch(
+        "SELECT version FROM schema_migrations"
+    )}
+    pending = sorted(
+        (v, d, s) for v, d, s in _MIGRATIONS if v not in applied
+    )
+    if not pending:
+        return
+    for version, description, sql in pending:
+        log.info("DB migration v%d starting: %s", version, description)
+        try:
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, description) VALUES ($1, $2)",
+                    version, description,
+                )
+            log.info("DB migration v%d applied successfully.", version)
+        except Exception as exc:
+            log.error(
+                "DB migration v%d FAILED (%s). "
+                "Fix the migration or restore from backup before restarting.",
+                version, exc,
+            )
+            raise RuntimeError(
+                f"Database migration v{version} failed: {exc}"
+            ) from exc
 
 
 async def _migrate_to_multi_account():
@@ -933,6 +1009,29 @@ async def record_probe_result(
 
 
 _SORT_COLS = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "group": "g.name", "shares": "share_count"}
+
+
+def _hybrid_order(sort_by: str, sort_dir: str) -> str:
+    """Translate the user-facing sort knob (date / name / size / group /
+    shares) into an ORDER BY clause for the hybrid (semantic + lexical)
+    search result. RRF score becomes a tie-breaker so that for the default
+    sort=date you still see the most relevant rows first, but when the
+    user clicks "Size" they actually get size ordering — not the previous
+    behaviour of silently keeping RRF order."""
+    d = "DESC" if (sort_dir or "desc").lower() != "asc" else "ASC"
+    cols = {
+        "size":   f"fc.file_size {d} NULLS LAST",
+        "name":   f"fc.file_name {d} NULLS LAST",
+        "group":  f"g.name {d} NULLS LAST",
+        "date":   f"fc.date {d}",
+        "shares": f"fc.share_count {d}",
+    }
+    primary = cols.get(sort_by)
+    if primary:
+        # Explicit sort wins; RRF only breaks ties.
+        return f"{primary}, fused.s DESC, fc.date DESC"
+    # No usable sort_by → relevance first, then date.
+    return "fused.s DESC, fc.date DESC"
 _SORT_DIRS = {"asc": "ASC", "desc": "DESC"}
 
 _EXT_GROUPS: Dict[str, List[str]] = {
@@ -953,6 +1052,7 @@ async def _search_files_hybrid(
     file_ids: Optional[List[int]],
     date_from: Optional[str], date_to: Optional[str],
     size_min: Optional[int], size_max: Optional[int],
+    sort_by: str = "date", sort_dir: str = "desc",
     limit: int, offset: int,
 ) -> Optional[Tuple[List[Dict], Dict]]:
     """Hybrid (lexical + semantic) search using Reciprocal Rank Fusion.
@@ -1033,7 +1133,7 @@ async def _search_files_hybrid(
         JOIN files_canonical fc ON fc.id = fused.id
         JOIN files          fl ON fl.id = fc.id
         JOIN groups         g  ON g.id  = fc.group_id
-        ORDER BY fused.s DESC, fc.date DESC
+        ORDER BY {_hybrid_order(sort_by, sort_dir)}
         LIMIT ${idx} OFFSET ${idx+1}
     """
     rows = await _q(sql, like_pat, qvec, *args, limit, offset)
@@ -1103,6 +1203,7 @@ async def search_files(
                 group_id=group_id, group_ids=group_ids, file_ids=file_ids,
                 date_from=date_from, date_to=date_to,
                 size_min=size_min, size_max=size_max,
+                sort_by=sort_by, sort_dir=sort_dir,
                 limit=limit, offset=offset,
             )
             if res is not None:
