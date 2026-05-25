@@ -93,6 +93,8 @@ Aynı kurulum komutunu tekrar çalıştırın. Installer kendi kendini güncelle
 
 Program açılışta GitHub'daki HEAD'i kontrol eder, yeni sürüm varsa UI'da bildirir.
 
+**Veritabanı şema migrasyonları** her başlangıçta otomatik uygulanır. `schema_migrations` tablosu hangi versiyonların çalıştırıldığını takip eder. Eklemeli değişiklikler (yeni tablo, yeni kolon) idempotent ve her zaman güvenlidir. Kırıcı değişiklikler (kolon tipi değişikliği, yeniden adlandırma, silme) versiyonlu migrasyonlardır; her biri kendi transaction'ında çalışır — biri başarısız olursa uygulama başlamayı reddeder ve veriye dokunulmadan önce harekete geçebilmeniz için hatayı log'a yazar.
+
 ---
 
 ## ⚙️ Yapılandırma

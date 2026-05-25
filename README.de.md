@@ -93,6 +93,8 @@ Denselben Installationsbefehl erneut ausführen. Der Installer aktualisiert sich
 
 Beim Start prüft die App den HEAD auf GitHub und benachrichtigt Sie in der Oberfläche bei einer neuen Version.
 
+**Datenbankschema-Migrationen** werden bei jedem Start automatisch angewendet. Eine `schema_migrations`-Tabelle verfolgt, welche Versionen bereits ausgeführt wurden. Additive Änderungen (neue Tabellen, neue Spalten) sind idempotent und stets sicher. Destructive Änderungen (Spaltentyp-Änderungen, Umbenennungen, Löschungen) sind versionierte Migrationen, die jeweils in ihrer eigenen Transaktion laufen — schlägt eine fehl, verweigert die App den Start und protokolliert den genauen Fehler, damit Sie handeln können, bevor Daten berührt werden.
+
 ---
 
 ## ⚙️ Konfiguration

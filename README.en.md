@@ -93,6 +93,8 @@ Run the same install command again. The installer updates itself, pulls the late
 
 On startup the app checks the HEAD on GitHub and notifies you in the UI if a new version is available.
 
+**Database schema migrations** are applied automatically on every startup. A `schema_migrations` table tracks which versions have already run. Additive changes (new tables, new columns) are idempotent and always safe. Destructive changes (column type changes, renames, drops) are versioned migrations that each run in their own transaction — if one fails, the app refuses to start and logs the exact error so you can act before any data is touched.
+
 ---
 
 ## ⚙️ Configuration
