@@ -402,15 +402,41 @@ ON CONFLICT DO NOTHING;
 #   • sql runs inside a single transaction; keep each migration atomic.
 #   • _SCHEMA above handles idempotent additions (ADD COLUMN IF NOT EXISTS).
 #     Use _MIGRATIONS only for changes that _SCHEMA cannot express safely:
-#       - ALTER COLUMN … TYPE …  (type change)
-#       - ALTER TABLE … RENAME … (table or column rename)
+#       - ALTER COLUMN … TYPE …   (type change)
+#       - ALTER TABLE … RENAME …  (table or column rename)
 #       - DROP TABLE / DROP COLUMN (destructive removals)
 #       - Data-shape transforms that must run exactly once
 #   • Once a version is shipped, never edit its sql — add a new version.
+#   • IMPORTANT — always write migrations defensively so they are safe for
+#     both existing installs (schema in old state) AND fresh installs
+#     (_SCHEMA already created the final state). Use DO $$ BEGIN … END $$
+#     guards that check whether the change is still needed before applying it.
 #
-# Example:
+# Template for a safe column rename (idempotent on both old and new installs):
+#
 #   (1, "rename files.context to files.caption",
-#    "ALTER TABLE files RENAME COLUMN context TO caption;"),
+#    """
+#    DO $$ BEGIN
+#      IF EXISTS (
+#        SELECT 1 FROM information_schema.columns
+#        WHERE table_name = 'files' AND column_name = 'context'
+#      ) THEN
+#        ALTER TABLE files RENAME COLUMN context TO caption;
+#      END IF;
+#    END $$;
+#    """),
+#
+# Template for a safe column type change:
+#
+#   (2, "widen files.file_size to NUMERIC",
+#    """
+#    DO $$ BEGIN
+#      IF (SELECT data_type FROM information_schema.columns
+#          WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
+#        ALTER TABLE files ALTER COLUMN file_size TYPE NUMERIC USING file_size::NUMERIC;
+#      END IF;
+#    END $$;
+#    """),
 # ---------------------------------------------------------------------------
 _MIGRATIONS: list[tuple[int, str, str]] = [
     # future breaking migrations go here
