@@ -95,6 +95,28 @@ Program açılışta GitHub'daki HEAD'i kontrol eder, yeni sürüm varsa UI'da b
 
 **Veritabanı şema migrasyonları** her başlangıçta otomatik uygulanır. `schema_migrations` tablosu hangi versiyonların çalıştırıldığını takip eder. Eklemeli değişiklikler (yeni tablo, yeni kolon) idempotent ve her zaman güvenlidir. Kırıcı değişiklikler (kolon tipi değişikliği, yeniden adlandırma, silme) versiyonlu migrasyonlardır; her biri kendi transaction'ında çalışır — biri başarısız olursa uygulama başlamayı reddeder ve veriye dokunulmadan önce harekete geçebilmeniz için hatayı log'a yazar.
 
+Migrasyonlar hem yeni kurulumda (`_SCHEMA` zaten nihai durumu oluşturmuştur) hem de mevcut kurulumda (şema hâlâ eski haldedir) güvenli çalışacak şekilde yazılmalıdır. Değişikliğin hâlâ gerekip gerekmediğini kontrol eden `DO $$ BEGIN … END $$;` koruması kullanın:
+
+```sql
+-- Güvenli kolon rename (hem eski hem yeni kurulumda idempotent)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'files' AND column_name = 'context'
+  ) THEN
+    ALTER TABLE files RENAME COLUMN context TO caption;
+  END IF;
+END $$;
+
+-- Güvenli kolon tipi değişikliği
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
+    ALTER TABLE files ALTER COLUMN file_size TYPE NUMERIC USING file_size::NUMERIC;
+  END IF;
+END $$;
+```
+
 ---
 
 ## ⚙️ Yapılandırma

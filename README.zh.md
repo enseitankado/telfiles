@@ -95,6 +95,28 @@ docker compose up -d --build
 
 **数据库结构迁移**在每次启动时自动执行。`schema_migrations` 表记录哪些版本已经运行。新增性变更（新表、新列）是幂等的，始终安全。破坏性变更（列类型更改、重命名、删除）是版本化迁移，每个迁移在独立的事务中运行——若某个迁移失败，应用程序将拒绝启动，并将确切错误写入日志，以便您在数据被触动之前采取行动。
 
+迁移必须以防御性方式编写，以便在全新安装（`_SCHEMA` 已创建最终状态）和现有安装（模式仍处于旧状态）上都能安全运行。使用 `DO $$ BEGIN … END $$;` 块在应用变更前检查是否仍有必要：
+
+```sql
+-- 安全的列重命名（对新旧安装均幂等）
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'files' AND column_name = 'context'
+  ) THEN
+    ALTER TABLE files RENAME COLUMN context TO caption;
+  END IF;
+END $$;
+
+-- 安全的列类型变更
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
+    ALTER TABLE files ALTER COLUMN file_size TYPE NUMERIC USING file_size::NUMERIC;
+  END IF;
+END $$;
+```
+
 ---
 
 ## ⚙️ 配置

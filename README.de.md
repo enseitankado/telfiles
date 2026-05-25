@@ -95,6 +95,28 @@ Beim Start prüft die App den HEAD auf GitHub und benachrichtigt Sie in der Ober
 
 **Datenbankschema-Migrationen** werden bei jedem Start automatisch angewendet. Eine `schema_migrations`-Tabelle verfolgt, welche Versionen bereits ausgeführt wurden. Additive Änderungen (neue Tabellen, neue Spalten) sind idempotent und stets sicher. Destructive Änderungen (Spaltentyp-Änderungen, Umbenennungen, Löschungen) sind versionierte Migrationen, die jeweils in ihrer eigenen Transaktion laufen — schlägt eine fehl, verweigert die App den Start und protokolliert den genauen Fehler, damit Sie handeln können, bevor Daten berührt werden.
 
+Migrationen müssen defensiv geschrieben werden, damit sie sowohl bei Neuinstallationen (wo `_SCHEMA` den Endzustand bereits erstellt hat) als auch bei bestehenden Installationen (wo das Schema noch im alten Zustand ist) sicher sind. Verwenden Sie eine `DO $$ BEGIN … END $$;`-Prüfung, die testet, ob die Änderung noch erforderlich ist:
+
+```sql
+-- Sicheres Spalten-Rename (idempotent auf alten und neuen Installationen)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'files' AND column_name = 'context'
+  ) THEN
+    ALTER TABLE files RENAME COLUMN context TO caption;
+  END IF;
+END $$;
+
+-- Sicherer Spaltentyp-Wechsel
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
+    ALTER TABLE files ALTER COLUMN file_size TYPE NUMERIC USING file_size::NUMERIC;
+  END IF;
+END $$;
+```
+
 ---
 
 ## ⚙️ Konfiguration

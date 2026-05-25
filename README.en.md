@@ -95,6 +95,28 @@ On startup the app checks the HEAD on GitHub and notifies you in the UI if a new
 
 **Database schema migrations** are applied automatically on every startup. A `schema_migrations` table tracks which versions have already run. Additive changes (new tables, new columns) are idempotent and always safe. Destructive changes (column type changes, renames, drops) are versioned migrations that each run in their own transaction — if one fails, the app refuses to start and logs the exact error so you can act before any data is touched.
 
+Migrations must be written defensively so they are safe on both fresh installs (where `_SCHEMA` already created the final state) and existing installs (where the schema is still in the old state). Use a `DO $$ BEGIN … END $$;` guard that checks whether the change is still needed before applying it:
+
+```sql
+-- Safe column rename (idempotent on both old and new installs)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'files' AND column_name = 'context'
+  ) THEN
+    ALTER TABLE files RENAME COLUMN context TO caption;
+  END IF;
+END $$;
+
+-- Safe column type change
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
+    ALTER TABLE files ALTER COLUMN file_size TYPE NUMERIC USING file_size::NUMERIC;
+  END IF;
+END $$;
+```
+
 ---
 
 ## ⚙️ Configuration
