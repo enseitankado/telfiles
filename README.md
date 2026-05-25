@@ -28,13 +28,16 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **Çok hesap** — birden fazla Telegram hesabını tek görünümde birleştirir.
 - **Tam arşiv erişimi** — geçmiş mesajları sayfa sayfa tarar, yeni gelenleri realtime yakalar.
-- **Dosyalar & Linkler & Kanallar için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma; Kanallar sekmesinde üye sayısı, dosya sayısı, toplu işlemler.
-- **Torrent içerik indeksi** — `.torrent` dosyaları otomatik parse edilir; içindeki dosya yolları veritabanına eklenir ve dosyalar sekmesinden tam metin aramasına dahil olur.
-- **İndirmeler & Transfer** — indirilen dosyalar geçmiş sekmesinde listelenir. Yerelde depolanan dosyalar FTP, SFTP veya yerel dizine (NAS / harici disk) otomatik kopyalanır ya da taşınır. **Bant genişliği zamanlama** ile büyük dosyalar yalnızca belirlediğiniz saatlerde indirilir.
+- **Dosyalar & Linkler & Kanallar için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma; Kanallar sekmesinde üye sayısı, dosya sayısı, toplu işlemler ve checkbox'larda shift+click aralık seçimi.
+- **Torrent içerik indeksi** — `.torrent` dosyaları otomatik parse edilir; içindeki dosya yolları veritabanına eklenir ve dosyalar sekmesinden tam metin aramasına dahil olur. Büyük arşivler 1.000 dosyada kesilir, kaç tane kaldığı gösterilir.
+- **Semantik arama** — opsiyonel pgvector entegrasyonu; dosya adları yerel bir modelle gömülür, anahtar kelime eşleşmesinin ötesinde anlam bazlı sıralama sağlar.
+- **İndirmeler & Transfer** — indirilen dosyalar geçmiş sekmesinde listelenir; yerel yol üzerine gelindiğinde tooltip gösterilir; tek tıkla tüm yerel dosyaları silebilirsiniz. Yerelde depolanan dosyalar FTP, SFTP veya yerel dizine (NAS / harici disk) otomatik kopyalanır ya da taşınır. **Bant genişliği zamanlama** ile büyük dosyalar yalnızca belirlediğiniz saatlerde indirilir. İndirme hedefi tercihleri oturumlar arasında hatırlanır.
 - **Kanal Avcısı** — 3 aşamalı keşif: (1) iç linklerden mining, (2) 22+ web kaynağı (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + arama motorları + Reddit / HN / GitHub + web arşivleri), (3) Telegram'dan örnek mesaj sample'ıyla zenginleştirme & skorlama. Sütun başına sunucu taraflı sıralama; geçici üyelik ile kısıtlı kanalları tarama; 1 yıldan eski kanalları otomatik atlama.
 - **Önce dene, sonra karar ver** — aday kanalın belirli bir dosyasını **üye olmadan** önizleyip indirir; sadece gerekirse onay vererek "temp-join → indir → ayrıl" yapar.
 - **Magnet bağlantıları** — `magnet:` URI'ları parse edilir, meta veri (başlık, boyut, tracker listesi) çekilir; backfill ile mevcut bağlantılar toplu güncellenir.
 - **İzleme kelimeleri** — `fatura 2025` gibi terim setleri tanımlarsınız; eşleşen dosya geldiğinde bildirim oluşur (AND mantığı, dosya-adı bazlı).
+- **Uygulama içi güncelleme bildirimi** — her açılışta GitHub'daki son commit kontrol edilir; yeni sürüm varsa güncelleme komutunu tek tıkla kopyalayabileceğiniz bir banner gösterilir.
+- **Güvenli şema migrasyonları** — versiyonlu `schema_migrations` tablosu uygulanan her değişikliği takip eder; kırıcı değişiklikler (tip değişikliği, rename, silme) kendi transaction'larında çalışır; biri başarısız olursa uygulama başlamayı reddeder ve veri hiçbir zaman yarım bırakılmaz.
 - **PWA** — tarayıcıdan "Uygulamayı yükle" ile mobil veya masaüstüne kurulabilir; çevrimdışı temel UI destekli.
 - **Anonim telemetri** — opsiyonel, sadece kanal username + üye sayısı + dosya sayısı; mesaj/IP/kimlik yok. Tek tık kapatılır.
 - **5 dil** — Türkçe, English, Deutsch, Русский, 中文.

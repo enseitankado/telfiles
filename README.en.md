@@ -28,13 +28,16 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 
 - **Multi-account** — combines multiple Telegram accounts into a single view.
 - **Full archive access** — paginates through history and captures new messages in real time.
-- **Separate grids for Files, Links & Channels** — per-column sorting + filters, narrow by channel / type / size / date; the Channels tab shows member counts, file counts, and supports bulk operations.
-- **Torrent content index** — `.torrent` files are parsed automatically; their internal file paths are added to the database and included in the full-text search on the Files tab.
-- **Downloads & Transfer** — downloaded files are tracked in a history tab. Stored files can be automatically copied or moved to FTP, SFTP, or a local directory (NAS / external drive). **Bandwidth scheduling** lets large files download only during hours you specify.
+- **Separate grids for Files, Links & Channels** — per-column sorting + filters, narrow by channel / type / size / date; the Channels tab shows member counts, file counts, supports bulk operations, and shift-click range selection on checkboxes.
+- **Torrent content index** — `.torrent` files are parsed automatically; their internal file paths are added to the database and included in the full-text search on the Files tab. Large archives are capped at 1,000 displayed entries with a remaining-count notice.
+- **Semantic search** — optional pgvector integration; file names are embedded with a local model so results can be ranked by meaning, not just keyword match.
+- **Downloads & Transfer** — downloaded files are tracked in a history tab with local-path hover tooltips and a one-click "delete all" to reclaim disk space. Stored files can be automatically copied or moved to FTP, SFTP, or a local directory (NAS / external drive). **Bandwidth scheduling** lets large files download only during hours you specify. Destination preferences are remembered across sessions.
 - **Channel Hunter** — 3-stage discovery: (1) mining from internal links, (2) 22+ web sources (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + search engines + Reddit / HN / GitHub + web archives), (3) enrichment & scoring with sample messages from Telegram. Server-side per-column sorting; temporary membership to scan restricted channels; automatic skipping of channels whose newest file is over a year old.
 - **Try before you commit** — preview and download a specific file from a candidate channel **without joining**; only performs "temp-join → download → leave" when you explicitly approve.
 - **Magnet links** — `magnet:` URIs are parsed, metadata (title, size, tracker list) is fetched; bulk backfill updates existing links.
 - **Watch keywords** — define term sets like `invoice 2025`; a notification is created when a matching file arrives (AND logic, filename-based).
+- **In-app update notifications** — on every startup the app checks the latest commit on GitHub and shows a banner with a one-click copy of the update command when a new version is available.
+- **Safe schema migrations** — a versioned `schema_migrations` table tracks every applied change; breaking alterations (type changes, renames, drops) run in their own transaction and the app refuses to start if one fails, so data is never left in a partial state.
 - **PWA** — installable on mobile or desktop via "Add to Home Screen"; supports basic offline UI.
 - **Anonymous telemetry** — optional; only channel username + member count + file count. No messages, IPs, or identities. One click to disable.
 - **5 languages** — Türkçe, English, Deutsch, Русский, 中文.
