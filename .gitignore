@@ -11,6 +11,8 @@ data/
 downloads/
 pgdata/
 
+# Telemetry receiver (server-side PHP — deploy manually, never commit)
+telemetry.php
 # Telemetry server runtime data (auto-created on first POST)
 telemetry-server/data/
 
