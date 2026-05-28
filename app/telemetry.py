@@ -1,15 +1,18 @@
 """Anonymous channel-statistics telemetry.
 
 When enabled (default), once per INTERVAL_SECONDS the app POSTs a small
-JSON payload to ENDPOINT_URL. Endpoint, interval and shared secret are all
-hard-coded (env-override for the secret only). No user-visible logging.
+JSON payload to ENDPOINT_URL.
 
-Rules applied before sending:
-  - Channels with fewer than 100 indexed files are excluded.
-  - Channels already reported in a previous payload are excluded; their IDs
-    are persisted in `telemetry_sent_groups` and marked after a successful POST.
-  - Each group entry includes a per-type file breakdown (audio, video, image,
-    archive, document, software, torrent, other).
+Payload v1.2 contents:
+  - Channel-level stats for channels not yet reported (username, member count,
+    file count, total size, per-type breakdown). Each channel is sent at most
+    once (tracked in telemetry_sent_groups).
+  - File-level data: up to 3 000 unsent files per payload (name + size,
+    grouped by channel username). Each file is sent at most once (tracked in
+    telemetry_sent_files). "fr" field carries how many files remain after
+    this batch so the receiver knows more payloads are coming.
+
+Both channel and file dedup tables are updated only after a successful POST.
 """
 import asyncio
 import os
@@ -27,49 +30,72 @@ INTERVAL_SECONDS = 86400
 TELEMETRY_SECRET = os.environ.get("TELEMETRY_SECRET", "")
 
 
-async def collect_payload() -> tuple[Dict, List[int]]:
-    """Build the payload and return it together with the group IDs it contains."""
+async def collect_payload() -> tuple[Dict, List[int], List[int]]:
+    """Build payload. Returns (payload, group_ids, file_ids)."""
     settings = await database.get_telemetry_settings()
     accounts = await database.list_accounts()
-    rows     = await database.get_groups_for_telemetry()
 
+    # ── Channel-level stats (new channels only) ───────────────────────────────
+    chan_rows = await database.get_groups_for_telemetry()
     group_ids: List[int] = []
     groups: List[Dict] = []
-    for r in rows:
+    for r in chan_rows:
         group_ids.append(int(r["id"]))
         groups.append({
-            "username":     r.get("username"),
-            "is_channel":   bool(r.get("is_channel")),
-            "member_count": r.get("member_count"),
-            "file_count":   int(r.get("file_count") or 0),
-            "total_size":   int(r.get("total_size") or 0),
-            "file_types": {
-                "audio":    int(r.get("type_audio")    or 0),
-                "video":    int(r.get("type_video")    or 0),
-                "image":    int(r.get("type_image")    or 0),
-                "archive":  int(r.get("type_archive")  or 0),
-                "document": int(r.get("type_document") or 0),
-                "software": int(r.get("type_software") or 0),
-                "torrent":  int(r.get("type_torrent")  or 0),
-                "other":    int(r.get("type_other")    or 0),
-            },
+            "u":  r.get("username"),
+            "ic": int(bool(r.get("is_channel"))),
+            "mc": r.get("member_count"),
+            "fc": int(r.get("file_count") or 0),
+            "sz": int(r.get("total_size") or 0),
+            "ft": _compact_ft(r),
+        })
+
+    # ── File-level data (batched, any channel) ────────────────────────────────
+    file_rows, files_remaining = await database.get_files_for_telemetry()
+    file_ids: List[int] = []
+    # Group files by channel username to reduce key repetition.
+    files_by_channel: Dict[str, List[Dict]] = {}
+    for r in file_rows:
+        file_ids.append(int(r["id"]))
+        uname = r.get("username") or ""
+        files_by_channel.setdefault(uname, []).append({
+            "n":  r.get("file_name"),
+            "sz": int(r.get("file_size") or 0),
         })
 
     payload = {
-        "install_id":    settings.get("install_id"),
-        "timestamp":     datetime.utcnow().isoformat() + "Z",
-        "version":       "1.1",
-        "account_count": len(accounts),
-        "group_count":   len(groups),
-        "groups":        groups,
+        "ts":  datetime.utcnow().isoformat() + "Z",
+        "iid": settings.get("install_id"),
+        "v":   "1.2",
+        "na":  len(accounts),
+        "g":   groups,
+        "f":   files_by_channel,   # {"channame": [{"n":"file.mkv","sz":123}, ...]}
+        "fr":  files_remaining,    # files remaining after this batch
     }
-    return payload, group_ids
+    return payload, group_ids, file_ids
+
+
+def _compact_ft(r: dict) -> dict:
+    """Return file-type counts with abbreviated keys, omitting zeros."""
+    mapping = {
+        "type_audio":    "au",
+        "type_video":    "vi",
+        "type_image":    "im",
+        "type_archive":  "ar",
+        "type_document": "do",
+        "type_software": "so",
+        "type_torrent":  "to",
+        "type_other":    "ot",
+    }
+    return {short: int(r[long]) for long, short in mapping.items()
+            if r.get(long)}
 
 
 async def _send_silently() -> bool:
-    payload, group_ids = await collect_payload()
-    if not group_ids:
-        return True  # nothing to send; not a failure
+    payload, group_ids, file_ids = await collect_payload()
+
+    if not group_ids and not file_ids:
+        return True  # nothing new to send; not a failure
 
     headers = {"User-Agent": "TelFiles/1.0 telemetry",
                "X-Telemetry-Secret": TELEMETRY_SECRET}
@@ -87,6 +113,7 @@ async def _send_silently() -> bool:
     if ok:
         try:
             await database.mark_groups_sent(group_ids)
+            await database.mark_files_sent(file_ids)
         except Exception:
             pass
     return ok
@@ -107,7 +134,6 @@ async def telemetry_loop():
             if nxt and nxt > now:
                 continue
             ok = await _send_silently()
-            # Schedule next send: full interval on success, 1h on failure.
             try:
                 await database.update_telemetry_settings({
                     "next_send_at": now + timedelta(

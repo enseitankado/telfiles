@@ -245,6 +245,12 @@ ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS tg_temp_join_enabled BOOLEA
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS skip_old_channels BOOLEAN DEFAULT TRUE;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS magnethunt_enabled  BOOLEAN DEFAULT TRUE;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS magnet_backfill_enabled BOOLEAN DEFAULT TRUE;
+-- User's UI language (tr|en|de|ru|zh). Backend enrich uses this to decide
+-- which non-Latin scripts (CJK/Arabic/etc.) are "acceptable" for the user.
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS ui_language TEXT DEFAULT 'tr';
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_max_per_seed INTEGER DEFAULT 10;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_max_seeds INTEGER DEFAULT 100;
 -- Otomatik anahtar-kelime havuzu: Stage 3 başarılı zenginleştirmeden sonra
 -- kanal açıklamasından / başlığından çıkarılan anlamlı kelimeler buraya
 -- birikiyor. Stage 2 bir sonraki koşuda user keywords + bunları birleştiriyor
@@ -385,6 +391,13 @@ CREATE INDEX IF NOT EXISTS idx_tf_path_trgm ON torrent_files USING GIN (path gin
 CREATE TABLE IF NOT EXISTS telemetry_sent_groups (
     group_id BIGINT PRIMARY KEY,
     sent_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tracks which file IDs have already been sent in a telemetry payload.
+-- Files are batched (3 000/payload); rows inserted after a successful POST.
+CREATE TABLE IF NOT EXISTS telemetry_sent_files (
+    file_id BIGINT PRIMARY KEY,
+    sent_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Versioned migration tracker. Created here so it exists before
@@ -2494,6 +2507,10 @@ DEFAULT_HUNTER_SETTINGS = {
     # aria2c+DHT. Used to live in Settings → "Geçmiş Veri Tarama"; now a
     # pipeline stage between Magnet Hunt and Stage 3 enrichment.
     "magnet_backfill_enabled": True,
+    "ui_language": "tr",
+    "similar_expand_enabled": True,
+    "similar_expand_max_per_seed": 10,
+    "similar_expand_max_seeds": 100,
     # Auto-learned keyword pool, comma-separated. Grown by Stage 3 after
     # each successful enrichment; merged into the Stage 2 keyword list on
     # the next run.
@@ -3096,6 +3113,49 @@ async def mark_groups_sent(group_ids: List[int]) -> None:
         "INSERT INTO telemetry_sent_groups (group_id) "
         "SELECT unnest($1::bigint[]) ON CONFLICT DO NOTHING",
         group_ids,
+    )
+
+
+_TELEMETRY_FILE_BATCH = 3000
+
+
+async def get_files_for_telemetry() -> tuple[list[dict], int]:
+    """Return up to _TELEMETRY_FILE_BATCH unsent files plus the total remaining count.
+
+    Returns (rows, remaining_after_this_batch).
+    Filenames are truncated at 200 chars to cap row size.
+    """
+    rows = await _q(
+        """SELECT f.id, LEFT(f.file_name, 200) AS file_name,
+                  f.file_size, g.username
+           FROM files f
+           JOIN groups g ON g.id = f.group_id
+           WHERE f.id NOT IN (SELECT file_id FROM telemetry_sent_files)
+             AND f.file_name IS NOT NULL AND f.file_name <> ''
+           ORDER BY f.id
+           LIMIT $1""",
+        _TELEMETRY_FILE_BATCH,
+    )
+    if not rows:
+        return [], 0
+    # Count how many are still left AFTER this batch (cheap estimate via total - batch).
+    total_unsent = await _qval(
+        "SELECT COUNT(*) FROM files f "
+        "WHERE f.id NOT IN (SELECT file_id FROM telemetry_sent_files) "
+        "AND f.file_name IS NOT NULL AND f.file_name <> ''"
+    ) or 0
+    remaining = max(0, int(total_unsent) - len(rows))
+    return [dict(r) for r in rows], remaining
+
+
+async def mark_files_sent(file_ids: list[int]) -> None:
+    """Record file IDs as reported so they are excluded from future payloads."""
+    if not file_ids:
+        return
+    await _exec(
+        "INSERT INTO telemetry_sent_files (file_id) "
+        "SELECT unnest($1::bigint[]) ON CONFLICT DO NOTHING",
+        file_ids,
     )
 
 
