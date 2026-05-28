@@ -379,6 +379,14 @@ CREATE TABLE IF NOT EXISTS torrent_files (
 CREATE INDEX IF NOT EXISTS idx_tf_torrent ON torrent_files (torrent_id);
 CREATE INDEX IF NOT EXISTS idx_tf_path_trgm ON torrent_files USING GIN (path gin_trgm_ops);
 
+-- Tracks which group IDs have already been included in a telemetry payload.
+-- Rows are inserted after a successful POST so the same channel is never
+-- reported twice.
+CREATE TABLE IF NOT EXISTS telemetry_sent_groups (
+    group_id BIGINT PRIMARY KEY,
+    sent_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Versioned migration tracker. Created here so it exists before
 -- _run_migrations() is called. Version 0 = everything built by _SCHEMA above.
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -3047,21 +3055,48 @@ async def update_telemetry_settings(patch: Dict):
 
 
 async def get_groups_for_telemetry() -> List[Dict]:
-    """Aggregate channel statistics across ALL accounts: username (or id),
-    member_count, total file count. Excluded/hidden groups are still included
-    since they are part of the account's view (omitting only ones with zero
-    files keeps the payload tight)."""
+    """Return groups not yet reported, with ≥ 100 files, including per-type
+    file counts. Channels already in telemetry_sent_groups are excluded."""
+    audio_l = _ext_list_sql("audio")
+    video_l = _ext_list_sql("video")
+    image_l = _ext_list_sql("image")
+    archv_l = _ext_list_sql("archive")
+    docu_l  = _ext_list_sql("document")
+    soft_l  = _ext_list_sql("software")
+    torr_l  = _ext_list_sql("torrent")
     rows = await _q(
-        """SELECT g.id, g.username, g.is_channel, g.member_count,
-                  COUNT(f.id) AS file_count,
-                  COALESCE(SUM(f.file_size), 0) AS total_size
+        f"""SELECT g.id, g.username, g.is_channel, g.member_count,
+                  COUNT(f.id)                                                          AS file_count,
+                  COALESCE(SUM(f.file_size), 0)                                        AS total_size,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {audio_l})            AS type_audio,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {video_l})            AS type_video,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {image_l})            AS type_image,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {archv_l})            AS type_archive,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {docu_l})             AS type_document,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {soft_l})             AS type_software,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {torr_l})             AS type_torrent,
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) NOT IN
+                      {audio_l} || {video_l} || {image_l} || {archv_l}
+                                  || {docu_l} || {soft_l}  || {torr_l})                AS type_other
            FROM groups g
            LEFT JOIN files f ON f.group_id = g.id
+           WHERE g.id NOT IN (SELECT group_id FROM telemetry_sent_groups)
            GROUP BY g.id
-           HAVING COUNT(f.id) > 0 OR g.member_count IS NOT NULL
+           HAVING COUNT(f.id) >= 100
            ORDER BY g.id"""
     )
     return [dict(r) for r in rows]
+
+
+async def mark_groups_sent(group_ids: List[int]) -> None:
+    """Record group IDs as reported so they are excluded from future payloads."""
+    if not group_ids:
+        return
+    await _exec(
+        "INSERT INTO telemetry_sent_groups (group_id) "
+        "SELECT unnest($1::bigint[]) ON CONFLICT DO NOTHING",
+        group_ids,
+    )
 
 
 async def get_groups_needing_member_count(limit: int = 10, refresh_after_days: int = 7) -> List[Dict]:
