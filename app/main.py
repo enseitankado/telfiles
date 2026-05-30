@@ -950,21 +950,29 @@ async def leave_group(group_id: int, purge: bool = Query(False), account_id: int
     if not client.is_connected():
         await client.connect()
     if not await client.is_user_authorized():
-        raise HTTPException(401, "Not authorized — log in again")
+        raise HTTPException(403, "Telegram hesabı yetkili değil — hesabı yeniden doğrulayın")
 
     try:
+        from telethon.errors import UserNotParticipantError
         entity = await client.get_entity(group_id)
-        # delete_dialog handles channels, supergroups and basic groups uniformly
         await client.delete_dialog(entity)
     except Exception as e:
-        raise HTTPException(500, f"Telegram'dan ayrılınamadı: {e}")
+        err_str = str(e)
+        # "already not a member" is a success — the goal is achieved, just clean up DB.
+        not_member = (
+            "not a member" in err_str.lower()
+            or "UserNotParticipant" in err_str
+            or isinstance(e, UserNotParticipantError)
+        )
+        if not not_member:
+            raise HTTPException(500, f"Telegram'dan ayrılınamadı: {e}")
 
     if purge:
         await database.delete_group_data(group_id)
     else:
         # Mark excluded for the leaving account; keep other accounts as-is
         await database.set_account_group_settings(account_id, group_id, excluded=1)
-        # Legacy compat: also flip the global flag
+        # Also flip the global flag
         await database.set_group_settings(group_id, None, 1, None)
 
     logger.info(f"Left Telegram dialog: {g.get('name')} ({group_id}), purge={purge}")
@@ -972,6 +980,68 @@ async def leave_group(group_id: int, purge: bool = Query(False), account_id: int
 
 
 # ── Channels: per-channel detail (hunter-shaped, used by the Channels grid) ──
+
+class SimilarChannelsRequest(BaseModel):
+    """Right-click "Show similar channels" lookup. Caller passes ONE of:
+      • username (raw or @prefixed)
+      • group_id (a followed group — we'll pull its cached peer/access)
+      • candidate_id (a hunter_candidate — same)"""
+    username: Optional[str] = None
+    group_id: Optional[int] = None
+    candidate_id: Optional[int] = None
+    files_limit: Optional[int] = 30
+    max_recommendations: Optional[int] = 12
+
+
+@app.post("/api/channels/similar")
+async def channels_similar(req: SimilarChannelsRequest):
+    """Live "similar channels" preview backing the right-click lightbox in
+    the Channels and Hunter grids. Returns the Telegram-recommended channels
+    for the seed plus a sample of each one's recent files (name + size + ext
+    + date). Driven by `channels.getChannelRecommendations` + a light
+    `iter_messages` pass per result."""
+    import hunter as _hunter
+
+    seed_username = (req.username or "").strip().lstrip("@") or None
+    seed_pid = None
+    seed_ah = None
+    seed_gid = None
+
+    if req.group_id is not None:
+        g = await database.get_group_by_id(req.group_id)
+        if g:
+            # `groups.id` IS the channel ID. Pass it down so Telethon's session
+            # cache (which has access_hash for everything we follow) can
+            # resolve the entity WITHOUT a username — required for private
+            # channels with no public @-handle.
+            seed_gid = int(req.group_id)
+            seed_username = seed_username or g.get("username")
+    elif req.candidate_id is not None:
+        cand = await database._qrow(
+            "SELECT username, peer_id, access_hash FROM hunter_candidates WHERE id = $1",
+            req.candidate_id,
+        )
+        if cand:
+            seed_username = seed_username or cand["username"]
+            seed_pid = cand["peer_id"]
+            seed_ah = cand["access_hash"]
+
+    if not seed_username and seed_pid is None and seed_gid is None:
+        raise HTTPException(400, "username, group_id or candidate_id required")
+
+    try:
+        data = await _hunter.get_similar_channels_preview(
+            seed_username=seed_username,
+            seed_peer_id=seed_pid,
+            seed_access_hash=seed_ah,
+            seed_group_id=seed_gid,
+            files_limit=max(0, min(100, int(req.files_limit or 30))),
+            max_recommendations=max(1, min(30, int(req.max_recommendations or 12))),
+        )
+    except Exception as e:
+        raise HTTPException(500, f"similar lookup failed: {e}")
+    return data
+
 
 @app.get("/api/channels/{group_id}/detail")
 async def channels_detail(group_id: int):
@@ -1081,9 +1151,17 @@ _TAG_RE  = _re.compile(r"<[^>]+>")
 
 
 def _extract_channel_usernames(text: str) -> list[str]:
-    """Pull every plausible Telegram channel username out of arbitrary text:
-    @username / t.me/x / telegram.me/x / tg://resolve?domain=x, plus bare
-    tokens that look like usernames on their own line. Deduped, lowercased."""
+    """Pull every plausible Telegram channel username out of arbitrary text.
+
+    Strategy:
+      1. Always extract anything explicitly marked: @username, t.me/x,
+         telegram.me/x, tg://resolve?domain=x.
+      2. ONLY if no marked usernames were found, fall back to bare-token
+         matching (pure plaintext list with no @ prefixes). This avoids
+         false positives like picking up English/Turkish words from
+         descriptions or ASCII tables — e.g. "politik" in a "Tahmini
+         içerik" column shouldn't become @politik just because the same
+         paste contains other @-prefixed names."""
     if not text:
         return []
     out: list[str] = []
@@ -1092,6 +1170,9 @@ def _extract_channel_usernames(text: str) -> list[str]:
         u = m.group(1).lower()
         if u not in seen:
             seen.add(u); out.append(u)
+    if out:
+        return out
+    # Fallback: bare-token list (every token on its own must be a username).
     for tok in _re.split(r"[\s,;]+", text):
         m = _CHANNEL_BARE_RE.match(tok.strip())
         if m:
@@ -2021,6 +2102,10 @@ class HunterSettingsRequest(BaseModel):
     min_subscribers: Optional[int] = None
     languages: Optional[str] = None
     sources: Optional[str] = None
+    ui_language: Optional[str] = None
+    similar_expand_enabled: Optional[bool] = None
+    similar_expand_max_per_seed: Optional[int] = None
+    similar_expand_max_seeds: Optional[int] = None
 
 
 @app.get("/api/hunter/settings")
@@ -2042,10 +2127,105 @@ async def hunter_status_endpoint():
     return hunter.status
 
 
+@app.get("/api/hunter/quota")
+async def hunter_quota():
+    """Telegram API quota snapshot for the quota lightbox.
+
+    Returns live usage of our self-imposed daily lookup cap, the active
+    FloodWait window (if any) persisted by Stage 3's cacheOnlyMode trigger,
+    and a static catalog of Telegram methods we currently use (with their
+    soft-cost class) plus methods we might wire up in the future. The
+    catalog labels go through i18n on the frontend; numeric/state fields
+    are computed here so the modal can render an exact countdown."""
+    s = await database.get_hunter_settings()
+    used_today = await database.hunter_lookups_today()
+    cap = int(s.get("tg_daily_lookup_cap") or 0)
+    remaining = max(0, cap - used_today) if cap else None
+
+    # Seconds until the daily cap counter rolls over. Our hunter_lookups_today
+    # bucket uses UTC date boundaries.
+    now_utc = datetime.now(timezone.utc)
+    midnight_today = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    next_midnight = midnight_today + timedelta(days=1)
+    day_reset_seconds = int((next_midnight - now_utc).total_seconds())
+
+    # Active FloodWait (persisted on cacheOnlyMode trigger).
+    fw_until = s.get("last_floodwait_until")
+    fw_scope = s.get("last_floodwait_scope")
+    fw_total = s.get("last_floodwait_seconds")
+    fw_active = False
+    fw_remaining = 0
+    fw_until_iso = None
+    if fw_until:
+        try:
+            if isinstance(fw_until, str):
+                fw_until_dt = datetime.fromisoformat(fw_until.replace("Z", "+00:00"))
+            else:
+                fw_until_dt = fw_until
+            if fw_until_dt.tzinfo is None:
+                fw_until_dt = fw_until_dt.replace(tzinfo=timezone.utc)
+            fw_remaining = int((fw_until_dt - now_utc).total_seconds())
+            fw_active = fw_remaining > 0
+            fw_until_iso = fw_until_dt.isoformat()
+        except Exception:
+            pass
+
+    # Catalogue of Telegram methods. Each entry: id (stable), method (Telegram
+    # API path), cost (light/moderate/strict), used (bool — whether this
+    # codebase currently calls it). i18n keys on the frontend supply the
+    # localized description per id.
+    methods = [
+        {"id": "resolveUsername",       "method": "contacts.resolveUsername",        "cost": "strict",   "used": True},
+        {"id": "getFullChannel",        "method": "channels.getFullChannel",         "cost": "moderate", "used": True},
+        {"id": "getHistory",            "method": "messages.getHistory",             "cost": "light",    "used": True},
+        {"id": "searchInPeer",          "method": "messages.search (in-peer)",       "cost": "light",    "used": True},
+        {"id": "getChannelRecommendations","method": "channels.getChannelRecommendations", "cost": "moderate", "used": True},
+        {"id": "joinChannel",           "method": "channels.joinChannel",            "cost": "strict",   "used": True},
+        {"id": "leaveChannel",          "method": "channels.leaveChannel",           "cost": "light",    "used": True},
+        {"id": "getMessages",           "method": "channels.getMessages (by id)",    "cost": "light",    "used": True},
+        {"id": "downloadDocument",      "method": "upload.getFile",                  "cost": "bandwidth","used": True},
+        {"id": "getDialogs",            "method": "messages.getDialogs",             "cost": "moderate", "used": True},
+        # Future / not yet wired
+        {"id": "searchPosts",           "method": "channels.searchPosts",            "cost": "strict",   "used": False, "future": True, "premium": True},
+        {"id": "contactsSearch",        "method": "contacts.search",                 "cost": "moderate", "used": False, "future": True},
+        {"id": "searchGlobal",          "method": "messages.searchGlobal",           "cost": "moderate", "used": False, "future": True},
+        {"id": "getAllStories",         "method": "stories.getAllStories",           "cost": "light",    "used": False, "future": True},
+        {"id": "getParticipants",       "method": "channels.getParticipants",        "cost": "moderate", "used": False, "future": True, "note": "admin-only on most channels"},
+    ]
+
+    return {
+        "lookups_used_today": used_today,
+        "tg_daily_lookup_cap": cap,
+        "lookups_remaining": remaining,
+        "day_reset_seconds": day_reset_seconds,
+        "floodwait": {
+            "active": fw_active,
+            "scope": fw_scope,
+            "until_iso": fw_until_iso,
+            "remaining_seconds": max(0, fw_remaining),
+            "total_seconds": fw_total,
+        },
+        "methods": methods,
+        "tg_account_id": int(s.get("tg_account_id") or 1),
+        "now_iso": now_utc.isoformat(),
+    }
+
+
 @app.post("/api/hunter/run")
 async def hunter_run():
     started = hunter.kick_run()
     return {"ok": True, "started": started}
+
+
+@app.post("/api/hunter/enrich")
+async def hunter_enrich_only():
+    """Run Stage 3 (Telegram enrichment) standalone on `discovered` rows —
+    triggered by the "Zenginleştir" toolbar button. Returns 409 if another
+    hunter run is already in flight."""
+    started = hunter.kick_enrich_only()
+    if not started:
+        return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
+    return {"ok": True}
 
 
 @app.post("/api/hunter/cancel")
