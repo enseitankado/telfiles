@@ -29,7 +29,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import aiohttp
 from telethon.errors import FloodWaitError, ChannelPrivateError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest, LeaveChannelRequest
+from telethon.tl.functions.channels import (
+    GetFullChannelRequest, JoinChannelRequest, LeaveChannelRequest,
+    GetChannelRecommendationsRequest,
+)
 from telethon.tl.types import (
     Channel, InputMessagesFilterDocument, DocumentAttributeFilename,
     DocumentAttributeVideo, DocumentAttributeAudio, InputPeerChannel,
@@ -240,6 +243,434 @@ def _normalize_username(u: str) -> Optional[str]:
     if not re.fullmatch(r"[a-z][a-z0-9_]{4,31}", u):
         return None
     return u
+
+
+# ── Stage 0: similar channels (Telegram's own recommendation graph) ──────────
+#
+# Telegram exposes a per-channel "similar channels" recommendation list via
+# `channels.getChannelRecommendations`. We use already-followed channels (and,
+# optionally, recently-enriched hunter candidates) as seeds and harvest their
+# recommendations into hunter_candidates. The graph is Telegram-computed, so
+# the signal is far tighter than keyword search — but the list is small
+# (~10 per channel on non-premium accounts) and gated by FloodWait, so we
+# treat it as a complement to Stage 1/2, not a replacement.
+
+async def _stage0_collect_seed_usernames(max_seeds: int) -> List[Tuple[str, int]]:
+    """Return [(username, group_id_or_0), ...] of seed channels:
+    1) followed channels in `groups` (priority — known-good)
+    2) recently enriched hunter candidates with a username
+    Caps to `max_seeds` total. Skips entries without a username (private chats)."""
+    seeds: List[Tuple[str, int]] = []
+    seen: Set[str] = set()
+    # 1) followed channels
+    rows = await database._q(
+        """SELECT id, username FROM groups
+           WHERE is_channel = TRUE AND username IS NOT NULL AND username <> ''
+             AND COALESCE(hidden, FALSE) = FALSE
+           ORDER BY COALESCE(last_synced_at, '1970-01-01'::timestamptz) DESC
+           LIMIT $1""",
+        max_seeds,
+    )
+    for r in rows:
+        u = _normalize_username(r["username"])
+        if u and u not in seen:
+            seen.add(u)
+            seeds.append((u, int(r["id"])))
+        if len(seeds) >= max_seeds:
+            return seeds
+    # 2) Fill remainder from enriched candidates with cached peer/access
+    remaining = max_seeds - len(seeds)
+    if remaining > 0:
+        rows = await database._q(
+            """SELECT username FROM hunter_candidates
+               WHERE status IN ('enriched', 'joined')
+                 AND username IS NOT NULL
+                 AND peer_id IS NOT NULL AND access_hash IS NOT NULL
+               ORDER BY COALESCE(enriched_at, discovered_at) DESC
+               LIMIT $1""",
+            remaining,
+        )
+        for r in rows:
+            u = _normalize_username(r["username"])
+            if u and u not in seen:
+                seen.add(u)
+                seeds.append((u, 0))
+            if len(seeds) >= max_seeds:
+                break
+    return seeds
+
+
+async def stage0_similar_expand(settings: dict) -> int:
+    """Stage 0 — harvest Telegram's "similar channels" graph from seeded
+    channels. Returns the number of *new* candidates added."""
+    if not settings.get("similar_expand_enabled", True):
+        return 0
+
+    max_seeds = int(settings.get("similar_expand_max_seeds") or 100)
+    max_per_seed = int(settings.get("similar_expand_max_per_seed") or 10)
+    delay_ms = max(0, int(settings.get("tg_request_delay_ms") or 1500))
+    account_id = int(settings.get("tg_account_id") or 1)
+
+    seeds = await _stage0_collect_seed_usernames(max_seeds)
+    if not seeds:
+        _emit_event(
+            "stage0", "Tohum kanal yok (önce kanal takip edin) — Stage 0 atlandı",
+            "info", key="hl.stage0.noSeeds",
+        )
+        return 0
+
+    try:
+        client = await get_client(account_id)
+    except Exception as e:
+        _emit_event(
+            "stage0", f"Telegram istemcisi alınamadı: {e}", "warn",
+            key="hl.stage0.clientErr", params={"err": str(e)[:120]},
+        )
+        return 0
+
+    status["stage_detail"] = {"seeds_total": len(seeds), "seeds_done": 0,
+                              "found": 0, "added": 0}
+    status["total"] = len(seeds)
+    status["progress"] = 0
+    _emit_event(
+        "stage0",
+        f"Stage 0: Telegram benzer-kanal grafiği — {len(seeds)} tohum kanal taranıyor",
+        key="hl.stage0.start", params={"n": len(seeds)},
+    )
+
+    n_added = 0
+    n_found = 0
+    for idx, (seed_username, _seed_gid) in enumerate(seeds, 1):
+        intr = _check_interrupt("stage0")
+        if intr == "cancel":
+            _emit_event("stage0", "Stage 0 iptal edildi", "warn",
+                         key="hl.stage0.cancelled")
+            break
+        if intr == "skip":
+            status["skip_stage_requested"] = False
+            _emit_event("stage0", "Stage 0 atlandı (skip)", "warn",
+                         key="hl.stage0.skipped")
+            break
+
+        status["progress"] = idx
+        status["current"] = f"@{seed_username}"
+        try:
+            entity = await client.get_entity(seed_username)
+        except (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError) as e:
+            _emit_event(
+                "stage0", f"@{seed_username}: tohum erişilemez ({type(e).__name__})",
+                "info", key="hl.stage0.seedSkip",
+                params={"username": seed_username, "err": type(e).__name__},
+            )
+            continue
+        except FloodWaitError as fw:
+            wait_s = int(getattr(fw, "seconds", 30))
+            _emit_event(
+                "stage0", f"FloodWait {wait_s}s (tohum çözümleme @{seed_username})",
+                "warn", key="hl.stage0.floodWait",
+                params={"username": seed_username, "wait": wait_s},
+            )
+            await _interruptible_sleep(min(wait_s, 60))
+            continue
+        except Exception as e:
+            _emit_event(
+                "stage0", f"@{seed_username}: çözümleme hatası ({str(e)[:60]})",
+                "warn", key="hl.stage0.seedErr",
+                params={"username": seed_username, "err": str(e)[:60]},
+            )
+            continue
+
+        if not isinstance(entity, Channel):
+            continue
+
+        try:
+            res = await client(GetChannelRecommendationsRequest(channel=entity))
+        except FloodWaitError as fw:
+            wait_s = int(getattr(fw, "seconds", 30))
+            _emit_event(
+                "stage0", f"FloodWait {wait_s}s (öneri çağrısı @{seed_username})",
+                "warn", key="hl.stage0.floodWait",
+                params={"username": seed_username, "wait": wait_s},
+            )
+            await _interruptible_sleep(min(wait_s, 60))
+            continue
+        except Exception as e:
+            _emit_event(
+                "stage0", f"@{seed_username}: öneri alınamadı ({str(e)[:60]})",
+                "warn", key="hl.stage0.recErr",
+                params={"username": seed_username, "err": str(e)[:60]},
+            )
+            continue
+
+        recs = list(getattr(res, "chats", []) or [])
+        if not recs:
+            _emit_event(
+                "stage0", f"@{seed_username}: öneri yok",
+                "info", key="hl.stage0.seedEmpty",
+                params={"username": seed_username},
+            )
+            await _interruptible_sleep(delay_ms / 1000.0)
+            continue
+
+        seed_added = 0
+        seed_dupe = 0
+        seed_blacklisted = 0
+        for chat in recs[:max_per_seed]:
+            cu = getattr(chat, "username", None)
+            cu = _normalize_username(cu) if cu else None
+            if not cu:
+                continue
+            n_found += 1
+            if await database.is_blacklisted(cu):
+                seed_blacklisted += 1
+                continue
+            existing = await database.get_hunter_candidate_by_username(cu)
+            if existing:
+                seed_dupe += 1
+                # Still record this seed as a source so we can trace the graph
+                try:
+                    await database.add_hunter_source(
+                        int(existing["id"]), "similar", f"seed=@{seed_username}"
+                    )
+                except Exception:
+                    pass
+                continue
+            cid = await database.upsert_hunter_candidate(cu)
+            if cid:
+                # Bake seed access info into hunter_candidates for future
+                # lookups (saves a resolve burn later).
+                try:
+                    pid = getattr(chat, "id", None)
+                    ah = getattr(chat, "access_hash", None)
+                    if pid is not None and ah is not None:
+                        await database.update_hunter_candidate(
+                            cid, {"peer_id": int(pid), "access_hash": int(ah)}
+                        )
+                except Exception:
+                    pass
+                try:
+                    await database.add_hunter_source(
+                        cid, "similar", f"seed=@{seed_username}"
+                    )
+                except Exception:
+                    pass
+                seed_added += 1
+                n_added += 1
+
+        status["stage_detail"]["seeds_done"] = idx
+        status["stage_detail"]["found"] = n_found
+        status["stage_detail"]["added"] = n_added
+        _emit_event(
+            "stage0",
+            (f"@{seed_username}: {seed_added} yeni / {seed_dupe} mevcut / "
+             f"{seed_blacklisted} blacklist · toplam yeni: {n_added}"),
+            "info", key="hl.stage0.seedDone",
+            params={
+                "username": seed_username, "added": seed_added,
+                "dupe": seed_dupe, "blacklisted": seed_blacklisted,
+                "total_added": n_added,
+            },
+        )
+        await _interruptible_sleep(delay_ms / 1000.0)
+
+    _emit_event(
+        "stage0",
+        f"Stage 0 tamamlandı: {n_added} yeni aday / {n_found} öneri / {len(seeds)} tohum",
+        key="hl.stage0.done",
+        params={"added": n_added, "found": n_found, "seeds": len(seeds)},
+    )
+    return n_added
+
+
+# ── Public: live "similar channels" preview ──────────────────────────────────
+# Drives the right-click "Show similar channels" lightbox in the UI. Unlike
+# the Stage-0 batch expander, this is invoked on demand for a single seed and
+# returns a rich preview (sample filenames + sizes + breakdown) without
+# touching hunter_candidates. It uses peer info baked into the recommendation
+# response so resolveUsername is NOT burned for the recommendations.
+
+async def _preview_sample_files(client, entity, limit: int) -> Dict:
+    """Sample the last `limit` messages of `entity` for file info only.
+    No DB writes, no scoring. Returns a small dict suitable for JSON."""
+    file_count = 0
+    total_size = 0
+    breakdown: Dict[str, int] = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
+    files: List[Dict] = []
+    last_at = None
+    sampled = 0
+    try:
+        async for msg in client.iter_messages(entity, limit=limit):
+            sampled += 1
+            if msg.date and (last_at is None or msg.date > last_at):
+                last_at = msg.date
+            if msg.document:
+                doc = msg.document
+                size = int(getattr(doc, "size", 0) or 0)
+                fname, ext, _v, _a, is_named = _doc_filename(doc, msg.id)
+                grp = _file_group(ext)
+                file_count += 1
+                total_size += size
+                breakdown[grp] = breakdown.get(grp, 0) + 1
+                files.append({
+                    "name": fname or f"file_{msg.id}",
+                    "size": size,
+                    "ext": ext,
+                    "group": grp,
+                    "named": bool(is_named),
+                    "date": msg.date.isoformat() if msg.date else None,
+                    "message_id": msg.id,
+                })
+            elif isinstance(msg.media, MessageMediaPhoto):
+                photo = getattr(msg, "photo", None)
+                size = _photo_size(photo) if photo else 0
+                file_count += 1
+                total_size += size
+                breakdown["image"] = breakdown.get("image", 0) + 1
+                files.append({
+                    "name": f"photo_{msg.id}.jpg",
+                    "size": size,
+                    "ext": "jpg",
+                    "group": "image",
+                    "named": False,
+                    "date": msg.date.isoformat() if msg.date else None,
+                    "message_id": msg.id,
+                })
+    except FloodWaitError:
+        raise
+    except Exception as e:
+        logger.debug(f"preview sample failed: {e}")
+    return {
+        "file_count_sampled": file_count,
+        "sampled_messages": sampled,
+        "total_size": total_size,
+        "breakdown": {k: v for k, v in breakdown.items() if v},
+        "files": files,
+        "last_message_at": last_at.isoformat() if last_at else None,
+    }
+
+
+async def get_similar_channels_preview(
+    seed_username: Optional[str] = None,
+    seed_peer_id: Optional[int] = None,
+    seed_access_hash: Optional[int] = None,
+    seed_group_id: Optional[int] = None,
+    files_limit: int = 30,
+    max_recommendations: int = 12,
+) -> Dict:
+    """Live "similar channels" preview for the UI lightbox.
+
+    Resolves the seed (preferring cached peer/access_hash over a username
+    resolve burn), calls GetChannelRecommendationsRequest, and for every
+    suggested channel collects:
+      • title / @username / member count (from the response itself)
+      • last-N file sample (name, size, ext, group, date)
+      • aggregated breakdown
+    Returns a dict the frontend can render as cards."""
+    settings = await database.get_hunter_settings()
+    account_id = int(settings.get("tg_account_id") or 1)
+    client = await get_client(account_id)
+
+    # Resolve seed — prefer cached peer (no resolve burn).
+    seed_entity = None
+    if seed_peer_id is not None and seed_access_hash is not None:
+        try:
+            seed_entity = await client.get_entity(
+                InputPeerChannel(int(seed_peer_id), int(seed_access_hash))
+            )
+        except Exception:
+            seed_entity = None
+    # Telethon's session cache often has the access_hash for groups we
+    # already follow — try that before falling back to a username resolve
+    # (and use it for groups that have no public username at all).
+    if seed_entity is None and seed_group_id is not None:
+        try:
+            seed_entity = await client.get_entity(int(seed_group_id))
+        except Exception:
+            seed_entity = None
+    if seed_entity is None:
+        if not seed_username:
+            return {"error": "no_seed", "channels": []}
+        seed_entity = await client.get_entity(seed_username)
+
+    if not isinstance(seed_entity, Channel):
+        return {"error": "not_a_channel", "channels": []}
+
+    # Recommendations
+    try:
+        res = await client(GetChannelRecommendationsRequest(channel=seed_entity))
+    except FloodWaitError as fw:
+        return {
+            "error": "floodwait",
+            "wait_seconds": int(getattr(fw, "seconds", 0)),
+            "channels": [],
+        }
+
+    chats = list(getattr(res, "chats", []) or [])[:max_recommendations]
+    seed_info = {
+        "username": getattr(seed_entity, "username", None),
+        "title": getattr(seed_entity, "title", "") or "",
+        "id": getattr(seed_entity, "id", None),
+    }
+
+    # Pre-fetch our local awareness of these channels (followed / candidate /
+    # blacklisted) so the UI can show badges without extra round-trips.
+    usernames_lower = [
+        (c.username or "").lower() for c in chats if getattr(c, "username", None)
+    ]
+    awareness: Dict[str, Dict] = {}
+    if usernames_lower:
+        # Followed groups
+        rows = await database._q(
+            "SELECT LOWER(username) AS u FROM groups WHERE LOWER(username) = ANY($1::text[])",
+            usernames_lower,
+        )
+        for r in rows:
+            awareness.setdefault(r["u"], {})["followed"] = True
+        # Hunter candidates + blacklist
+        bulk = await database.check_hunter_candidates_bulk(usernames_lower)
+        for u, st in bulk.items():
+            awareness.setdefault(u, {})["state"] = st  # "blacklisted" / "joined" / "queued"
+
+    out_channels: List[Dict] = []
+    for chat in chats:
+        cu = getattr(chat, "username", None)
+        pid = getattr(chat, "id", None)
+        ah = getattr(chat, "access_hash", None)
+        title = getattr(chat, "title", "") or ""
+        members = getattr(chat, "participants_count", None)
+        verified = bool(getattr(chat, "verified", False))
+        scam = bool(getattr(chat, "scam", False))
+        info = {
+            "username": cu,
+            "title": title,
+            "peer_id": pid,
+            "access_hash": ah,
+            "members": members,
+            "verified": verified,
+            "scam": scam,
+            "awareness": awareness.get((cu or "").lower(), {}),
+            "files_sample": None,
+            "files_error": None,
+        }
+        # Sample files using the peer info we already have — no resolve burn.
+        if pid is not None and ah is not None and files_limit > 0:
+            try:
+                entity = await client.get_entity(InputPeerChannel(int(pid), int(ah)))
+                sample = await _preview_sample_files(client, entity, files_limit)
+                info["files_sample"] = sample
+            except FloodWaitError as fw:
+                info["files_error"] = f"floodwait:{int(getattr(fw, 'seconds', 0))}"
+            except ChannelPrivateError:
+                info["files_error"] = "private"
+            except Exception as e:
+                info["files_error"] = f"err:{str(e)[:80]}"
+        out_channels.append(info)
+
+    return {
+        "seed": seed_info,
+        "channels": out_channels,
+        "recommendation_count": len(chats),
+    }
 
 
 # ── Stage 1: internal mining ─────────────────────────────────────────────────
@@ -1492,6 +1923,212 @@ _FILE_GROUPS = {
 }
 
 
+# ──── App-update channel detector (data-driven, no fixed noise list) ───────
+#
+# Telegram'da bir kanal genelde tek bir uygulamanın güncel sürümlerini paylaşır
+# (örn. her hafta yeni bir `whatsapp_2.24.6_mod.apk`). Bu kalıbı sezmek için
+# dosya adlarını tokenize edip "kanal genelinde sık tekrarlayan token" ile
+# "her dosyada farklı olan token"ı ayırt ediyoruz — token-frequency tabanlı.
+# Hiçbir sabit gürültü listesi yok; her kanal kendi noise pattern'ini DF ile
+# kendisi tanımlar. Marjinal durumlar için pairwise LCS medyanı doğrular.
+_TOK_SEP_RE = re.compile(r"[_\-\s.+()\[\]]+")
+
+
+# ──── Character-script classification (no language guess library) ──────
+# Tek dosya adındaki "baskın" yazı sistemini tespit etmek için Unicode
+# code-point bantları kullanıyoruz. Yalnızca alfabetik karakterler sayılır;
+# rakamlar/işaretler nötr — uzantı ve sürüm numaraları sınıflandırmayı
+# saptırmasın.
+def _char_script(c: str) -> Optional[str]:
+    cp = ord(c)
+    if (0x0041 <= cp <= 0x024F) or (0x1E00 <= cp <= 0x1EFF) or (0x0250 <= cp <= 0x02AF):
+        return "latin"
+    if (0x0400 <= cp <= 0x04FF) or (0x0500 <= cp <= 0x052F):
+        return "cyrillic"
+    if (0x4E00 <= cp <= 0x9FFF) or (0x3400 <= cp <= 0x4DBF) or (0x20000 <= cp <= 0x2A6DF):
+        return "han"
+    if 0x3040 <= cp <= 0x309F:
+        return "hiragana"
+    if 0x30A0 <= cp <= 0x30FF:
+        return "katakana"
+    if (0xAC00 <= cp <= 0xD7AF) or (0x1100 <= cp <= 0x11FF) or (0x3130 <= cp <= 0x318F):
+        return "hangul"
+    if (0x0600 <= cp <= 0x06FF) or (0x0750 <= cp <= 0x077F) or (0x08A0 <= cp <= 0x08FF):
+        return "arabic"
+    if 0x0590 <= cp <= 0x05FF:
+        return "hebrew"
+    if 0x0900 <= cp <= 0x097F:
+        return "devanagari"
+    if 0x0E00 <= cp <= 0x0E7F:
+        return "thai"
+    if 0x0370 <= cp <= 0x03FF:
+        return "greek"
+    if c.isalpha():
+        return "other"
+    return None
+
+
+def _filename_dominant_script(s: str) -> Optional[str]:
+    counts: Dict[str, int] = {}
+    # Uzantıyı düşür — `.apk`, `.pdf` her zaman Latin oluyor, asıl adın
+    # script'ini bastırıyor.
+    base = re.sub(r"\.[a-z0-9]{1,5}$", "", s)
+    for ch in base:
+        cls = _char_script(ch)
+        if cls:
+            counts[cls] = counts.get(cls, 0) + 1
+    if not counts:
+        return None
+    # CJK gruplarını "cjk" altında birleştir (japonca dosya adları sıklıkla
+    # han + hiragana + katakana karışımı olur; ayrı saymak yanıltır).
+    cjk_total = counts.get("han", 0) + counts.get("hiragana", 0) + counts.get("katakana", 0)
+    if cjk_total > 0:
+        counts["cjk"] = cjk_total
+        for k in ("han", "hiragana", "katakana"):
+            counts.pop(k, None)
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+# Hangi UI dilinde hangi script'ler "okunabilir" sayılır — bu eşleştirme
+# kullanıcı dilinin doğal alfabesini ve Latin'i kapsar (Latin uluslararası
+# bir taban). Bir scripti acceptable kümede değilse "yabancı" demektir.
+_SCRIPT_ACCEPT_BY_LANG: Dict[str, set] = {
+    "tr": {"latin"},
+    "en": {"latin"},
+    "de": {"latin"},
+    "ru": {"latin", "cyrillic"},
+    "zh": {"latin", "cjk"},
+}
+
+
+def _channel_dominant_script(named_filenames: List[str]) -> Tuple[Optional[str], float, int]:
+    """Returns (dominant_script, ratio, sampled). Bir script "baskın" sayılır
+    eğer >50% dosyanın dominant scripti o ise. Sentetik isimler hariç tutulur
+    (named_filenames zaten temizlenmiş)."""
+    n = len(named_filenames)
+    if n == 0:
+        return None, 0.0, 0
+    counts: Dict[str, int] = {}
+    for fn in named_filenames:
+        d = _filename_dominant_script(fn)
+        if d:
+            counts[d] = counts.get(d, 0) + 1
+    if not counts:
+        return None, 0.0, n
+    dominant, c = max(counts.items(), key=lambda kv: kv[1])
+    return dominant, c / n, n
+
+
+def _channel_token_df(filenames: List[str]) -> Dict[str, float]:
+    """Token -> document-frequency oranı (0..1). Tokenler: ayraçlardan
+    parçalanmış, salt rakam olmayan, en az 2 karakter."""
+    n = len(filenames)
+    if not n:
+        return {}
+    df: Dict[str, int] = {}
+    for fn in filenames:
+        base = re.sub(r"\.[a-z0-9]{1,5}$", "", fn.lower())
+        tokens = {
+            tk for tk in _TOK_SEP_RE.split(base)
+            if len(tk) >= 2 and not tk.isdigit()
+        }
+        for tk in tokens:
+            df[tk] = df.get(tk, 0) + 1
+    return {tk: c / n for tk, c in df.items()}
+
+
+def _pairwise_lcs_median(filenames: List[str], *, sample: int = 60) -> float:
+    """Filenames'in karakter düzeyinde ortalama "ortak gövde" oranı.
+    Aynı app'in N sürümünde bu oran yüksek (her çift uzun ortak alt-dize
+    paylaşır: app adı). Rastgele kanallarda düşük."""
+    if len(filenames) < 4:
+        return 0.0
+    import random as _r
+    pool = [re.sub(r"\.[a-z0-9]{1,5}$", "", fn.lower()) for fn in filenames]
+    if len(pool) > sample:
+        pool = _r.sample(pool, sample)
+    ratios: List[float] = []
+    for i, a in enumerate(pool):
+        la = len(a)
+        if la == 0:
+            continue
+        for b in pool[i + 1:]:
+            lb = len(b)
+            if lb == 0:
+                continue
+            # 2-row rolling DP for longest common substring length
+            prev = [0] * (lb + 1)
+            best = 0
+            for ca in a:
+                cur = [0] * (lb + 1)
+                for j in range(1, lb + 1):
+                    if ca == b[j - 1]:
+                        v = prev[j - 1] + 1
+                        cur[j] = v
+                        if v > best:
+                            best = v
+                prev = cur
+            ratios.append(best / min(la, lb))
+    if not ratios:
+        return 0.0
+    ratios.sort()
+    return ratios[len(ratios) // 2]
+
+
+def _detect_app_update_channel(
+    named_filenames: List[str],
+    *,
+    df_high: float = 0.5,
+    coverage_min: float = 0.85,
+    min_files: int = 20,
+    lcs_threshold: float = 0.35,
+) -> Optional[Dict]:
+    """Decide whether the named-filename pool looks like 'N versions of the
+    same app(s)'. Returns a dict with diagnostics or None when the sample is
+    too small to decide. No fixed noise list — the channel's own DF distribution
+    decides what's stable (app identity) vs varying (version noise)."""
+    n = len(named_filenames)
+    if n < min_files:
+        return None
+    df = _channel_token_df(named_filenames)
+    stable = sorted(
+        ((t, r) for t, r in df.items() if r >= df_high),
+        key=lambda kv: -kv[1],
+    )
+    if not stable:
+        return {
+            "is_app_update": False,
+            "top_tokens": [],
+            "coverage": 0.0,
+            "lcs_median": 0.0,
+            "named_files": n,
+            "reason": "stable token yok",
+        }
+    stable_set = {t for t, _ in stable}
+    covered = sum(
+        1 for fn in named_filenames
+        if any(tk in fn.lower() for tk in stable_set)
+    )
+    coverage = covered / n
+    is_app = coverage >= coverage_min
+    lcs_med = 0.0
+    # Marjinal coverage'ı LCS ile doğrula; net karar varsa LCS yine de
+    # raporlamak için hesaplanıyor (log'da sinyal taşır).
+    if 0.7 <= coverage < coverage_min:
+        lcs_med = _pairwise_lcs_median(named_filenames)
+        if lcs_med >= lcs_threshold:
+            is_app = True
+    elif is_app:
+        lcs_med = _pairwise_lcs_median(named_filenames)
+    return {
+        "is_app_update": is_app,
+        "top_tokens": [(t, round(r, 2)) for t, r in stable[:5]],
+        "coverage": round(coverage, 3),
+        "lcs_median": round(lcs_med, 3),
+        "named_files": n,
+    }
+
+
 def _photo_size(photo) -> int:
     """Approximate byte size of the largest available photo resolution.
     Telethon photos expose either ``PhotoSize.size`` (single int) or
@@ -1721,7 +2358,8 @@ async def _sample_entity_messages(
 
     Returns:
         (file_count, breakdown, last_message_at, sampled,
-         total_size, text_parts, fname_counts, unnamed_count)
+         total_size, text_parts, fname_counts, unnamed_count,
+         named_filenames)
     """
     file_count = 0
     breakdown: Dict[str, int] = {k: 0 for k in list(_FILE_GROUPS.keys()) + ["other"]}
@@ -1731,6 +2369,10 @@ async def _sample_entity_messages(
     text_parts: List[str] = []
     fname_counts: Dict[str, int] = {}
     unnamed_count = 0
+    # App-update-detector için yalnızca insanın verdiği gerçek dosya adlarını
+    # topla. video_42.mp4 / photo_42.jpg gibi sentetik isimler tüm "photo"
+    # token'ında 1.0 DF üretip detector'ı false-positive verirdi.
+    named_filenames: List[str] = []
     try:
         async for msg in client.iter_messages(entity, limit=sample_limit):
             sampled += 1
@@ -1751,7 +2393,9 @@ async def _sample_entity_messages(
                 grp = _file_group(ext)
                 breakdown[grp] += 1
                 fname_counts[fname] = fname_counts.get(fname, 0) + 1
-                if not is_named:
+                if is_named:
+                    named_filenames.append(fname)
+                else:
                     unnamed_count += 1
                 msg_date = msg.date
                 if msg_date and msg_date.tzinfo is None:
@@ -1787,12 +2431,16 @@ async def _sample_entity_messages(
     except Exception as e:
         logger.debug(f"message sample failed for {username}: {e}")
     return (file_count, breakdown, last_message_at, sampled,
-            total_size, text_parts, fname_counts, unnamed_count)
+            total_size, text_parts, fname_counts, unnamed_count,
+            named_filenames)
 
 
 async def _enrich_one(client, candidate_id: int, username: str, sample_limit: int,
                        cand: Optional[dict] = None, temp_join_enabled: bool = False,
-                       skip_old_channels: bool = True) -> bool:
+                       skip_old_channels: bool = True) -> Tuple[bool, Optional[str]]:
+    """Returns (success, reason). On failure `reason` is a short human-readable
+    string the caller surfaces in the avlama log — previously every failure
+    came through as a bare 'failed' line with no context."""
     # Prefer cached peer to avoid ResolveUsernameRequest (strict daily limit).
     entity = None
     if cand:
@@ -1813,22 +2461,23 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             # disappears from candidate lists and never comes back via stage 1/2.
             await database.add_to_blacklist(username, "auto: username invalid/not occupied")
             await database.delete_hunter_candidate(candidate_id)
-            return False
+            return False, "username yok / silinmiş → kara listeye alındı"
         except ChannelPrivateError:
             # Inaccessible to this account — blacklist + delete (try a different
             # account by un-blacklisting it manually if you want to retry).
             await database.add_to_blacklist(username, "auto: private/inaccessible")
             await database.delete_hunter_candidate(candidate_id)
-            return False
+            return False, "özel kanal / erişilemiyor → kara listeye alındı"
         except FloodWaitError as e:
             logger.warning(f"FloodWait {e.seconds}s on get_entity({username})")
             raise
         except Exception as e:
             # Unknown errors (network, parse, etc.): blacklist + delete to avoid
             # it showing up forever. User can clean blacklist if needed.
-            await database.add_to_blacklist(username, f"auto: {str(e)[:150]}")
+            err_msg = str(e)[:150]
+            await database.add_to_blacklist(username, f"auto: {err_msg}")
             await database.delete_hunter_candidate(candidate_id)
-            return False
+            return False, f"{type(e).__name__}: {err_msg} → kara listeye alındı"
 
     is_channel = isinstance(entity, Channel)
     title = clean_title(getattr(entity, "title", None) or username)
@@ -1846,7 +2495,8 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
     # Sample recent messages. We deliberately do NOT use server-side
     # InputMessagesFilterDocument because it excludes video/audio documents.
     (file_count, breakdown, last_message_at, sampled,
-     total_size, text_parts, fname_counts, unnamed_count) = await _sample_entity_messages(
+     total_size, text_parts, fname_counts, unnamed_count,
+     named_filenames) = await _sample_entity_messages(
         client, entity, candidate_id, username, sample_limit
     )
 
@@ -1860,7 +2510,8 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             _temp_joined = True
             logger.info(f"Enrich: temp-joining @{username} (0 docs as non-member)")
             (file_count, breakdown, last_message_at, sampled,
-             total_size, text_parts, fname_counts, unnamed_count) = await _sample_entity_messages(
+             total_size, text_parts, fname_counts, unnamed_count,
+             named_filenames) = await _sample_entity_messages(
                 client, entity, candidate_id, username, sample_limit
             )
         except FloodWaitError:
@@ -1882,6 +2533,146 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
         if last_message_at.tzinfo is None:
             last_message_at = last_message_at.replace(tzinfo=timezone.utc)
         days_since = (datetime.now(timezone.utc) - last_message_at).total_seconds() / 86400
+
+    # ── App-update channel detection (data-driven, no fixed noise list) ──
+    # Bir kanal aynı uygulamanın N farklı sürümünü dağıtıyorsa (örn. APK
+    # update kanalı) detector bunu yakalar → kara listeye yazıp adayı sil.
+    # Hunter pipeline'a Stage 3 üzerinden hem manuel hem zamanlanmış akışta
+    # girdiği için ek entegrasyon gerekmiyor.
+    app_det = _detect_app_update_channel(named_filenames)
+    if app_det and app_det.get("is_app_update"):
+        top_tokens_str = ", ".join(
+            f"{tok}({pct})" for tok, pct in app_det.get("top_tokens", [])
+        ) or "—"
+        cov = app_det.get("coverage", 0)
+        lcs = app_det.get("lcs_median", 0)
+        n_named = app_det.get("named_files", 0)
+        label_token = (app_det.get("top_tokens") or [("?", 0)])[0][0]
+        bl_reason = (
+            f"app-update kanalı (≈{label_token}, coverage {cov:.0%}, "
+            f"lcs {lcs:.2f}, {n_named} dosya)"
+        )
+        try:
+            await database.add_to_blacklist(username, f"auto: {bl_reason}")
+        except Exception as _bl_e:
+            logger.warning(f"Blacklist insert failed for @{username}: {_bl_e}")
+        try:
+            await database.delete_hunter_candidate(candidate_id)
+        except Exception as _del_e:
+            logger.warning(f"Delete candidate failed for @{username}: {_del_e}")
+        _emit_event(
+            "stage3",
+            (f"@{username}: 📱 app-update kanalı tespit → kara listeye eklendi · "
+             f"baskın: {label_token} · coverage {cov:.0%} · "
+             f"LCS medyanı {lcs:.2f} · {n_named} adlı dosya · "
+             f"stable tokens: {top_tokens_str}"),
+            "warn",
+            key="hl.stage3.appUpdateBlacklisted",
+            params={
+                "username": username,
+                "label": label_token,
+                "coverage": cov,
+                "lcs": lcs,
+                "named": n_named,
+                "tokens": app_det.get("top_tokens", []),
+            },
+        )
+        return False, f"app-update kanalı (≈{label_token}, coverage {cov:.0%}) → kara listeye eklendi"
+    elif app_det:
+        # Detector çalıştı ama negatif — yine de log'da diagnostic bırak,
+        # özellikle marjinal coverage (0.5-0.84) durumları için.
+        cov = app_det.get("coverage", 0)
+        if cov >= 0.5:
+            _emit_event(
+                "stage3",
+                (f"@{username}: app-update şüphesi (coverage {cov:.0%}) ama eşik altında — devam"),
+                "info",
+                key="hl.stage3.appUpdateMaybe",
+                params={
+                    "username": username, "coverage": cov,
+                    "tokens": app_det.get("top_tokens", []),
+                },
+            )
+
+    # ── Rule: image+video majority → blacklist ──
+    # Kullanıcı kuralı: resim + video toplamı toplam dosyanın yarısından
+    # fazlaysa kanal medya-ağırlıklı sayılır → kara liste. Eşik > 0.5 (50/50
+    # durumu kalır).
+    if file_count >= 20:
+        media_count = breakdown.get("image", 0) + breakdown.get("video", 0)
+        media_ratio = media_count / file_count
+        if media_ratio > 0.5:
+            reason = (
+                f"resim+video {media_ratio:.0%} ({media_count}/{file_count}) — "
+                f"medya-ağırlıklı kanal"
+            )
+            try:
+                await database.add_to_blacklist(username, f"auto: {reason}")
+            except Exception as _e:
+                logger.warning(f"Blacklist insert failed for @{username}: {_e}")
+            try:
+                await database.delete_hunter_candidate(candidate_id)
+            except Exception as _e:
+                logger.warning(f"Delete candidate failed for @{username}: {_e}")
+            _emit_event(
+                "stage3",
+                f"@{username}: 🎬 {reason} → kara listeye eklendi",
+                "warn",
+                key="hl.stage3.mediaHeavyBlacklisted",
+                params={
+                    "username": username,
+                    "media_ratio": round(media_ratio, 3),
+                    "image": breakdown.get("image", 0),
+                    "video": breakdown.get("video", 0),
+                    "file_count": file_count,
+                },
+            )
+            return False, f"medya-ağırlıklı ({media_ratio:.0%}) → kara listeye eklendi"
+
+    # ── Rule: dominant non-Latin script vs UI language ──
+    # named_filenames sentetik isimler hariç gerçek dosya adlarını içerir.
+    # Eğer dosya adlarının yarısından fazlası kullanıcının UI dilinde
+    # okunamayan bir scriptte ise (çince/japonca/korece/arapça/…) → kara
+    # liste. Latin scripti her zaman kabul; Cyrillic sadece RU UI'da kabul;
+    # CJK sadece ZH UI'da kabul.
+    if len(named_filenames) >= 15:
+        dom_script, dom_ratio, n_named = _channel_dominant_script(named_filenames)
+        if dom_script and dom_ratio > 0.5:
+            ui_lang = (settings_for_kw_outer := None)
+            try:
+                _settings = await database.get_hunter_settings()
+                ui_lang = (_settings.get("ui_language") or "tr").strip().lower()
+            except Exception:
+                ui_lang = "tr"
+            acceptable = _SCRIPT_ACCEPT_BY_LANG.get(ui_lang, {"latin"})
+            if dom_script not in acceptable:
+                reason = (
+                    f"dosya adlarının %{int(dom_ratio*100)}'i {dom_script} script — "
+                    f"UI dili '{ui_lang}' bu scripti okumuyor"
+                )
+                try:
+                    await database.add_to_blacklist(username, f"auto: {reason}")
+                except Exception as _e:
+                    logger.warning(f"Blacklist insert failed for @{username}: {_e}")
+                try:
+                    await database.delete_hunter_candidate(candidate_id)
+                except Exception as _e:
+                    logger.warning(f"Delete candidate failed for @{username}: {_e}")
+                _emit_event(
+                    "stage3",
+                    f"@{username}: 🈲 {reason} → kara listeye eklendi",
+                    "warn",
+                    key="hl.stage3.foreignScriptBlacklisted",
+                    params={
+                        "username": username, "script": dom_script,
+                        "ratio": round(dom_ratio, 3), "ui_lang": ui_lang,
+                        "named_files": n_named,
+                    },
+                )
+                return False, (
+                    f"{dom_script} script %{int(dom_ratio*100)} (UI dili '{ui_lang}') "
+                    f"→ kara listeye eklendi"
+                )
 
     # ── Derived signals for the new score ──
     # 1) Keyword match — pull the user's interest keywords from settings and
@@ -1914,15 +2705,79 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
     # we actually retrieved files (file_count > 0); if history was restricted
     # and we got nothing, we skip this check to avoid false-positives.
     if skip_old_channels and file_count > 0 and days_since is not None and days_since > 365:
-        logger.info(f"Enrich: @{username} skipped — last file {int(days_since)}d ago (>1 year)")
-        await database.update_hunter_candidate(candidate_id, {
-            "title": title, "description": (description or "")[:500],
-            "is_channel": is_channel, "members": members,
-            "peer_id": pid, "access_hash": ahash,
-            "status": "rejected",
-            "error": f"Son dosya {int(days_since)} gün önce (1 yıldan eski)",
-        })
-        return False
+        # User override: inactive channels are normally rejected, but if their
+        # non-media library (archive + document + software + other) exceeds
+        # 1000 files, the channel is worth keeping. The standard 200-sample
+        # can't reach 1000, so we widen the scan when the sample already
+        # contains some non-media (pure-media samples skip the round-trip).
+        NON_MEDIA_KEEP_THRESHOLD = 1000
+        DEEPER_SAMPLE_LIMIT      = 3000
+        nonmedia_sample = (
+            breakdown.get("archive", 0) + breakdown.get("document", 0)
+            + breakdown.get("software", 0) + breakdown.get("other", 0)
+        )
+        promoted = False
+        if nonmedia_sample > 0:
+            _emit_event(
+                "stage3",
+                f"@{username}: eski ama doc/arşiv var → daha geniş tarama ({DEEPER_SAMPLE_LIMIT} mesaj)",
+                "info", key="hl.stage3.oldButProbing",
+                params={"username": username, "limit": DEEPER_SAMPLE_LIMIT},
+            )
+            try:
+                (fc2, bd2, lat2, sa2, ts2, tp2, fnc2, unc2, _nf2) = await _sample_entity_messages(
+                    client, entity, candidate_id, username, DEEPER_SAMPLE_LIMIT
+                )
+            except FloodWaitError:
+                raise
+            except Exception as _e:
+                logger.warning(f"Enrich: deeper sample for old @{username} failed: {_e}")
+                fc2, bd2, lat2, sa2 = 0, breakdown, last_message_at, sampled
+                ts2, tp2, fnc2, unc2 = total_size, text_parts, fname_counts, unnamed_count
+            nonmedia_deeper = (
+                bd2.get("archive", 0) + bd2.get("document", 0)
+                + bd2.get("software", 0) + bd2.get("other", 0)
+            )
+            if nonmedia_deeper > NON_MEDIA_KEEP_THRESHOLD:
+                # Override rejection — use the deeper sample's numbers.
+                file_count, breakdown, last_message_at = fc2, bd2, lat2
+                sampled, total_size, text_parts = sa2, ts2, tp2
+                fname_counts, unnamed_count = fnc2, unc2
+                avg_size  = int(total_size / file_count) if file_count else 0
+                diversity = sum(1 for v in breakdown.values() if v > 0)
+                if last_message_at:
+                    if last_message_at.tzinfo is None:
+                        last_message_at = last_message_at.replace(tzinfo=timezone.utc)
+                    days_since = (datetime.now(timezone.utc) - last_message_at).total_seconds() / 86400
+                if file_count:
+                    unique_fnames  = len(fname_counts)
+                    duplicate_ratio = max(0.0, (file_count - unique_fnames) / file_count)
+                    unnamed_ratio   = unnamed_count / file_count
+                else:
+                    duplicate_ratio = unnamed_ratio = 0.0
+                score = _score_breakdown(
+                    file_count, sampled or sample_limit, members or 0, diversity,
+                    days_since or 999,
+                    keyword_hits=keyword_hits, avg_size=avg_size,
+                    duplicate_ratio=duplicate_ratio, unnamed_ratio=unnamed_ratio,
+                )
+                _emit_event(
+                    "stage3",
+                    f"@{username}: son dosya {int(days_since)}g eski ama {nonmedia_deeper} doc/arşiv → reddedilmedi",
+                    "info", key="hl.stage3.oldButRich",
+                    params={"username": username, "days": int(days_since), "nonmedia": nonmedia_deeper},
+                )
+                promoted = True
+        if not promoted:
+            logger.info(f"Enrich: @{username} skipped — last file {int(days_since)}d ago (>1 year)")
+            await database.update_hunter_candidate(candidate_id, {
+                "title": title, "description": (description or "")[:500],
+                "is_channel": is_channel, "members": members,
+                "peer_id": pid, "access_hash": ahash,
+                "status": "rejected",
+                "error": f"Son dosya {int(days_since)} gün önce (1 yıldan eski)",
+            })
+            return False, f"son dosya {int(days_since)} gün eski (>1 yıl) → reddedildi"
 
     await database.update_hunter_candidate(candidate_id, {
         "title": title,
@@ -1952,7 +2807,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
             await remember_learned_keywords(learned)
     except Exception as _kw_e:
         logger.debug(f"learn keywords failed for {username}: {_kw_e}")
-    return True
+    return True, None
 
 
 async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
@@ -1980,7 +2835,7 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
         _emit_event("stage3", "Telegram hesabı yetkisiz; stage 3 atlanıyor", "warn", key="hl.stage3.tgUnauth")
         return 0, 0
 
-    rows, _ = await database.list_hunter_candidates(status="discovered", limit=budget, offset=0, sort="discovered_at")
+    rows, _ = await database.list_hunter_candidates(status="discovered", limit=budget, offset=0, sort_by="discovered_at", sort_dir="asc")
     enriched, failed = 0, 0
     sample_limit = int(settings.get("tg_messages_to_sample") or 200)
     temp_join_enabled = bool(settings.get("tg_temp_join_enabled"))
@@ -2018,13 +2873,61 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
         status["current"] = username
         status["progress"] += 1
         try:
-            ok = await _enrich_one(client, r["id"], username, sample_limit, cand=dict(r), temp_join_enabled=temp_join_enabled, skip_old_channels=skip_old_channels)
+            ok, fail_reason = await _enrich_one(client, r["id"], username, sample_limit, cand=dict(r), temp_join_enabled=temp_join_enabled, skip_old_channels=skip_old_channels)
             if ok:
                 enriched += 1
-                _emit_event("stage3", f"@{username}: enriched ✓", key="hl.stage3.enriched", params={"username": username})
+                # Re-fetch to surface the actual numbers we just wrote so the
+                # avlama log isn't just "enriched ✓" with no payload.
+                try:
+                    fresh = await database.get_hunter_candidate(r["id"]) or {}
+                except Exception:
+                    fresh = {}
+                _members = fresh.get("members")
+                _samp    = fresh.get("file_count_sample") or 0
+                _est     = fresh.get("estimated_files") or 0
+                _score   = float(fresh.get("score") or 0.0)
+                _bd_raw  = fresh.get("file_type_breakdown") or {}
+                if isinstance(_bd_raw, str):
+                    try: _bd_raw = json.loads(_bd_raw)
+                    except Exception: _bd_raw = {}
+                # Top 3 non-zero file types for the log summary.
+                _top = sorted(
+                    ((k, v) for k, v in _bd_raw.items() if v),
+                    key=lambda kv: kv[1], reverse=True,
+                )[:3]
+                _bd_str = (", ".join(f"{k}:{v}" for k, v in _top)) or "—"
+                _members_str = (
+                    f"{int(_members):,}".replace(",", ".") if isinstance(_members, (int, float)) and _members
+                    else "—"
+                )
+                # Human-readable summary; key/params keep the structured form
+                # so i18n / log filters can use them.
+                msg = (
+                    f"@{username}: ✓ {_samp} mesaj örneklendi → ~{_est} dosya · "
+                    f"üye {_members_str} · skor {_score:.1f} · {_bd_str}"
+                )
+                _emit_event(
+                    "stage3", msg,
+                    key="hl.stage3.enrichedDetail",
+                    params={
+                        "username": username,
+                        "sampled": _samp,
+                        "estimated": _est,
+                        "members": _members or 0,
+                        "score": round(_score, 2),
+                        "breakdown": _bd_raw,
+                    },
+                )
             else:
                 failed += 1
-                _emit_event("stage3", f"@{username}: failed", "warn", key="hl.stage3.failed", params={"username": username})
+                reason = fail_reason or "bilinmeyen sebep"
+                _emit_event(
+                    "stage3",
+                    f"@{username}: ✗ {reason}",
+                    "warn",
+                    key="hl.stage3.failedDetail",
+                    params={"username": username, "reason": reason},
+                )
         except FloodWaitError as e:
             backoff = int(getattr(e, "seconds", 60))
             # A long FloodWait on ResolveUsernameRequest means the per-account
@@ -2054,6 +2957,18 @@ async def stage3_enrich_pending(settings: dict) -> Tuple[int, int]:
                     )
                     _emit_event("stage3", msg, "warn", key="hl.stage3.cacheOnlyMode", params={"hrs": hrs, "mins": mins})
                     status["error"] = None  # not a fatal error anymore
+                    # Persist the FloodWait window so the quota lightbox can show
+                    # "pencere ne zaman kapanıyor / ne kadar kaldı". Survives a
+                    # container restart unlike the in-memory `status` dict.
+                    try:
+                        from datetime import timedelta as _td
+                        await database.update_hunter_settings({
+                            "last_floodwait_until": datetime.utcnow() + _td(seconds=backoff),
+                            "last_floodwait_scope": "resolveUsername",
+                            "last_floodwait_seconds": int(backoff),
+                        })
+                    except Exception as _e:
+                        logger.warning(f"FloodWait persist failed: {_e}")
                 # Skip THIS candidate (it had no cache and triggered the limit)
                 # but continue processing the rest of the queue
                 skipped_no_cache += 1
@@ -2111,7 +3026,26 @@ async def run_hunter_once():
     seeds_found = enriched = failed = 0
     try:
         if status.get("cancel_requested"):
+            _emit_event("run", "Cancelled before stage 0", "warn", key="hl.run.cancelledStage0"); raise asyncio.CancelledError
+        if settings.get("similar_expand_enabled", True):
+            status["stage"] = "stage0"
+            status["stage_started_at"] = datetime.utcnow().isoformat()
+            status["stage_detail"] = {}
+            _emit_event("stage0", "Stage 0: Telegram benzer-kanal grafiği taranıyor",
+                         key="hl.stage0.preface")
+            try:
+                s0_added = await stage0_similar_expand(settings)
+                seeds_found += s0_added
+                status["seeds_found"] = seeds_found
+            except Exception as s0_err:
+                _emit_event(
+                    "stage0", f"Stage 0 hata: {s0_err}", "warn",
+                    key="hl.stage0.err", params={"err": str(s0_err)[:120]},
+                )
+        if status.get("cancel_requested"):
             _emit_event("run", "Cancelled before stage 1", "warn", key="hl.run.cancelledStage1"); raise asyncio.CancelledError
+        if status.get("skip_stage_requested"):
+            status["skip_stage_requested"] = False
         if settings.get("stage1_enabled"):
             status["stage"] = "stage1"
             status["stage_started_at"] = datetime.utcnow().isoformat()
@@ -2262,6 +3196,84 @@ def kick_run() -> bool:
     if status["running"]:
         return False
     _run_task = asyncio.create_task(run_hunter_once())
+    return True
+
+
+async def run_enrich_only():
+    """Stage-3-only entry point used by the "Zenginleştir" toolbar button.
+    Shares the same `status` lifecycle as a full run so the existing hunter
+    monitor + event log render its progress identically."""
+    global _run_task
+    async with _running_lock:
+        if status["running"]:
+            return
+        status.update({
+            "running": True, "stage": "stage3", "progress": 0, "total": 0,
+            "seeds_found": 0, "enriched": 0, "failed": 0,
+            "current": None, "error": None,
+            "started_at": datetime.utcnow().isoformat(), "finished_at": None,
+            "stage_detail": {},
+            "cancel_requested": False, "skip_stage_requested": False,
+            "stage_started_at": datetime.utcnow().isoformat(),
+        })
+        _emit_event(
+            "run",
+            "─── Sadece zenginleştirme turu başladı ───",
+            key="hl.run.enrichOnlyStarted",
+        )
+
+    settings = await database.get_hunter_settings()
+    run_id = await database.start_hunter_run(note="enrich-only")
+    enriched = failed = 0
+    try:
+        _emit_event(
+            "stage3",
+            "Stage 3: keşfedilen adaylar Telegram üzerinden zenginleştiriliyor",
+            key="hl.stage3.start",
+        )
+        e, f = await stage3_enrich_pending(settings)
+        enriched, failed = e, f
+        status["enriched"] = enriched
+        status["failed"] = failed
+        _emit_event(
+            "stage3",
+            f"Stage 3 tamamlandı: {enriched} zenginleştirildi, {failed} başarısız",
+            key="hl.stage3.done",
+            params={"enriched": enriched, "failed": failed},
+        )
+        await database.update_hunter_settings({"last_run_at": datetime.utcnow()})
+    except Exception as e:
+        status["error"] = str(e)
+        logger.error(f"Enrich-only run failed: {e}", exc_info=True)
+        # Surface the failure in the visible hunter log so the user doesn't
+        # stare at a frozen "started" line forever.
+        _emit_event(
+            "run",
+            f"Zenginleştirme başarısız: {str(e)[:200]}",
+            "warn",
+            key="hl.run.enrichOnlyFailed",
+            params={"err": str(e)[:200]},
+        )
+    finally:
+        status["stage"] = None
+        status["running"] = False
+        status["finished_at"] = datetime.utcnow().isoformat()
+        try:
+            await database.finish_hunter_run(
+                run_id, seeds_found=0, enriched=enriched,
+                failed=failed, error=status.get("error"),
+            )
+        except Exception:
+            pass
+
+
+def kick_enrich_only() -> bool:
+    """Start a Stage-3-only enrichment in the background. Returns False if a
+    hunter run is already in flight."""
+    global _run_task
+    if status["running"]:
+        return False
+    _run_task = asyncio.create_task(run_enrich_only())
     return True
 
 
