@@ -682,8 +682,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hd-actions-help{display:flex;flex-direction:column;gap:4px;margin-top:14px;padding:10px 12px;background:var(--bg-3);border-radius:7px;font-size:.74rem;color:var(--text-2);line-height:1.45}
 .hd-actions-help .hd-help-row{display:flex;gap:6px}
 .hd-actions-help .hd-help-row b{flex-shrink:0;min-width:80px;color:var(--accent-h)}
-#hunter-panel{flex:1;overflow-y:auto;display:none;flex-direction:column;background:var(--bg-2);padding:12px 16px;gap:10px;min-height:0}
-.hunter-toolbar{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:none;border-bottom:1px solid var(--border-1);padding:8px 16px;flex-wrap:wrap;position:sticky;top:0;z-index:10;margin:-12px -16px 0;flex-shrink:0}
+#hunter-panel{flex:1;overflow-y:auto;display:none;flex-direction:column;background:var(--bg-2);padding:0 16px 12px;gap:10px;min-height:0}
+.hunter-toolbar{display:flex;align-items:center;gap:8px;background:var(--bg-2);border:none;border-bottom:1px solid var(--border-1);padding:8px 16px;flex-wrap:wrap;position:sticky;top:0;z-index:10;margin:0 -16px;flex-shrink:0}
 .hunter-flex{flex:1}
 .hunter-live{font-size:.75rem;color:var(--text-3);font-style:italic}
 .hunter-btn-primary{padding:5px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.78rem;font-weight:600}
@@ -828,6 +828,64 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hh-body .hh-tag{display:inline-block;padding:1px 7px;background:var(--bg-3);border:1px solid var(--border-2);border-radius:99px;font-size:.7rem;color:var(--text-2);margin-right:4px;font-family:'Cascadia Code',monospace}
 .hh-body .hh-good{color:#16a34a;font-weight:600}
 .hh-body .hh-warn{color:#d97706;font-weight:600}
+.hh-body .hh-dim{color:var(--text-3);font-size:.78rem;margin-top:-4px;margin-bottom:8px}
+
+.hl-quota-link{color:var(--accent-h);margin-left:6px;font-size:.78rem;text-decoration:underline;cursor:pointer}
+.hl-quota-link:hover{color:var(--accent);text-decoration:none}
+
+.hq-fw-active{background:#fff1f0;border:1px solid #ffccc7;border-radius:8px;padding:10px 14px;margin-bottom:10px}
+[data-theme="dark"] .hq-fw-active,[data-theme="nord"] .hq-fw-active,[data-theme="forest"] .hq-fw-active,[data-theme="slate"] .hq-fw-active,[data-theme="crimson"] .hq-fw-active,[data-theme="rosepine"] .hq-fw-active{background:#3f1a1a;border-color:#7a2828}
+.hq-fw-active h3{color:#e94d4d !important;margin-top:0 !important;border-bottom:none !important}
+.hq-fw-active ul{list-style:none;margin-left:0;padding-left:0}
+.hq-fw-active li{margin-bottom:3px}
+.hq-countdown{font-family:'Cascadia Code',monospace;font-weight:700;color:#e94d4d}
+
+.hq-fw-clear{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:9px 14px;margin-bottom:10px;color:#166534}
+[data-theme="dark"] .hq-fw-clear,[data-theme="nord"] .hq-fw-clear,[data-theme="forest"] .hq-fw-clear,[data-theme="slate"] .hq-fw-clear,[data-theme="crimson"] .hq-fw-clear,[data-theme="rosepine"] .hq-fw-clear{background:#14302a;border-color:#1f7048;color:#86efac}
+
+.hq-bar-wrap{margin:8px 0 6px}
+.hq-bar{width:100%;height:14px;background:var(--bg-3);border-radius:7px;overflow:hidden;border:1px solid var(--border-2)}
+.hq-bar-fill{height:100%;transition:width .3s ease}
+.hq-bar-label{margin-top:4px;font-size:.78rem;color:var(--text-2)}
+
+.hq-table{width:100%;border-collapse:collapse;margin:8px 0 14px;font-size:.78rem}
+.hq-table th,.hq-table td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--border-2);vertical-align:top}
+.hq-table th{color:var(--text-3);font-weight:600;background:var(--bg-3);font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}
+.hq-cost{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.7rem;font-weight:600}
+.hq-tag{font-size:.7rem;color:var(--accent-h);font-weight:600}
+
+/* Right-click context menu */
+.ctx-menu{position:fixed;z-index:9999;background:var(--bg-2);border:1px solid var(--border-2);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px;min-width:200px;display:none}
+.ctx-menu .ctx-item{display:block;width:100%;background:transparent;border:none;text-align:left;padding:8px 12px;border-radius:5px;font-size:.84rem;color:var(--text-1);cursor:pointer;white-space:nowrap}
+.ctx-menu .ctx-item:hover:not(.disabled){background:var(--bg-info);color:var(--accent-h)}
+.ctx-menu .ctx-item.disabled{opacity:.45;cursor:not-allowed}
+.ctx-menu .ctx-sep{height:1px;background:var(--border-2);margin:4px 6px}
+
+/* Similar channels cards */
+.sc-card{border:1px solid var(--border-2);border-radius:10px;padding:12px 14px;margin-bottom:12px;background:var(--bg-3)}
+.sc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px}
+.sc-title-wrap{flex:1;min-width:0}
+.sc-title{font-weight:700;color:var(--text-1);font-size:.92rem;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sc-uname{color:var(--accent-h);font-size:.78rem;font-family:'Cascadia Code',monospace}
+.sc-actions{display:flex;gap:6px;flex-shrink:0}
+.sc-btn{padding:4px 10px;font-size:.74rem;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);color:var(--text-1);text-decoration:none;cursor:pointer;white-space:nowrap}
+.sc-btn:hover{background:var(--bg-info);color:var(--accent-h);border-color:var(--accent-soft)}
+.sc-meta{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:.76rem;color:var(--text-2);margin-bottom:7px;align-items:center}
+.sc-badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.7rem;font-weight:600}
+.sc-b-follow{background:#dbeafe;color:#1d4ed8}
+.sc-b-cand{background:#fef3c7;color:#a16207}
+.sc-b-bl{background:#fee2e2;color:#b91c1c}
+.sc-b-ok{background:#dcfce7;color:#166534}
+[data-theme="dark"] .sc-b-follow,[data-theme="nord"] .sc-b-follow,[data-theme="forest"] .sc-b-follow,[data-theme="slate"] .sc-b-follow,[data-theme="crimson"] .sc-b-follow,[data-theme="rosepine"] .sc-b-follow{background:#1e3a8a;color:#bfdbfe}
+[data-theme="dark"] .sc-b-cand,[data-theme="nord"] .sc-b-cand,[data-theme="forest"] .sc-b-cand,[data-theme="slate"] .sc-b-cand,[data-theme="crimson"] .sc-b-cand,[data-theme="rosepine"] .sc-b-cand{background:#713f12;color:#fde68a}
+[data-theme="dark"] .sc-b-bl,[data-theme="nord"] .sc-b-bl,[data-theme="forest"] .sc-b-bl,[data-theme="slate"] .sc-b-bl,[data-theme="crimson"] .sc-b-bl,[data-theme="rosepine"] .sc-b-bl{background:#7f1d1d;color:#fecaca}
+[data-theme="dark"] .sc-b-ok,[data-theme="nord"] .sc-b-ok,[data-theme="forest"] .sc-b-ok,[data-theme="slate"] .sc-b-ok,[data-theme="crimson"] .sc-b-ok,[data-theme="rosepine"] .sc-b-ok{background:#14532d;color:#86efac}
+.sc-bd{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.sc-pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:.7rem;font-weight:600}
+.sc-files{display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:.74rem;font-family:'Cascadia Code',monospace;background:var(--bg-2);padding:8px 10px;border-radius:6px;border:1px solid var(--border-3);max-height:180px;overflow-y:auto}
+.sc-file{display:contents}
+.sc-fname{color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sc-fsize{color:var(--text-3);text-align:right}
 
 
 
@@ -1195,6 +1253,19 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 .td-toggle input:checked+.td-toggle-track{background:var(--accent)}
 .td-toggle-track::after{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;background:#fff;border-radius:99px;transition:transform .15s}
 .td-toggle input:checked~.td-toggle-track::after{transform:translateX(16px)}
+/* ── Leave channel modal ── */
+#leave-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:220;display:none;align-items:center;justify-content:center}
+#leave-modal-overlay.open{display:flex}
+#leave-modal{background:var(--bg-2);border-radius:12px;padding:22px 24px;width:380px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+#leave-modal h3{font-size:.95rem;font-weight:700;color:var(--text-1);margin:0 0 6px}
+#leave-modal .lm-sub{font-size:.78rem;color:var(--text-4);margin-bottom:18px;line-height:1.5}
+.lm-btn{display:flex;align-items:center;gap:10px;width:100%;padding:11px 14px;border-radius:8px;border:1px solid var(--border-2);background:var(--bg-3);cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text-1);margin-bottom:8px;text-align:left}
+.lm-btn:hover{border-color:var(--accent);background:var(--bg-4)}
+.lm-btn-icon{font-size:1.1rem;flex-shrink:0}
+.lm-btn-text{}
+.lm-btn-desc{font-size:.72rem;color:var(--text-4);font-weight:400;display:block;margin-top:1px}
+.lm-cancel{width:100%;padding:8px;border:none;background:none;color:var(--text-4);font-size:.8rem;cursor:pointer;border-radius:6px;margin-top:2px}
+.lm-cancel:hover{color:var(--text-2);background:var(--bg-4)}
 /* ── Download destinations modal ── */
 #dl-dest-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:center;justify-content:center}
 #dl-dest-overlay.open{display:flex}
@@ -1874,6 +1945,9 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <button class="ch-btn" id="ch-show-hidden" onclick="channelsToggleShowHidden()" data-i18n-title="channels.showHiddenTip" title="Sadece gizlenmiş kanalları göster / tüm aktifleri göster arasında geçiş yapar.">
             <span data-i18n="channels.showHidden">Gizliler</span>
           </button>
+          <button class="ch-btn" id="ch-show-excluded" onclick="channelsToggleShowExcluded()" data-i18n-title="channels.showExcludedTip" title="Takip edilmeyen (ayrıldığınız) kanalları göster." style="display:none">
+            <span data-i18n="channels.showExcluded">Takip Edilmeyenler</span>
+          </button>
           <span id="ch-count-pill" class="flt-count-pill">—</span>
           <span class="ch-spacer"></span>
           <span id="ch-bulk-bar" style="display:none">
@@ -1987,7 +2061,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
       <!-- Downloads tab -->
       <div id="downloads-panel" style="display:none">
         <div id="dl-hist-hd">
-          <span data-i18n="downloads.title">İndirmeler</span> <span id="dl-hist-count" style="color:var(--text-4);font-weight:400"></span>
+          <span data-i18n="downloads.title">İndirmeler</span> <span id="dl-hist-count" style="color:var(--text-4);font-weight:400"></span> <span id="dl-total-speed" style="color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums"></span>
           <span id="dl-space-notice" style="display:none;margin-left:10px;font-size:.72rem;color:var(--text-3);font-weight:400;align-items:center;gap:8px">⚠ <span data-i18n="downloads.spaceNotice">Bu dosyalar sunucu diskinde yer kaplar. İhtiyacınız bittiğinde tarayıcıya indirip silmeyi unutmayın.</span><button onclick="deleteAllLocalFiles()" data-i18n="dl.deleteAll" style="font-size:.7rem;padding:2px 8px;border:1px solid #fca5a5;border-radius:5px;background:#fee2e2;color:#dc2626;cursor:pointer;white-space:nowrap;flex-shrink:0">🗑 Tümünü Sil</button></span>
           <span id="dl-bulk-actions" style="display:none;align-items:center;gap:6px;margin-left:14px">
             <span id="dl-bulk-count" style="font-size:.72rem;color:var(--accent-h);font-weight:600"></span>
@@ -2059,6 +2133,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <span class="hunter-flex"></span>
           <span id="hunter-total-count" class="hunter-total-pill" style="display:none"></span>
           <button class="hunter-btn-alt" onclick="hunterClearList()" data-i18n="hunter.clearListBtn" title="">🗑 Listeyi Temizle</button>
+          <button class="hunter-btn-alt" id="hunter-enrich-btn" onclick="hunterEnrichDiscovered()" data-i18n-title="hunter.enrichTip" title="'Keşfedildi' durumundaki adayları Telegram üzerinden zenginleştirir (örnekleme + skor + dosya tipi dağılımı).">✨ <span data-i18n="hunter.enrichBtn">Keşfedileni Zenginleştir</span></button>
           <button class="hunter-btn-alt" id="hunter-settings-btn" onclick="hunterToggleSettings()" data-i18n="hunter.settingsBtn">⚙ Ayarlar</button>
           <select id="hunter-filter-status" class="hunter-sel" onchange="hunterFilterChange()">
             <option value="" data-i18n="hunter.statusAll">Tüm durumlar</option>
@@ -2077,6 +2152,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <h3 data-i18n="hunter.settingsTitle">Avcı Ayarları</h3>
           <div class="hunter-grid">
             <label class="hunter-row"><span data-i18n="hunter.enabled">Etkin</span><span class="hf-help" data-i18n-help="hunter.helpEnabled">?</span><input type="checkbox" id="h-enabled"></label>
+            <label class="hunter-row"><span data-i18n="hunter.stage0">Stage 0: Benzer kanal grafiği (Telegram)</span><span class="hf-help" data-i18n-help="hunter.helpStage0">?</span><input type="checkbox" id="h-stage0"></label>
             <label class="hunter-row"><span data-i18n="hunter.stage1">Stage 1: Dahili tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage1">?</span><input type="checkbox" id="h-stage1"></label>
             <label class="hunter-row"><span data-i18n="hunter.stage2">Stage 2: Web tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage2">?</span><input type="checkbox" id="h-stage2"></label>
             <label class="hunter-row"><span data-i18n="hunter.magnetHunt">🧲 Magnet Avı (Stage 2 ↔ 3 arası)</span><span class="hf-help" data-i18n-help="hunter.helpMagnetHunt">?</span><input type="checkbox" id="h-magnethunt"></label>
@@ -2213,6 +2289,10 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
       </div>
 
       <div id="status-panel" style="display:none"></div>
+
+      <div id="hunter-quota-overlay" class="hunter-overlay" onclick="hunterQuotaOverlayClick(event)">
+        <div class="hunter-help-modal" id="hunter-quota-body"></div>
+      </div>
 
       <div id="watch-banner" style="display:none"></div>
 
@@ -2394,6 +2474,27 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   })();
 </script>
 <!-- Download destinations modal -->
+<div id="leave-modal-overlay">
+  <div id="leave-modal">
+    <h3 id="leave-modal-title"></h3>
+    <div class="lm-sub" id="leave-modal-sub"></div>
+    <button class="lm-btn" id="lm-btn-keep">
+      <span class="lm-btn-icon">📁</span>
+      <span class="lm-btn-text">
+        <span data-i18n="leaveModal.keepBtn">Dosyaları koru, ayrıl</span>
+        <span class="lm-btn-desc" data-i18n="leaveModal.keepDesc">Kanal verileri veritabanında kalır, takip dışına alınır</span>
+      </span>
+    </button>
+    <button class="lm-btn" id="lm-btn-purge" style="border-color:var(--danger,#e55)">
+      <span class="lm-btn-icon">🗑️</span>
+      <span class="lm-btn-text">
+        <span data-i18n="leaveModal.purgeBtn">Dosyaları sil, ayrıl</span>
+        <span class="lm-btn-desc" id="leave-modal-count-desc"></span>
+      </span>
+    </button>
+    <button class="lm-cancel" id="lm-btn-cancel" data-i18n="common.cancel">İptal</button>
+  </div>
+</div>
 <div id="dl-dest-overlay" onclick="if(event.target===this)closeDlDestModal()">
   <div id="dl-dest-modal">
     <h3 data-i18n="ddm.title">İndirme Seçenekleri</h3>
@@ -2433,6 +2534,49 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
     </div>
   </div>
 </div>
+<script>
+// Apply the saved active tab BEFORE app.js runs so the first paint already
+// shows the correct tab. Otherwise the user sees Files for ~300 ms while
+// uiAuthBoot + loadGroups resolve, then a jarring flip when switchTab fires.
+// This is a synchronous, no-deps replica of switchTab's DOM mutations.
+(function _restoreTabEarly() {
+  let saved;
+  try { saved = localStorage.getItem('tf_active_tab'); } catch (e) { return; }
+  if (!saved || saved === 'files') return;
+  const valid = ['channels','links','settings','downloads','status','hunter'];
+  if (!valid.includes(saved)) return;
+  const $ = id => document.getElementById(id);
+  // Highlight the tab button
+  ['files','channels','links','settings','downloads','status','hunter'].forEach(t => {
+    const el = $('tab-' + t);
+    if (el) el.classList.toggle('active', t === saved);
+  });
+  // Toggle the Files-shaped surface (table + filter bar + pagination)
+  const isLinks = saved === 'links';
+  const showTable = isLinks;  // only links uses the shared #table-wrap besides files
+  const fb = $('filter-bar');
+  if (fb) fb.className = 'filter-bar hidden-bar';
+  const lfb = $('link-filter-bar');
+  if (lfb) lfb.className = isLinks ? 'link-filter-bar' : 'link-filter-bar hidden-bar';
+  const tw = $('table-wrap');     if (tw) tw.style.display = showTable ? '' : 'none';
+  const pg = $('pagination');     if (pg) pg.style.display = showTable ? '' : 'none';
+  const ft = $('files-table');    if (ft) ft.style.display = 'none';
+  const lt = $('links-table');    if (lt) lt.style.display = isLinks ? '' : 'none';
+  // Show the saved tab's panel; the others already have inline display:none
+  const panels = {
+    channels:  'channels-panel',
+    settings:  'settings-panel',
+    downloads: 'downloads-panel',
+    status:    'status-panel',
+    hunter:    'hunter-panel',
+  };
+  const pid = panels[saved];
+  if (pid) {
+    const p = $(pid);
+    if (p) p.style.display = 'flex';
+  }
+})();
+</script>
 <script src="i18n.js"></script>
 <script src="app.js"></script>
 <script>

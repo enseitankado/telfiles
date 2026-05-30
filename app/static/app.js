@@ -36,6 +36,7 @@ const S = {
   hunterTotal: 0,
   dlSortBy: 'downloaded_at', dlSortDir: 'desc',
   showHidden: false,
+  showExcluded: false,
   groupSort: 'count',
   groupSortDir: 'desc',
   searchMode: localStorage.getItem('tf_search_mode') || 'exact',  // exact | hybrid
@@ -301,12 +302,39 @@ async function showApp() {
   show('app-shell');
   applySavedTheme();
   initColResize();
+  // Honor the previously-active tab BEFORE we kick off the rest of the boot
+  // sequence so we don't load Files unnecessarily — switchTab itself
+  // triggers the right tab's loaders.
+  let savedTab = null;
+  try {
+    const v = localStorage.getItem('tf_active_tab');
+    if (v && ['files','channels','links','settings','downloads','status','hunter'].includes(v)) {
+      savedTab = v;
+    }
+  } catch (e) {}
   await loadGroups();
   fetchStats();
   _initSemanticToggle();
   _initCaptionToggle();
-  loadFiles();
+  // Files is the initial DOM state. If saved tab differs, switch first so
+  // loadFiles below skips painting (the tab loaders inside switchTab fire
+  // for the active tab regardless).
+  if (savedTab && savedTab !== 'files') {
+    switchTab(savedTab);
+  } else {
+    loadFiles();
+  }
   loadActiveNotifications();
+  // One-time sync of the chosen UI language to the backend so the hunter
+  // enrichment can decide which non-Latin scripts (CJK/Arabic/etc.) are
+  // acceptable for this user. Idempotent if already up-to-date.
+  try {
+    fetch('/api/hunter/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ui_language: (typeof getLang === 'function' ? getLang() : 'tr') }),
+    }).catch(() => {});
+  } catch (e) {}
   pollSync();
   setInterval(pollSync, 5000);
   setInterval(updateNextSyncDisplay, 1000);
@@ -883,6 +911,7 @@ async function loadGroups() {
   // Channels tab uses the same dataset; keep it in sync after every refresh.
   if (typeof renderChannelsTable === 'function') renderChannelsTable();
   if (typeof _syncChannelsShowHiddenBtn === 'function') _syncChannelsShowHiddenBtn();
+  if (typeof _syncChannelsShowExcludedBtn === 'function') _syncChannelsShowExcludedBtn();
   if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
 }
 
@@ -995,6 +1024,7 @@ async function loadChannelsTab() {
   // Refresh the groups dataset first so the grid reflects the latest sync.
   await loadGroups();
   _syncChannelsShowHiddenBtn();
+  _syncChannelsShowExcludedBtn();
   renderChannelsTable();
 }
 
@@ -1010,6 +1040,27 @@ function _syncChannelsShowHiddenBtn() {
 
 function channelsToggleShowHidden() {
   S.showHidden = !S.showHidden;
+  if (S.showHidden) S.showExcluded = false;
+  _syncChannelsShowHiddenBtn();
+  _syncChannelsShowExcludedBtn();
+  renderChannelsTable();
+}
+
+function _syncChannelsShowExcludedBtn() {
+  const btn = document.getElementById('ch-show-excluded');
+  if (!btn) return;
+  btn.classList.toggle('active', !!S.showExcluded);
+  const exclCount = _groups.filter(g => g.excluded).length;
+  btn.textContent = S.showExcluded
+    ? t('channels.showAll')
+    : `${t('channels.showExcluded')}${exclCount ? ' · ' + exclCount : ''}`;
+  btn.style.display = exclCount > 0 || S.showExcluded ? '' : 'none';
+}
+
+function channelsToggleShowExcluded() {
+  S.showExcluded = !S.showExcluded;
+  if (S.showExcluded) S.showHidden = false;
+  _syncChannelsShowExcludedBtn();
   _syncChannelsShowHiddenBtn();
   renderChannelsTable();
 }
@@ -1103,7 +1154,8 @@ function renderChannelsTable() {
     if (stFlt) {
       if (_chState(g) !== stFlt) return false;
     } else if (S.showHidden) { if (!g.hidden) return false; }
-      else                    { if ( g.hidden) return false; }
+      else if (S.showExcluded) { if (!g.excluded) return false; }
+      else                    { if (g.hidden || g.excluded) return false; }
     const nm = (g.display_name || g.name || '').toLowerCase();
     const un = (g.username || '').toLowerCase();
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
@@ -1164,7 +1216,7 @@ function renderChannelsTable() {
       : (g.excluded
           ? `<span class="ch-state ch-state-excl">${esc(t('channels.stUntracked'))}</span>`
           : `<span class="ch-state ch-state-active">${esc(t('channels.stActive'))}</span>`);
-    return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)">
+    return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)" oncontextmenu="event.preventDefault();_ctxMenuShowChannel(event, ${g.id}, ${JSON.stringify(user || '').replace(/"/g, '&quot;')})">
       <td class="chk-cell"><input type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();_chChk(event,${g.id},this.checked)"></td>
       <td class="num-cell">${i + 1}</td>
       <td class="ch-name-cell" title="${esc(name)}">${esc(name)}</td>
@@ -1271,6 +1323,12 @@ function closeDetailModal() {
   if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
   Object.keys(_hdDlPollers).forEach(k => _stopFileDlPoller(parseInt(k, 10)));
   _hdDlStatus = {};
+  // If we just finished a deep scan in this lightbox, the parent hunter grid
+  // may be holding stale estimated_files / deep_scan_total. Push a silent
+  // reload on close so the row reflects the new figures.
+  if (_hdScanState === 'done' && S.activeTab === 'hunter') {
+    try { hunterReloadCandidates(true); } catch (e) {}
+  }
   _currentDetailCid = null;
   _currentChannelGid = null;
   _currentDetailUsername = null;
@@ -1331,8 +1389,13 @@ function _bindChDetailActions() {
       }
       case 'ch-leave': {
         const name = g ? (g.display_name || g.name) : `#${gid}`;
-        if (!confirm(t('groups.leaveConfirm', { name }))) break;
-        const purge = confirm(t('groups.purgeConfirm', { count: (g?.file_count || 0).toLocaleString() }));
+        const fileCount = g?.file_count || 0;
+        const purge = await showLeaveModal({
+          title: t('leaveModal.title', { name }),
+          sub:   t('leaveModal.sub',   { name }),
+          countDesc: t('leaveModal.purgeDesc', { count: fileCount.toLocaleString() }),
+        });
+        if (purge === null) break;
         try {
           await api(`/api/groups/${gid}/leave?purge=${purge}`, { method: 'POST' });
           showToast(t('groups.leaveOk', { name: esc(name) }), 3000);
@@ -1665,8 +1728,13 @@ async function leaveGroup(e, id) {
   if (e) e.stopPropagation();
   const g = _groups.find(x => x.id === id);
   const name = g ? (g.display_name || g.name) : `#${id}`;
-  if (!confirm(t('groups.leaveConfirm', { name }))) return;
-  const purge = confirm(t('groups.purgeConfirm', { count: (g?.file_count||0).toLocaleString() }));
+  const fileCount = g?.file_count || 0;
+  const purge = await showLeaveModal({
+    title: t('leaveModal.title', { name }),
+    sub:   t('leaveModal.sub',   { name }),
+    countDesc: t('leaveModal.purgeDesc', { count: fileCount.toLocaleString() }),
+  });
+  if (purge === null) return;
   try {
     await api(`/api/groups/${id}/leave?purge=${purge}`, { method: 'POST' });
     showToast(t('groups.leaveOk', { name: esc(name) }), 3000);
@@ -1707,11 +1775,34 @@ async function bulkRescanGroups() {
   else        showToast(t('groups.rescanOk', { n: ids.length }), 3000);
 }
 
+function showLeaveModal({ title, sub, countDesc }) {
+  return new Promise(resolve => {
+    document.getElementById('leave-modal-title').textContent = title;
+    document.getElementById('leave-modal-sub').textContent = sub;
+    document.getElementById('leave-modal-count-desc').textContent = countDesc;
+    const overlay = document.getElementById('leave-modal-overlay');
+    overlay.classList.add('open');
+    const close = result => { overlay.classList.remove('open'); resolve(result); };
+    document.getElementById('lm-btn-keep').onclick   = () => close(false);
+    document.getElementById('lm-btn-purge').onclick  = () => close(true);
+    document.getElementById('lm-btn-cancel').onclick = () => close(null);
+    overlay.onclick = e => { if (e.target === overlay) close(null); };
+  });
+}
+
 async function bulkLeaveGroups() {
   const ids = [...S.selectedGroups];
   if (!ids.length) return;
-  if (!confirm(t('groups.bulkLeaveConfirm', { n: ids.length }))) return;
-  const purge = confirm(t('groups.bulkLeavePurge'));
+  const totalFiles = ids.reduce((s, id) => {
+    const g = _groups.find(x => x.id === id);
+    return s + (g?.file_count || 0);
+  }, 0);
+  const purge = await showLeaveModal({
+    title: t('leaveModal.bulkTitle', { n: ids.length }),
+    sub:   t('leaveModal.bulkSub',   { n: ids.length }),
+    countDesc: t('leaveModal.purgeDesc', { count: totalFiles.toLocaleString() }),
+  });
+  if (purge === null) return;
   let ok = 0, failed = 0;
   for (const id of ids) {
     try {
@@ -1754,6 +1845,9 @@ function switchSettingsTab(name) {
 
 function switchTab(tab) {
   S.activeTab = tab;
+  // Remember which tab the user is on so a page refresh lands them back here
+  // instead of bouncing them to Files every time.
+  try { localStorage.setItem('tf_active_tab', tab); } catch (e) {}
   ['files','channels','links','settings','downloads','status','hunter'].forEach(t =>
     document.getElementById('tab-'+t)?.classList.toggle('active', t===tab));
 
@@ -2661,7 +2755,7 @@ function renderFiles(files, gFilter, mode = 'replace') {
     const scTip   = t('table.sharesTipDetail', {n: sc, w: sc7, m: sc30});
     const sharePill = `<span class="${pillCls}" title="${esc(scTip)}"><span class="share-icon">🔁</span><span class="share-num">${sc.toLocaleString()}</span>${isRising ? '<span class="rise-badge" title="' + esc(t('table.rising')) + '">↑</span>' : ''}</span>`;
 
-    rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})">
+    rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})" oncontextmenu="event.preventDefault();_ctxMenuShowFile(event, ${f.group_id || 'null'}, ${JSON.stringify(gName).replace(/"/g, '&quot;')})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
@@ -3409,6 +3503,59 @@ function _updateFileDlCell(fileId, fakef) {
   if (dlTd) dlTd.innerHTML = dlState(fakef);
 }
 
+// Per-file rolling speed estimate. Keyed by file_id; entry is
+// {ts, bytes, speedBps}. We sample on every pollDownload tick and apply a
+// soft EMA so the displayed total doesn't flicker between 0 and burst values
+// when Telethon emits progress callbacks unevenly.
+const _dlSpeed = new Map();
+
+function _updateDlSpeed(fileId, fileSize, progress) {
+  if (!fileSize) return;
+  const bytes = Math.round((fileSize || 0) * (progress || 0));
+  const now   = Date.now();
+  const prev  = _dlSpeed.get(fileId);
+  let speedBps = 0;
+  if (prev) {
+    const dt = (now - prev.ts) / 1000;
+    const db = bytes - prev.bytes;
+    if (dt > 0.25 && db >= 0) {
+      const inst = db / dt;
+      // 60/40 EMA — smooth enough to hide bursty Telethon callbacks while
+      // still reacting to sustained speed changes within ~3 ticks.
+      speedBps = prev.speedBps ? (prev.speedBps * 0.6 + inst * 0.4) : inst;
+    } else {
+      speedBps = prev.speedBps || 0;
+    }
+  }
+  _dlSpeed.set(fileId, { ts: now, bytes, speedBps });
+  _renderDlTotalSpeed();
+}
+
+function _clearDlSpeed(fileId) {
+  _dlSpeed.delete(fileId);
+  _renderDlTotalSpeed();
+}
+
+function _renderDlTotalSpeed() {
+  const el = document.getElementById('dl-total-speed');
+  if (!el) return;
+  let total = 0, active = 0;
+  for (const v of _dlSpeed.values()) {
+    if (v.speedBps > 0) { total += v.speedBps; active++; }
+  }
+  if (!active) { el.textContent = ''; return; }
+  const activeLabel = t('dl.activeCount', { n: active }) || `${active} aktif`;
+  el.textContent = ` · ${activeLabel} · ${_fmtSpeed(total)}`;
+}
+
+function _fmtSpeed(bps) {
+  bps = Math.max(0, bps || 0);
+  if (bps >= 1 << 30) return (bps / (1 << 30)).toFixed(2) + ' GiB/s';
+  if (bps >= 1 << 20) return (bps / (1 << 20)).toFixed(1) + ' MiB/s';
+  if (bps >= 1 << 10) return (bps / (1 << 10)).toFixed(0) + ' KiB/s';
+  return Math.round(bps) + ' B/s';
+}
+
 function pollDownload(fileId) {
   if (S.polls[fileId]) return;
   S.polls[fileId] = setInterval(async () => {
@@ -3423,14 +3570,21 @@ function pollDownload(fileId) {
       delete S.dlQueue[fileId];
       clearInterval(S.polls[fileId]); delete S.polls[fileId];
       if (entry) { entry.pct = 100; entry.status = 'done'; }
+      _clearDlSpeed(fileId);
       if (S.activeTab === 'downloads') loadDownloadsList();
       _updateFileDlCell(fileId, { local_path: f.local_path });
     } else if (f.downloading) {
       const pct = Math.round(f.download_progress*100);
       S.dlQueue[fileId] = pct;
       if (entry) { entry.pct = pct; entry.status = 'downloading'; }
+      _updateDlSpeed(fileId, f.file_size, f.download_progress);
       if (S.activeTab === 'downloads') renderDownloadsTab();
       _updateFileDlCell(fileId, { downloading: true, download_progress: f.download_progress });
+    } else {
+      // File no longer downloading and no local_path → likely cancelled or
+      // errored. Stop polling + drop its speed contribution.
+      clearInterval(S.polls[fileId]); delete S.polls[fileId];
+      _clearDlSpeed(fileId);
     }
   }, 2000);
 }
@@ -3593,7 +3747,9 @@ function renderDownloadsTab() {
     const isDone = e.status === 'done';
     const isScheduled = e.status === 'scheduled';
     const checked = S.selectedDownloads.has(e.id) ? ' checked' : '';
-    const chkCell = `<input type="checkbox" class="dl-row-chk" data-status="${e.status}"${checked} onchange="toggleDownloadSelect(${e.id},this.checked)">`;
+    // No inline `onchange` — we attach a `click` listener after render so we
+    // can read shiftKey for range-select (Files grid uses the same pattern).
+    const chkCell = `<input type="checkbox" class="dl-row-chk" data-dlid="${e.id}" data-status="${e.status}"${checked}>`;
     const actions = isDone
       ? `<button class="dl-act dl-act-dl" onclick="downloadBlob(${e.id})" title="${esc(t('dl.downloadTitle'))}">⬇</button>
          <button class="dl-act dl-act-del" onclick="deleteLocalFile(${e.id})" title="${esc(t('dl.deleteTitle'))}">🗑</button>`
@@ -3616,6 +3772,46 @@ function renderDownloadsTab() {
     </tr>`;
   }).join('');
 
+  // Per-checkbox click listener — needed for shiftKey range-select. We can't
+  // get a reliable shiftKey on `change`, only on `click`.
+  document.querySelectorAll('#dl-hist-tbody .dl-row-chk').forEach(cb => {
+    cb.addEventListener('click', _dlCbClick);
+  });
+  updateDownloadBulkBar();
+}
+
+let _lastDownloadToggleId = null;
+
+function _dlCbClick(ev) {
+  const cb = ev.currentTarget;
+  const id = parseInt(cb.dataset.dlid, 10);
+  if (!Number.isFinite(id)) return;
+  const checked = cb.checked; // already toggled by the time `click` fires
+
+  if (ev.shiftKey && _lastDownloadToggleId != null && _lastDownloadToggleId !== id) {
+    // Walk the currently-rendered checkbox sequence in DOM order and unify
+    // every row between (and including) the anchor and this row to `checked`.
+    const all = [...document.querySelectorAll('#dl-hist-tbody .dl-row-chk')];
+    const ids = all.map(x => parseInt(x.dataset.dlid, 10));
+    const a = ids.indexOf(_lastDownloadToggleId);
+    const b = ids.indexOf(id);
+    if (a !== -1 && b !== -1) {
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      for (let i = lo; i <= hi; i++) {
+        all[i].checked = checked;
+        if (checked) S.selectedDownloads.add(ids[i]);
+        else         S.selectedDownloads.delete(ids[i]);
+      }
+    } else {
+      // Anchor row scrolled off — fall back to single toggle.
+      if (checked) S.selectedDownloads.add(id);
+      else         S.selectedDownloads.delete(id);
+    }
+  } else {
+    if (checked) S.selectedDownloads.add(id);
+    else         S.selectedDownloads.delete(id);
+  }
+  _lastDownloadToggleId = id;
   updateDownloadBulkBar();
 }
 
@@ -3625,7 +3821,8 @@ function _selectedDownloadIdsByStatus() {
   const done = [], inflight = [];
   document.querySelectorAll('.dl-row-chk').forEach(chk => {
     if (!chk.checked) return;
-    const id = parseInt(chk.getAttribute('onchange').match(/\d+/)[0], 10);
+    const id = parseInt(chk.dataset.dlid, 10);
+    if (!Number.isFinite(id)) return;
     if (chk.dataset.status === 'done') done.push(id);
     else inflight.push(id);
   });
@@ -3641,8 +3838,8 @@ function toggleAllDownloads(checked) {
   S.selectedDownloads.clear();
   if (checked) {
     document.querySelectorAll('.dl-row-chk').forEach(chk => {
-      const id = parseInt(chk.getAttribute('onchange').match(/\d+/)[0], 10);
-      S.selectedDownloads.add(id);
+      const id = parseInt(chk.dataset.dlid, 10);
+      if (Number.isFinite(id)) S.selectedDownloads.add(id);
     });
   }
   document.querySelectorAll('.dl-row-chk').forEach(c => { c.checked = checked; });
@@ -4136,7 +4333,7 @@ function renderLinks(links, mode = 'replace') {
     }
     // URL'ler zaten ASCII; group_name ve context Telegram'dan geldiği için
     // emoji/biçim temizliği uygulanır.
-    const gName  = cleanText(l.group_name || '');
+    const gName  = plainName(l.group_name || '');
     const ctxRaw = cleanText(l.context || '');
     const mainRow = `<tr data-lid="${l.id}">
       <td class="chk-cell"><input type="checkbox" class="link-chk" data-lid="${l.id}"${checked}></td>
@@ -4582,7 +4779,15 @@ async function api(url,opts={}){
     try { show('ui-greeter'); setTimeout(() => document.getElementById('ug-pass')?.focus(), 30); } catch (e) {}
     throw new Error('UI session expired');
   }
-  if(!res.ok){const err=await res.json().catch(()=>({detail:res.statusText}));throw new Error(err.detail||res.statusText);}
+  if(!res.ok){
+    const err=await res.json().catch(()=>({detail:res.statusText}));
+    let msg=err.detail;
+    // FastAPI/Pydantic returns an array of error objects on validation
+    // failures; stringify into something readable instead of '[object Object]'.
+    if(Array.isArray(msg)) msg=msg.map(e=>(e.loc?e.loc.join('.')+': ':'')+(e.msg||JSON.stringify(e))).join('; ');
+    else if(msg && typeof msg==='object') msg=JSON.stringify(msg);
+    throw new Error(msg||res.statusText);
+  }
   return res.json();
 }
 
@@ -5214,6 +5419,8 @@ async function pollHunterStatus() {
       if (el) el.textContent = `${t('hunter.running')} ${parts.join(' · ')}`;
       const btn = document.getElementById('hunter-run-btn');
       if (btn) { btn.disabled = true; btn.textContent = t('hunter.running'); }
+      const enrichBtn = document.getElementById('hunter-enrich-btn');
+      if (enrichBtn) enrichBtn.disabled = true;
       if (monitor) {
         monitor.style.display = '';
         renderHunterMonitor(s);
@@ -5222,6 +5429,8 @@ async function pollHunterStatus() {
       if (el) el.textContent = '';
       const btn = document.getElementById('hunter-run-btn');
       if (btn) { btn.disabled = false; btn.textContent = t('hunter.runNow'); }
+      const enrichBtn = document.getElementById('hunter-enrich-btn');
+      if (enrichBtn) enrichBtn.disabled = false;
       if (monitor) monitor.style.display = 'none';
     }
     // Log her durumda (çalışıyor veya durmuş) render edilir — kalıcı log.
@@ -5313,10 +5522,15 @@ function renderHunterMonitor(s) {
 }
 
 function _eventText(e) {
-  // Server may send a stable i18n key + params; fall back to the English msg
-  // when the key isn't present (older event rows, or _emit_event call without
-  // a key= argument).
-  if (e && e.key) return t(e.key, e.params || {});
+  // Server may send a stable i18n key + params; fall back to the raw msg
+  // (server-side formatted) when:
+  //   • no key was provided, OR
+  //   • the key isn't in the i18n dictionary (t() returns the key string
+  //     itself in that case, which is useless to the user).
+  if (e && e.key) {
+    const translated = t(e.key, e.params || {});
+    if (translated && translated !== e.key) return translated;
+  }
   return e ? (e.msg || '') : '';
 }
 
@@ -5352,10 +5566,17 @@ function _renderHunterLog(events) {
     const ts = (e.ts || '').substring(0, 19).replace('T', ' ');
     const text = _eventText(e);
     const cls = text.startsWith('───') ? 'sep' : (e.level || 'info');
+    // Quota-related log lines get a clickable "ℹ️ Kotalar" pill at the end
+    // that opens the quota lightbox.
+    const quotaKeys = ['hl.stage3.cacheOnlyMode', 'hl.stage3.cacheSkip', 'hl.stage3.floodWait', 'hl.stage3.lookupCapHit'];
+    const showQuotaLink = e.key && quotaKeys.indexOf(e.key) !== -1;
+    const quotaLink = showQuotaLink
+      ? ` <a href="#" class="hl-quota-link" onclick="event.preventDefault();hunterShowQuota()">${esc(t('hunter.quotaLink'))}</a>`
+      : '';
     return `<div class="hl-event ${esc(cls)}">
       <span class="hl-time">${esc(ts)}</span>
       <span class="hl-stage">${esc(e.stage || '')}</span>
-      <span class="hl-msg">${esc(text)}</span>
+      <span class="hl-msg">${esc(text)}${quotaLink}</span>
     </div>`;
   }).join('');
   el.scrollTop = wasAtTop ? 0 : prevTop;
@@ -5401,6 +5622,7 @@ async function loadHunterSettings() {
       else el.value = val == null ? '' : val;
     }};
     set('h-enabled', _hunterSettings.enabled);
+    set('h-stage0',  _hunterSettings.similar_expand_enabled !== false);
     set('h-stage1',  _hunterSettings.stage1_enabled);
     set('h-stage2',  _hunterSettings.stage2_enabled);
     set('h-magnethunt', _hunterSettings.magnethunt_enabled);
@@ -5448,6 +5670,7 @@ async function hunterSaveSettings() {
   };
   const patch = {
     enabled: get('h-enabled'),
+    similar_expand_enabled: get('h-stage0'),
     stage1_enabled: get('h-stage1'),
     stage2_enabled: get('h-stage2'),
     magnethunt_enabled: get('h-magnethunt'),
@@ -5481,6 +5704,29 @@ async function hunterRun() {
   const r = await api('/api/hunter/run', { method: 'POST' });
   pollHunterStatus();
   setTimeout(hunterReloadCandidates, 800);
+}
+
+async function hunterEnrichDiscovered() {
+  const btn = document.getElementById('hunter-enrich-btn');
+  if (btn) { btn.disabled = true; }
+  try {
+    const r = await api('/api/hunter/enrich', { method: 'POST' });
+    if (r.ok) {
+      showToast(t('hunter.enrichStarted') ||
+                'Keşfedilen adaylar zenginleştiriliyor — ilerleyişi log\'da gör.',
+                3500);
+      pollHunterStatus();
+      setTimeout(hunterReloadCandidates, 800);
+    }
+  } catch (e) {
+    if (e && e.status === 409) {
+      showToast(t('hunter.enrichBusy') || 'Başka bir av turu zaten çalışıyor.', 3500);
+    } else {
+      showToast((t('hunter.enrichFail') || 'Zenginleştirme başlatılamadı') + ': ' + (e?.message || e), 4000);
+    }
+  } finally {
+    if (btn) { btn.disabled = false; }
+  }
 }
 
 // ── Magnet Hunt (Google-dork search for magnet: URIs) ──────────────────────
@@ -5787,7 +6033,7 @@ function renderHunterCandidates() {
     const _tc = (k, col) => { const v = bd[k]||0; return `<td class="hg-tc${v?'':' zero'}" style="color:${v?col:'var(--text-4)'}">${v||'—'}</td>`; };
     const evInfo = _HG_EV_MAP[document.getElementById('hg-flt-status')?.value || ''];
     const evDate = evInfo ? (c[evInfo.field] ? fmtDate(c[evInfo.field]).substring(0,16) : '—') : '';
-    return `<tr class="${sel?'hg-row-selected':''}" onclick="hgRowClick(event, ${c.id})">
+    return `<tr class="${sel?'hg-row-selected':''}" onclick="hgRowClick(event, ${c.id})" oncontextmenu="event.preventDefault();_ctxMenuShowHunter(event, ${c.id}, ${JSON.stringify(c.username || '').replace(/"/g, '&quot;')})">
       <td class="hg-chk-cell"><input type="checkbox" data-hg-cid="${c.id}" ${sel?'checked':''}></td>
       <td><div class="hg-score${scoreCls}">${score.toFixed(0)}</div></td>
       <td><div class="hg-channel"><span class="hg-title" title="${esc(title)} · @${esc(c.username)}">${esc(title)}</span> <span class="hg-uname">@${esc(c.username)}</span>${queueBadge}</div></td>
@@ -5956,6 +6202,10 @@ async function pollDeepScan() {
           stateEl.innerHTML = `<span style="color:#16a34a;font-weight:600">✓ ${esc(t('hd.deepScanDone'))}</span>`;
           if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
           refreshHdFiles();
+          // Push the fresh estimated_files / deep_scan_total / breakdown back
+          // to the hunter grid so the row shows the new count + type bar
+          // without a manual page reload. Silent reload — no skeleton.
+          if (S.activeTab === 'hunter') hunterReloadCandidates(true);
         } else if (s.state === 'error') {
           stateEl.innerHTML = `<span style="color:#dc2626">⚠ ${esc(t('hd.deepScanError'))}: ${esc(s.error || '')}</span>`;
           if (_hdDeepPollTimer) { clearInterval(_hdDeepPollTimer); _hdDeepPollTimer = null; }
@@ -6713,6 +6963,353 @@ function hunterCloseHelp() {
 
 function hunterHelpOverlayClick(e) {
   if (e.target.id === 'hunter-help-overlay') hunterCloseHelp();
+}
+
+
+// ── Hunter quota lightbox ────────────────────────────────────────────────────
+function _fmtDuration(secs) {
+  secs = Math.max(0, Math.floor(secs || 0));
+  if (secs < 60)    return `${secs}s`;
+  if (secs < 3600)  return `${Math.floor(secs/60)}d ${secs%60}s`;
+  if (secs < 86400) return `${Math.floor(secs/3600)}sa ${Math.floor((secs%3600)/60)}d`;
+  const days = Math.floor(secs/86400);
+  const hrs  = Math.floor((secs%86400)/3600);
+  return `${days}g ${hrs}sa`;
+}
+
+async function hunterShowQuota() {
+  const body = document.getElementById('hunter-quota-body');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="hh-head">
+      <h2>${esc(t('hunter.quotaTitle'))}</h2>
+      <button class="hh-close" onclick="hunterCloseQuota()">${esc(t('common.close'))}</button>
+    </div>
+    <div class="hh-body"><p>${esc(t('hunter.quotaLoading'))}</p></div>`;
+  document.getElementById('hunter-quota-overlay').classList.add('open');
+
+  let data;
+  try {
+    data = await api('/api/hunter/quota');
+  } catch (e) {
+    body.innerHTML = `
+      <div class="hh-head">
+        <h2>${esc(t('hunter.quotaTitle'))}</h2>
+        <button class="hh-close" onclick="hunterCloseQuota()">${esc(t('common.close'))}</button>
+      </div>
+      <div class="hh-body"><p class="hh-warn">${esc(t('hunter.quotaErr'))}: ${esc(String(e))}</p></div>`;
+    return;
+  }
+
+  const fw = data.floodwait || {};
+  const fwBlock = fw.active
+    ? `<div class="hq-fw-active">
+         <h3>${esc(t('hunter.quotaFloodActiveTitle'))}</h3>
+         <ul>
+           <li><b>${esc(t('hunter.quotaScope'))}:</b> <code>${esc(fw.scope || '—')}</code></li>
+           <li><b>${esc(t('hunter.quotaWindowEnds'))}:</b> ${esc((fw.until_iso || '').replace('T',' ').substring(0,19))} UTC</li>
+           <li><b>${esc(t('hunter.quotaWindowRemaining'))}:</b> <span class="hq-countdown">${esc(_fmtDuration(fw.remaining_seconds))}</span></li>
+           <li><b>${esc(t('hunter.quotaOriginalWait'))}:</b> ${esc(_fmtDuration(fw.total_seconds || 0))}</li>
+         </ul>
+       </div>`
+    : `<div class="hq-fw-clear">
+         <p>${esc(t('hunter.quotaNoFlood'))}</p>
+         ${fw.until_iso ? `<p class="hh-dim">${esc(t('hunter.quotaLastFloodAt'))}: ${esc((fw.until_iso||'').replace('T',' ').substring(0,19))} UTC · ${esc(_fmtDuration(fw.total_seconds||0))}</p>` : ''}
+       </div>`;
+
+  // Daily cap bar
+  const used = data.lookups_used_today || 0;
+  const cap  = data.tg_daily_lookup_cap || 0;
+  const pct  = cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0;
+  const remaining = (data.lookups_remaining == null ? '∞' : data.lookups_remaining);
+  const dayResetTxt = _fmtDuration(data.day_reset_seconds || 0);
+
+  // Methods table — split into "used now" + "future"
+  const methodsUsed   = (data.methods || []).filter(m => m.used);
+  const methodsFuture = (data.methods || []).filter(m => !m.used);
+  const costColor = c => c === 'strict' ? '#e94d4d' : (c === 'moderate' ? '#e9a14d' : (c === 'bandwidth' ? '#9b6cff' : '#5cc97e'));
+  const renderMethodRow = m => `
+    <tr>
+      <td><code>${esc(m.method)}</code></td>
+      <td>${esc(t('hunter.quotaMethod.' + m.id) || m.id)}</td>
+      <td><span class="hq-cost" style="background:${costColor(m.cost)}1a;color:${costColor(m.cost)};">${esc(t('hunter.quotaCost.' + m.cost) || m.cost)}</span></td>
+      ${m.premium ? `<td class="hq-tag">${esc(t('hunter.quotaPremium'))}</td>` : '<td></td>'}
+    </tr>`;
+
+  body.innerHTML = `
+    <div class="hh-head">
+      <h2>${esc(t('hunter.quotaTitle'))}</h2>
+      <button class="hh-close" onclick="hunterCloseQuota()">${esc(t('common.close'))}</button>
+    </div>
+    <div class="hh-body">
+      <p>${t('hunter.quotaIntro')}</p>
+
+      <h3>${esc(t('hunter.quotaLiveTitle'))}</h3>
+
+      ${fwBlock}
+
+      <h4>${esc(t('hunter.quotaDailyCapTitle'))}</h4>
+      <div class="hq-bar-wrap">
+        <div class="hq-bar"><div class="hq-bar-fill" style="width:${pct}%;background:${pct >= 90 ? '#e94d4d' : pct >= 70 ? '#e9a14d' : '#5cc97e'}"></div></div>
+        <div class="hq-bar-label">${used} / ${cap || '∞'} · ${esc(t('hunter.quotaRemaining'))}: <b>${remaining}</b> · ${esc(t('hunter.quotaResetIn'))}: <b>${esc(dayResetTxt)}</b></div>
+      </div>
+      <p class="hh-dim">${t('hunter.quotaDailyCapNote')}</p>
+
+      <h3>${esc(t('hunter.quotaUsedFeaturesTitle'))}</h3>
+      <table class="hq-table">
+        <thead><tr>
+          <th>${esc(t('hunter.quotaColMethod'))}</th>
+          <th>${esc(t('hunter.quotaColPurpose'))}</th>
+          <th>${esc(t('hunter.quotaColCost'))}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${methodsUsed.map(renderMethodRow).join('')}</tbody>
+      </table>
+
+      <h3>${esc(t('hunter.quotaFutureTitle'))}</h3>
+      <p class="hh-dim">${esc(t('hunter.quotaFutureNote'))}</p>
+      <table class="hq-table">
+        <thead><tr>
+          <th>${esc(t('hunter.quotaColMethod'))}</th>
+          <th>${esc(t('hunter.quotaColPurpose'))}</th>
+          <th>${esc(t('hunter.quotaColCost'))}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${methodsFuture.map(renderMethodRow).join('')}</tbody>
+      </table>
+
+      <h3>${esc(t('hunter.quotaLimitsTitle'))}</h3>
+      <p>${t('hunter.quotaLimitsBody')}</p>
+    </div>`;
+}
+
+function hunterCloseQuota() {
+  document.getElementById('hunter-quota-overlay').classList.remove('open');
+}
+
+function hunterQuotaOverlayClick(e) {
+  if (e.target.id === 'hunter-quota-overlay') hunterCloseQuota();
+}
+
+
+// ── Generic context menu + "Show similar channels" lightbox ──────────────────
+let _ctxMenuEl = null;
+function _ctxMenuEnsure() {
+  if (_ctxMenuEl) return _ctxMenuEl;
+  _ctxMenuEl = document.createElement('div');
+  _ctxMenuEl.className = 'ctx-menu';
+  _ctxMenuEl.style.display = 'none';
+  document.body.appendChild(_ctxMenuEl);
+  document.addEventListener('click', _ctxMenuHide);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') _ctxMenuHide(); });
+  window.addEventListener('blur', _ctxMenuHide);
+  window.addEventListener('scroll', _ctxMenuHide, true);
+  return _ctxMenuEl;
+}
+function _ctxMenuShow(event, items) {
+  const el = _ctxMenuEnsure();
+  el.innerHTML = items.map(it =>
+    it.sep
+      ? '<div class="ctx-sep"></div>'
+      : `<button class="ctx-item${it.disabled ? ' disabled' : ''}"${it.disabled ? ' disabled' : ''}>${esc(it.label)}</button>`
+  ).join('');
+  // Bind actions (skip separators + disabled)
+  let i = 0;
+  el.querySelectorAll('.ctx-item').forEach(btn => {
+    while (items[i] && items[i].sep) i++;
+    const it = items[i++];
+    if (it && it.action && !it.disabled) {
+      btn.addEventListener('click', ev => { ev.stopPropagation(); _ctxMenuHide(); it.action(); });
+    }
+  });
+  el.style.display = 'block';
+  // Position with viewport clamping
+  const pad = 6;
+  let x = event.clientX, y = event.clientY;
+  const r = el.getBoundingClientRect();
+  if (x + r.width  + pad > window.innerWidth)  x = window.innerWidth  - r.width  - pad;
+  if (y + r.height + pad > window.innerHeight) y = window.innerHeight - r.height - pad;
+  el.style.left = Math.max(pad, x) + 'px';
+  el.style.top  = Math.max(pad, y) + 'px';
+}
+function _ctxMenuHide() {
+  if (_ctxMenuEl) _ctxMenuEl.style.display = 'none';
+}
+
+function _ctxMenuShowChannel(event, groupId, username) {
+  _ctxMenuShow(event, [
+    {
+      label: t('ctx.showSimilar'),
+      action: () => showSimilarChannels({ group_id: groupId, username: username || null }),
+    },
+    ...(username ? [{
+      label: t('ctx.openTelegram'),
+      action: () => window.open('https://t.me/' + encodeURIComponent(username), '_blank'),
+    }] : []),
+  ]);
+}
+
+function _ctxMenuShowFile(event, groupId, groupName) {
+  if (!groupId) return; // file without a known parent channel
+  _ctxMenuShow(event, [
+    {
+      label: t('ctx.showSimilarFromFileChannel', { name: groupName || ('#' + groupId) }),
+      action: () => showSimilarChannels({ group_id: groupId }),
+    },
+    {
+      label: t('ctx.openChannelInList'),
+      action: () => filterByGroup(groupId),
+    },
+  ]);
+}
+
+function _ctxMenuShowHunter(event, candidateId, username) {
+  _ctxMenuShow(event, [
+    {
+      label: t('ctx.showSimilar'),
+      action: () => showSimilarChannels({ candidate_id: candidateId, username: username || null }),
+    },
+    ...(username ? [{
+      label: t('ctx.openTelegram'),
+      action: () => window.open('https://t.me/' + encodeURIComponent(username), '_blank'),
+    }] : []),
+  ]);
+}
+
+
+// ── Similar channels lightbox ────────────────────────────────────────────────
+async function showSimilarChannels(seed) {
+  const body = document.getElementById('hunter-quota-body'); // reuse overlay shell
+  const overlay = document.getElementById('hunter-quota-overlay');
+  if (!body || !overlay) return;
+  const seedLabel = seed.username ? '@' + seed.username : (seed.group_id ? '#' + seed.group_id : '?');
+  body.innerHTML = `
+    <div class="hh-head">
+      <h2>${esc(t('similar.title'))} — <code>${esc(seedLabel)}</code></h2>
+      <button class="hh-close" onclick="hunterCloseQuota()">${esc(t('common.close'))}</button>
+    </div>
+    <div class="hh-body"><p>${esc(t('similar.loading'))}</p></div>`;
+  overlay.classList.add('open');
+
+  let data;
+  try {
+    data = await api('/api/channels/similar', { method: 'POST', json: seed });
+  } catch (e) {
+    body.querySelector('.hh-body').innerHTML =
+      `<p class="hh-warn">${esc(t('similar.err'))}: ${esc(String(e))}</p>`;
+    return;
+  }
+
+  if (data.error === 'floodwait') {
+    body.querySelector('.hh-body').innerHTML =
+      `<p class="hh-warn">${esc(t('similar.floodWait', { wait: data.wait_seconds }))}</p>`;
+    return;
+  }
+  if (data.error) {
+    body.querySelector('.hh-body').innerHTML =
+      `<p class="hh-warn">${esc(t('similar.err'))}: ${esc(data.error)}</p>`;
+    return;
+  }
+
+  const channels = data.channels || [];
+  if (!channels.length) {
+    body.querySelector('.hh-body').innerHTML =
+      `<p>${esc(t('similar.empty'))}</p>`;
+    return;
+  }
+
+  const groupColor = g => ({
+    video: '#ef4444', audio: '#7c3aed', image: '#059669', archive: '#f59e0b',
+    document: '#2563eb', software: '#374151', torrent: '#dc2626', other: '#9ca3af',
+  })[g] || '#9ca3af';
+
+  const renderBreakdown = bd => {
+    if (!bd) return '';
+    const entries = Object.entries(bd).filter(([_, v]) => v > 0);
+    if (!entries.length) return `<span class="hh-dim">${esc(t('similar.noFiles'))}</span>`;
+    return entries.map(([g, v]) =>
+      `<span class="sc-pill" style="background:${groupColor(g)}1a;color:${groupColor(g)}">${esc(t('hunter.type.' + g) || g)}: ${v}</span>`
+    ).join('');
+  };
+
+  const renderFiles = (files) => {
+    if (!files || !files.length) return '';
+    return `<div class="sc-files">
+      ${files.map(f => `
+        <div class="sc-file">
+          <span class="sc-fname" title="${esc(f.name)}">${esc(f.name)}</span>
+          <span class="sc-fsize">${esc(fmtSize(f.size || 0))}</span>
+        </div>`).join('')}
+    </div>`;
+  };
+
+  const renderCard = c => {
+    const u = c.username || '';
+    const aw = c.awareness || {};
+    const badges = [];
+    if (aw.followed)           badges.push(`<span class="sc-badge sc-b-follow">${esc(t('similar.badgeFollowed'))}</span>`);
+    if (aw.state === 'joined') badges.push(`<span class="sc-badge sc-b-cand">${esc(t('similar.badgeJoined'))}</span>`);
+    if (aw.state === 'queued') badges.push(`<span class="sc-badge sc-b-cand">${esc(t('similar.badgeCandidate'))}</span>`);
+    if (aw.state === 'blacklisted') badges.push(`<span class="sc-badge sc-b-bl">${esc(t('similar.badgeBlacklisted'))}</span>`);
+    if (c.verified) badges.push(`<span class="sc-badge sc-b-ok">✓</span>`);
+    if (c.scam)     badges.push(`<span class="sc-badge sc-b-bl">SCAM</span>`);
+
+    const fs = c.files_sample || {};
+    const filesTotalSize = fs.total_size || 0;
+    const fileCount = fs.file_count_sampled || 0;
+    const samples = (fs.files || []).slice(0, 8);
+    const errLine = c.files_error
+      ? `<div class="hh-warn" style="font-size:.74rem">${esc(t('similar.fileErr'))}: ${esc(c.files_error)}</div>`
+      : '';
+
+    return `<div class="sc-card">
+      <div class="sc-head">
+        <div class="sc-title-wrap">
+          <div class="sc-title">${esc(c.title || '(no title)')}</div>
+          <div class="sc-uname">${u ? `@${esc(u)}` : `<span class="hh-dim">${esc(t('similar.noUsername'))}</span>`}</div>
+        </div>
+        <div class="sc-actions">
+          ${u ? `<a class="sc-btn" href="https://t.me/${esc(u)}" target="_blank" rel="noopener">↗ TG</a>` : ''}
+          ${u ? `<button class="sc-btn" onclick="similarAddToHunter('${esc(u)}', this)">+ ${esc(t('similar.addToHunter'))}</button>` : ''}
+        </div>
+      </div>
+      <div class="sc-meta">
+        ${badges.join(' ')}
+        <span class="hh-dim">${esc(t('similar.members'))}: <b>${c.members != null ? Number(c.members).toLocaleString() : '—'}</b></span>
+        <span class="hh-dim">${esc(t('similar.sampled'))}: <b>${fs.sampled_messages || 0}</b> ${esc(t('similar.msgs'))}</span>
+        <span class="hh-dim">${esc(t('similar.fileCount'))}: <b>${fileCount}</b></span>
+        <span class="hh-dim">${esc(t('similar.totalSize'))}: <b>${esc(fmtSize(filesTotalSize))}</b></span>
+      </div>
+      <div class="sc-bd">${renderBreakdown(fs.breakdown)}</div>
+      ${renderFiles(samples)}
+      ${errLine}
+    </div>`;
+  };
+
+  body.innerHTML = `
+    <div class="hh-head">
+      <h2>${esc(t('similar.title'))} — <code>${esc(seedLabel)}</code></h2>
+      <button class="hh-close" onclick="hunterCloseQuota()">${esc(t('common.close'))}</button>
+    </div>
+    <div class="hh-body">
+      <p class="hh-dim">${esc(t('similar.intro', { n: channels.length }))}</p>
+      ${channels.map(renderCard).join('')}
+    </div>`;
+}
+
+async function similarAddToHunter(username, btn) {
+  if (!username) return;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await api('/api/channels/add', {
+      method: 'POST',
+      json: { usernames: [username], action: 'hunter' },
+    });
+    if (btn) btn.textContent = '✓';
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '+ ' + t('similar.addToHunter'); }
+    alert(t('similar.addErr') + ': ' + e);
+  }
 }
 
 
