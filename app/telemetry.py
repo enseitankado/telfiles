@@ -15,6 +15,8 @@ Payload v1.2 contents:
 Both channel and file dedup tables are updated only after a successful POST.
 """
 import asyncio
+import gzip
+import json as _json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -51,7 +53,7 @@ async def collect_payload() -> tuple[Dict, List[int], List[int]]:
         })
 
     # ── File-level data (batched, any channel) ────────────────────────────────
-    file_rows, files_remaining = await database.get_files_for_telemetry()
+    file_rows, has_more = await database.get_files_for_telemetry()
     file_ids: List[int] = []
     # Group files by channel username to reduce key repetition.
     files_by_channel: Dict[str, List[Dict]] = {}
@@ -70,7 +72,7 @@ async def collect_payload() -> tuple[Dict, List[int], List[int]]:
         "na":  len(accounts),
         "g":   groups,
         "f":   files_by_channel,   # {"channame": [{"n":"file.mkv","sz":123}, ...]}
-        "fr":  files_remaining,    # files remaining after this batch
+        "fr":  1 if has_more else 0,  # non-zero = more batches remain
     }
     return payload, group_ids, file_ids
 
@@ -97,13 +99,19 @@ async def _send_silently() -> bool:
     if not group_ids and not file_ids:
         return True  # nothing new to send; not a failure
 
-    headers = {"User-Agent": "TelFiles/1.0 telemetry",
-               "X-Telemetry-Secret": TELEMETRY_SECRET}
+    headers = {
+        "User-Agent":        "TelFiles/1.0 telemetry",
+        "X-Telemetry-Secret": TELEMETRY_SECRET,
+        "Content-Type":      "application/json; charset=utf-8",
+        "Content-Encoding":  "gzip",
+    }
+    compressed = gzip.compress(_json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                               compresslevel=6)
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                ENDPOINT_URL, json=payload,
-                timeout=aiohttp.ClientTimeout(total=30),
+                ENDPOINT_URL, data=compressed,
+                timeout=aiohttp.ClientTimeout(total=60),
                 headers=headers,
             ) as r:
                 ok = r.status < 400

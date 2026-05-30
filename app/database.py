@@ -251,6 +251,13 @@ ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS ui_language TEXT DEFAULT 't
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_enabled BOOLEAN DEFAULT TRUE;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_max_per_seed INTEGER DEFAULT 10;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_max_seeds INTEGER DEFAULT 100;
+-- FloodWait izleme: Stage 3 cached-only mode'a girince mutlak bitiş zamanı +
+-- scope + orijinal süre buraya yazılır. /api/hunter/quota bunu okur ve UI
+-- kota lightbox'ında "pencere ne zaman kapanıyor / ne kadar kaldı" bilgisini
+-- gösterir.
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_until TIMESTAMPTZ;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_scope TEXT;
+ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_seconds INTEGER;
 -- Otomatik anahtar-kelime havuzu: Stage 3 başarılı zenginleştirmeden sonra
 -- kanal açıklamasından / başlığından çıkarılan anlamlı kelimeler buraya
 -- birikiyor. Stage 2 bir sonraki koşuda user keywords + bunları birleştiriyor
@@ -877,6 +884,14 @@ def _ext_list_sql(group: str) -> str:
     # can be inlined into a COUNT(... FILTER (WHERE ext IN (...))) expression.
     exts = _EXT_GROUPS.get(group, [])
     return "(" + ",".join("'" + e.replace("'", "''") + "'" for e in exts) + ")" if exts else "(NULL)"
+
+
+def _ext_list_sql_combined(*groups: str) -> str:
+    """Merge multiple extension groups into a single SQL IN-list."""
+    all_exts: List[str] = []
+    for g in groups:
+        all_exts.extend(_EXT_GROUPS.get(g, []))
+    return "(" + ",".join("'" + e.replace("'", "''") + "'" for e in all_exts) + ")" if all_exts else "(NULL)"
 
 
 async def get_groups() -> List[Dict]:
@@ -2511,6 +2526,9 @@ DEFAULT_HUNTER_SETTINGS = {
     "similar_expand_enabled": True,
     "similar_expand_max_per_seed": 10,
     "similar_expand_max_seeds": 100,
+    "last_floodwait_until": None,
+    "last_floodwait_scope": None,
+    "last_floodwait_seconds": None,
     # Auto-learned keyword pool, comma-separated. Grown by Stage 3 after
     # each successful enrichment; merged into the Stage 2 keyword list on
     # the next run.
@@ -3081,6 +3099,9 @@ async def get_groups_for_telemetry() -> List[Dict]:
     docu_l  = _ext_list_sql("document")
     soft_l  = _ext_list_sql("software")
     torr_l  = _ext_list_sql("torrent")
+    # Build a single flat list of all known extensions for the NOT IN clause.
+    all_known = _ext_list_sql_combined("audio", "video", "image", "archive",
+                                       "document", "software", "torrent")
     rows = await _q(
         f"""SELECT g.id, g.username, g.is_channel, g.member_count,
                   COUNT(f.id)                                                          AS file_count,
@@ -3092,9 +3113,7 @@ async def get_groups_for_telemetry() -> List[Dict]:
                   COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {docu_l})             AS type_document,
                   COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {soft_l})             AS type_software,
                   COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) IN {torr_l})             AS type_torrent,
-                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) NOT IN
-                      {audio_l} || {video_l} || {image_l} || {archv_l}
-                                  || {docu_l} || {soft_l}  || {torr_l})                AS type_other
+                  COUNT(f.id) FILTER (WHERE LOWER(f.file_ext) NOT IN {all_known})      AS type_other
            FROM groups g
            LEFT JOIN files f ON f.group_id = g.id
            WHERE g.id NOT IN (SELECT group_id FROM telemetry_sent_groups)
@@ -3116,14 +3135,15 @@ async def mark_groups_sent(group_ids: List[int]) -> None:
     )
 
 
-_TELEMETRY_FILE_BATCH = 3000
+_TELEMETRY_FILE_BATCH = 100_000
 
 
-async def get_files_for_telemetry() -> tuple[list[dict], int]:
-    """Return up to _TELEMETRY_FILE_BATCH unsent files plus the total remaining count.
+async def get_files_for_telemetry() -> tuple[list[dict], bool]:
+    """Return up to _TELEMETRY_FILE_BATCH unsent files and whether more remain.
 
-    Returns (rows, remaining_after_this_batch).
+    Uses LIMIT+1 trick to detect remaining rows without a separate COUNT query.
     Filenames are truncated at 200 chars to cap row size.
+    Returns (rows, has_more).
     """
     rows = await _q(
         """SELECT f.id, LEFT(f.file_name, 200) AS file_name,
@@ -3134,18 +3154,12 @@ async def get_files_for_telemetry() -> tuple[list[dict], int]:
              AND f.file_name IS NOT NULL AND f.file_name <> ''
            ORDER BY f.id
            LIMIT $1""",
-        _TELEMETRY_FILE_BATCH,
+        _TELEMETRY_FILE_BATCH + 1,
     )
     if not rows:
-        return [], 0
-    # Count how many are still left AFTER this batch (cheap estimate via total - batch).
-    total_unsent = await _qval(
-        "SELECT COUNT(*) FROM files f "
-        "WHERE f.id NOT IN (SELECT file_id FROM telemetry_sent_files) "
-        "AND f.file_name IS NOT NULL AND f.file_name <> ''"
-    ) or 0
-    remaining = max(0, int(total_unsent) - len(rows))
-    return [dict(r) for r in rows], remaining
+        return [], False
+    has_more = len(rows) > _TELEMETRY_FILE_BATCH
+    return [dict(r) for r in rows[:_TELEMETRY_FILE_BATCH]], has_more
 
 
 async def mark_files_sent(file_ids: list[int]) -> None:
