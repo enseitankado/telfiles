@@ -50,14 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <table>
 <tr>
 <td width="50%"><a href="docs/screenshots/en/02-files.png"><img src="docs/screenshots/en/02-files.png" alt="Files"></a><br><b>📁 Files</b> — unified search across all accounts, type categories, channel filter, size slider; torrent content expansion.</td>
-<td width="50%"><a href="docs/screenshots/en/03-hunter.png"><img src="docs/screenshots/en/03-hunter.png" alt="Channel Hunter"></a><br><b>📡 Channel Hunter</b> — discovery pipeline, server-side per-column sorting, file preview and download in the detail lightbox.</td>
+<td width="50%"><a href="docs/screenshots/en/01-channels.png"><img src="docs/screenshots/en/01-channels.png" alt="Channels"></a><br><b>📋 Channels</b> — followed channels with file counts, member counts, per-column sorting, bulk actions, and shift-click range selection.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/en/04-links.png"><img src="docs/screenshots/en/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — URLs parsed from Google Drive / Mega / MediaFire etc., magnet metadata, accessibility checks.</td>
-<td><a href="docs/screenshots/en/06-status.png"><img src="docs/screenshots/en/06-status.png" alt="Status"></a><br><b>📊 Status</b> — sync metrics, file type distribution, platform-based link stats, RAM / disk usage.</td>
+<td><a href="docs/screenshots/en/04-links.png"><img src="docs/screenshots/en/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — URLs parsed from Google Drive / Mega / MediaFire etc., magnet metadata, torrent archive inspector, accessibility checks.</td>
+<td><a href="docs/screenshots/en/05-downloads.png"><img src="docs/screenshots/en/05-downloads.png" alt="Downloads"></a><br><b>⬇ Downloads</b> — tracked download history with progress, local-path tooltips, one-click delete; transfer to FTP / SFTP / local dir.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/en/05-settings.png"><img src="docs/screenshots/en/05-settings.png" alt="Settings" width="72%"></a><br><b>⚙️ Settings</b> — group management, transfer destinations, bandwidth scheduling, watch keywords, language & theme, password.</td>
+<td><a href="docs/screenshots/en/03-hunter.png"><img src="docs/screenshots/en/03-hunter.png" alt="Channel Hunter"></a><br><b>📡 Channel Hunter</b> — 3-stage discovery pipeline, server-side per-column sorting, file preview and temp-join download in the detail lightbox.</td>
+<td><a href="docs/screenshots/en/06-status.png"><img src="docs/screenshots/en/06-status.png" alt="Status"></a><br><b>📊 Status</b> — sync metrics, file type distribution, platform-based link stats, PostgreSQL table sizes, activity heatmap.</td>
+</tr>
+<tr>
+<td colspan="2" align="center"><a href="docs/screenshots/en/07-settings.png"><img src="docs/screenshots/en/07-settings.png" alt="Settings" width="72%"></a><br><b>⚙️ Settings</b> — Telegram accounts, scan interval, theme, language, transfer destinations, bandwidth scheduling, watch keywords, password.</td>
 </tr>
 </table>
 
