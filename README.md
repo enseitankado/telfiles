@@ -50,14 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <table>
 <tr>
 <td width="50%"><a href="docs/screenshots/tr/02-files.png"><img src="docs/screenshots/tr/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı; torrent içerik genişletme.</td>
-<td width="50%"><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — keşif pipeline'ı, sunucu taraflı sıralama, detay lightbox'ında dosya önizleme ve indirme.</td>
+<td width="50%"><a href="docs/screenshots/tr/01-channels.png"><img src="docs/screenshots/tr/01-channels.png" alt="Kanallar"></a><br><b>📋 Kanallar</b> — takip edilen kanallar; dosya sayısı, üye sayısı, sütun bazlı sıralama, toplu işlemler ve shift-click seçimi.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. platformlardan parse edilen URL'ler, magnet meta verisi, erişilebilirlik kontrolü.</td>
-<td><a href="docs/screenshots/tr/06-status.png"><img src="docs/screenshots/tr/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, RAM / disk kullanımı.</td>
+<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. URL'ler, magnet meta verisi, torrent arşiv inspector, erişilebilirlik kontrolü.</td>
+<td><a href="docs/screenshots/tr/05-downloads.png"><img src="docs/screenshots/tr/05-downloads.png" alt="İndirmeler"></a><br><b>⬇ İndirmeler</b> — indirme geçmişi, ilerleme takibi, yerel yol tooltip'i; FTP / SFTP / yerel dizine otomatik transfer.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/tr/05-settings.png"><img src="docs/screenshots/tr/05-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — grup yönetimi, transfer hedefleri, bant genişliği zamanlama, izleme kelimeleri, dil & tema, parola.</td>
+<td><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — 3 aşamalı keşif pipeline'ı, sunucu taraflı sıralama, detay lightbox'ında dosya önizleme ve geçici üyelikle indirme.</td>
+<td><a href="docs/screenshots/tr/06-status.png"><img src="docs/screenshots/tr/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, PostgreSQL tablo boyutları, aktivite ısı haritası.</td>
+</tr>
+<tr>
+<td colspan="2" align="center"><a href="docs/screenshots/tr/07-settings.png"><img src="docs/screenshots/tr/07-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — Telegram hesapları, tarama aralığı, tema, dil, transfer hedefleri, bant genişliği zamanlama, izleme kelimeleri, parola.</td>
 </tr>
 </table>
 

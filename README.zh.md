@@ -50,14 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <table>
 <tr>
 <td width="50%"><a href="docs/screenshots/zh/02-files.png"><img src="docs/screenshots/zh/02-files.png" alt="文件"></a><br><b>📁 文件</b> — 跨所有账户的统一搜索、类型分类、频道筛选、大小滑块；Torrent 内容展开。</td>
-<td width="50%"><a href="docs/screenshots/zh/03-hunter.png"><img src="docs/screenshots/zh/03-hunter.png" alt="频道猎人"></a><br><b>📡 频道猎人</b> — 发现流水线、服务端按列排序、在详情灯箱中预览和下载文件。</td>
+<td width="50%"><a href="docs/screenshots/zh/01-channels.png"><img src="docs/screenshots/zh/01-channels.png" alt="频道"></a><br><b>📋 频道</b> — 已关注频道，含文件数、成员数、按列排序、批量操作及 Shift 点击范围选择。</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/zh/04-links.png"><img src="docs/screenshots/zh/04-links.png" alt="链接"></a><br><b>🔗 链接</b> — 从 Google Drive / Mega / MediaFire 等解析的 URL、Magnet 元数据，并进行可访问性检查。</td>
-<td><a href="docs/screenshots/zh/06-status.png"><img src="docs/screenshots/zh/06-status.png" alt="状态"></a><br><b>📊 状态</b> — 同步指标、文件类型分布、基于平台的链接统计、RAM / 磁盘使用情况。</td>
+<td><a href="docs/screenshots/zh/04-links.png"><img src="docs/screenshots/zh/04-links.png" alt="链接"></a><br><b>🔗 链接</b> — 从 Google Drive / Mega / MediaFire 等解析的 URL、Magnet 元数据、Torrent 档案检查器，以及可访问性检查。</td>
+<td><a href="docs/screenshots/zh/05-downloads.png"><img src="docs/screenshots/zh/05-downloads.png" alt="下载"></a><br><b>⬇ 下载</b> — 带进度和本地路径提示的下载历史；自动传输到 FTP / SFTP / 本地目录。</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/zh/05-settings.png"><img src="docs/screenshots/zh/05-settings.png" alt="设置" width="72%"></a><br><b>⚙️ 设置</b> — 群组管理、传输目标、带宽调度、监控关键词、语言和主题、密码。</td>
+<td><a href="docs/screenshots/zh/03-hunter.png"><img src="docs/screenshots/zh/03-hunter.png" alt="频道猎人"></a><br><b>📡 频道猎人</b> — 3 阶段发现流水线、服务端按列排序、在详情灯箱中预览并临时加入后下载文件。</td>
+<td><a href="docs/screenshots/zh/06-status.png"><img src="docs/screenshots/zh/06-status.png" alt="状态"></a><br><b>📊 状态</b> — 同步指标、文件类型分布、平台链接统计、PostgreSQL 表大小、活动热力图。</td>
+</tr>
+<tr>
+<td colspan="2" align="center"><a href="docs/screenshots/zh/07-settings.png"><img src="docs/screenshots/zh/07-settings.png" alt="设置" width="72%"></a><br><b>⚙️ 设置</b> — Telegram 账户、扫描间隔、主题、语言、传输目标、带宽调度、监控关键词、密码。</td>
 </tr>
 </table>
 

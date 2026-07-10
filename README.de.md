@@ -50,14 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <table>
 <tr>
 <td width="50%"><a href="docs/screenshots/de/02-files.png"><img src="docs/screenshots/de/02-files.png" alt="Dateien"></a><br><b>📁 Dateien</b> — einheitliche Suche über alle Konten, Typkategorien, Kanalfilter, Größen-Slider; Torrent-Inhaltserweiterung.</td>
-<td width="50%"><a href="docs/screenshots/de/03-hunter.png"><img src="docs/screenshots/de/03-hunter.png" alt="Kanal-Jäger"></a><br><b>📡 Kanal-Jäger</b> — Discovery-Pipeline, serverseitige Sortierung pro Spalte, Dateivorschau und -download in der Detail-Lightbox.</td>
+<td width="50%"><a href="docs/screenshots/de/01-channels.png"><img src="docs/screenshots/de/01-channels.png" alt="Kanäle"></a><br><b>📋 Kanäle</b> — verfolgte Kanäle mit Datei- und Mitgliederzahl, Spaltensortierung, Massenoperationen und Shift-Klick-Auswahl.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/de/04-links.png"><img src="docs/screenshots/de/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — aus Google Drive / Mega / MediaFire usw. geparste URLs, Magnet-Metadaten, Erreichbarkeitsprüfung.</td>
-<td><a href="docs/screenshots/de/06-status.png"><img src="docs/screenshots/de/06-status.png" alt="Status"></a><br><b>📊 Status</b> — Sync-Metriken, Dateityp-Verteilung, plattformbasierte Link-Statistiken, RAM / Festplattennutzung.</td>
+<td><a href="docs/screenshots/de/04-links.png"><img src="docs/screenshots/de/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — aus Google Drive / Mega / MediaFire usw. geparste URLs, Magnet-Metadaten, Torrent-Archiv-Inspector, Erreichbarkeitsprüfung.</td>
+<td><a href="docs/screenshots/de/05-downloads.png"><img src="docs/screenshots/de/05-downloads.png" alt="Downloads"></a><br><b>⬇ Downloads</b> — Download-Verlauf mit Fortschritt, lokalem Pfad-Tooltip; automatischer Transfer zu FTP / SFTP / lokalem Verzeichnis.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/de/05-settings.png"><img src="docs/screenshots/de/05-settings.png" alt="Einstellungen" width="72%"></a><br><b>⚙️ Einstellungen</b> — Gruppenverwaltung, Transferziele, Bandbreitenplanung, Beobachtungsbegriffe, Sprache & Theme, Passwort.</td>
+<td><a href="docs/screenshots/de/03-hunter.png"><img src="docs/screenshots/de/03-hunter.png" alt="Kanal-Jäger"></a><br><b>📡 Kanal-Jäger</b> — 3-stufige Discovery-Pipeline, serverseitige Spaltensortierung, Dateivorschau und Temp-Join-Download in der Detail-Lightbox.</td>
+<td><a href="docs/screenshots/de/06-status.png"><img src="docs/screenshots/de/06-status.png" alt="Status"></a><br><b>📊 Status</b> — Sync-Metriken, Dateityp-Verteilung, plattformbasierte Link-Statistiken, PostgreSQL-Tabellengrößen, Aktivitäts-Heatmap.</td>
+</tr>
+<tr>
+<td colspan="2" align="center"><a href="docs/screenshots/de/07-settings.png"><img src="docs/screenshots/de/07-settings.png" alt="Einstellungen" width="72%"></a><br><b>⚙️ Einstellungen</b> — Telegram-Konten, Scan-Intervall, Theme, Sprache, Transferziele, Bandbreitenplanung, Beobachtungsbegriffe, Passwort.</td>
 </tr>
 </table>
 

@@ -50,14 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 <table>
 <tr>
 <td width="50%"><a href="docs/screenshots/ru/02-files.png"><img src="docs/screenshots/ru/02-files.png" alt="Файлы"></a><br><b>📁 Файлы</b> — единый поиск по всем аккаунтам, категории типов, фильтр каналов, ползунок размера; раскрытие содержимого торрентов.</td>
-<td width="50%"><a href="docs/screenshots/ru/03-hunter.png"><img src="docs/screenshots/ru/03-hunter.png" alt="Охотник за каналами"></a><br><b>📡 Охотник за каналами</b> — конвейер обнаружения, серверная сортировка по столбцам, предпросмотр и скачивание файлов в лайтбоксе деталей.</td>
+<td width="50%"><a href="docs/screenshots/ru/01-channels.png"><img src="docs/screenshots/ru/01-channels.png" alt="Каналы"></a><br><b>📋 Каналы</b> — отслеживаемые каналы с количеством файлов и участников, сортировка по столбцам, массовые операции, выбор с Shift.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/ru/04-links.png"><img src="docs/screenshots/ru/04-links.png" alt="Ссылки"></a><br><b>🔗 Ссылки</b> — URL-адреса из Google Drive / Mega / MediaFire и др., метаданные magnet, проверка доступности.</td>
-<td><a href="docs/screenshots/ru/06-status.png"><img src="docs/screenshots/ru/06-status.png" alt="Статус"></a><br><b>📊 Статус</b> — метрики синхронизации, распределение по типам файлов, статистика ссылок по платформам, использование RAM / диска.</td>
+<td><a href="docs/screenshots/ru/04-links.png"><img src="docs/screenshots/ru/04-links.png" alt="Ссылки"></a><br><b>🔗 Ссылки</b> — URL из Google Drive / Mega / MediaFire и др., метаданные magnet, инспектор архивов торрентов, проверка доступности.</td>
+<td><a href="docs/screenshots/ru/05-downloads.png"><img src="docs/screenshots/ru/05-downloads.png" alt="Загрузки"></a><br><b>⬇ Загрузки</b> — история загрузок с прогрессом и подсказкой пути; автопередача на FTP / SFTP / локальный каталог.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/ru/05-settings.png"><img src="docs/screenshots/ru/05-settings.png" alt="Настройки" width="72%"></a><br><b>⚙️ Настройки</b> — управление группами, назначения передачи, планирование полосы пропускания, ключевые слова наблюдения, язык и тема, пароль.</td>
+<td><a href="docs/screenshots/ru/03-hunter.png"><img src="docs/screenshots/ru/03-hunter.png" alt="Охотник за каналами"></a><br><b>📡 Охотник за каналами</b> — 3-этапный конвейер обнаружения, серверная сортировка, предпросмотр и загрузка файлов в лайтбоксе деталей.</td>
+<td><a href="docs/screenshots/ru/06-status.png"><img src="docs/screenshots/ru/06-status.png" alt="Статус"></a><br><b>📊 Статус</b> — метрики синхронизации, распределение по типам, статистика ссылок по платформам, размеры таблиц PostgreSQL, тепловая карта активности.</td>
+</tr>
+<tr>
+<td colspan="2" align="center"><a href="docs/screenshots/ru/07-settings.png"><img src="docs/screenshots/ru/07-settings.png" alt="Настройки" width="72%"></a><br><b>⚙️ Настройки</b> — Telegram-аккаунты, интервал сканирования, тема, язык, назначения передачи, планирование полосы пропускания, ключевые слова, пароль.</td>
 </tr>
 </table>
 
