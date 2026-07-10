@@ -106,8 +106,10 @@ _PLATFORMS: List[Tuple[str, str]] = [
     ("Yandex Disk", "disk.yandex."),
     ("Yandex Disk", "yadi.sk"),
     ("pCloud", "pcloud.com"),
-    ("Zippyshare", "zippyshare.com"),
-    ("Uploaded", "uploaded.net"),
+    # NOTE: Zippyshare (closed Mar 2023), Uploaded/uploaded.net (closed 2024),
+    # Anonfiles/Bayfiles (closed Aug 2023) used to be listed here. They are
+    # removed from the classifier — startup also DELETEs any existing links
+    # with these platform names from the DB (see database.delete_dead_platforms).
     ("Rapidgator", "rapidgator.net"),
     ("Nitroflare", "nitroflare.com"),
     ("Gofile", "gofile.io"),
@@ -118,15 +120,39 @@ _PLATFORMS: List[Tuple[str, str]] = [
     ("Katfile", "katfile.com"),
     ("Mixdrop", "mixdrop.co"),
     ("Cyberdrop", "cyberdrop.me"),
+    ("Bunkr", "bunkr.is"),
+    ("Bunkr", "bunkr.su"),
+    ("Bunkr", "bunkr.la"),
+    ("Bunkr", "bunkr.cr"),
+    ("Bunkr", "bunkr.ph"),
+    ("Bunkr", "bunkr.fi"),
+    ("Bunkr", "bunkr.media"),
+    ("Bunkr", "bunkrr.su"),
+    ("Krakenfiles", "krakenfiles.com"),
+    ("Catbox", "files.catbox.moe"),
+    ("Litterbox", "litterbox.catbox.moe"),
+    ("Litterbox", "litter.catbox.moe"),
     ("Streamtape", "streamtape.com"),
     ("Doodstream", "doodstream.com"),
     ("1Fichier", "1fichier.com"),
     ("Hexupload", "hexupload.net"),
     ("Filecrypt", "filecrypt.cc"),
-    ("Anonfiles", "anonfiles.com"),
-    ("Bayfiles", "bayfiles.com"),
     ("Multiup", "multiup.org"),
     ("Filesfly", "filesfly.com"),
+    # ── 2026-07: düşük-puanlı kanalların mesaj taramasıyla tespit edilen host'lar ──
+    ("RSLinks", "rslinks.net"),
+    ("10Drives", "10drives.com"),
+    ("DevUploads", "devuploads.com"),
+    ("APMFile", "apmfile.com"),
+    ("FTUApps", "farlad.com"),
+    ("FreeCracks", "freecracksdownload.com"),
+    ("Hide01", "hide01.ir"),
+    ("Zoom-Platform", "zoom-platform.folktec.com"),
+    ("Telegraph", "telegra.ph/file/"),
+    ("GPLinks", "gplinks.co"),
+    ("GPLinks", "gplinks.pro"),
+    ("Magfi", "magfi.link"),
+    ("Linktw", "linktw.in"),
 ]
 
 
@@ -176,6 +202,7 @@ def _trim_url(s: str) -> str:
 
 
 _MAGNET_RE = re.compile(r'magnet:\?[^\s<>"\']+', re.I)
+_HTTP_URL_RE = re.compile(r'https?://[^\s<>"\')\]]+', re.I)
 
 
 import re as _re_sync
@@ -265,29 +292,35 @@ def _extract_all_magnet_urls(message) -> List[str]:
 
 def _extract_platform_urls(message) -> List[Tuple[str, str]]:
     """
-    Iterate message.entities and return a list of (platform, url) tuples
-    for every URL entity whose URL matches a known file-hosting platform.
+    Return (platform, url) tuples for every URL matching a known file-hosting
+    platform. Scans BOTH message.entities AND the raw text (regex) — some
+    channels post links as plain text without an auto-link entity (code blocks,
+    unusual TLDs, copy-paste), which the entity-only pass used to miss. Deduped.
     """
     results: List[Tuple[str, str]] = []
+    seen: set = set()
     entities = getattr(message, "entities", None) or []
     text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
 
-    for entity in entities:
-        url: Optional[str] = None
-        if isinstance(entity, MessageEntityUrl):
-            url = _slice_utf16(text, entity.offset, entity.length)
-        elif isinstance(entity, MessageEntityTextUrl):
-            # MessageEntityTextUrl carries the URL itself in entity.url, so
-            # no slicing is needed.
-            url = entity.url
-
-        url = _trim_url(url)
-        if not url:
-            continue
-
+    def _add(raw_url: Optional[str]) -> None:
+        url = _trim_url(raw_url)
+        if not url or url in seen:
+            return
+        seen.add(url)
         platform = _detect_platform(url)
         if platform:
             results.append((platform, url))
+
+    for entity in entities:
+        if isinstance(entity, MessageEntityUrl):
+            _add(_slice_utf16(text, entity.offset, entity.length))
+        elif isinstance(entity, MessageEntityTextUrl):
+            # MessageEntityTextUrl carries the URL itself in entity.url.
+            _add(entity.url)
+
+    # Plain-text URLs (no entity) — mirror the magnet extractor's text scan.
+    for m in _HTTP_URL_RE.finditer(text):
+        _add(m.group(0))
 
     return results
 
@@ -1049,3 +1082,112 @@ async def run_magnet_backfill():
         magnet_backfill_status["enrich_phase"] = False
         magnet_backfill_status["current_group"] = None
         magnet_backfill_status["current_magnet"] = None
+
+
+# ── Archive scan: bulk inspect archives inside magnet links ────────────────────
+
+archive_scan_status: dict = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "success": 0,
+    "fail": 0,
+    "skipped": 0,
+    "current": None,   # truncated URL of current link
+    "error": None,
+}
+_archive_scan_task: Optional[asyncio.Task] = None
+
+
+def kick_archive_scan() -> bool:
+    global _archive_scan_task
+    if archive_scan_status.get("running"):
+        return False
+    _archive_scan_task = asyncio.create_task(run_archive_scan())
+    return True
+
+
+def cancel_archive_scan() -> bool:
+    if not archive_scan_status.get("running"):
+        return False
+    archive_scan_status["running"] = False
+    return True
+
+
+async def run_archive_scan(per_link_timeout: int = 150, concurrency: int = 2):
+    """Walk all magnet links that have uninspected ZIP/RAR/7z files and
+    partially download their archive headers to list the contents.
+
+    Runs at concurrency=2 to avoid hammering the DHT.
+    Respects the running flag so cancel_archive_scan() stops it cleanly."""
+    import archive_inspector
+
+    archive_scan_status.update({
+        "running": True,
+        "total": 0,
+        "done": 0,
+        "success": 0,
+        "fail": 0,
+        "skipped": 0,
+        "current": None,
+        "error": None,
+    })
+
+    try:
+        pending = await database._q("""
+            SELECT l.id, l.url
+            FROM links l
+            WHERE l.platform = 'Magnet'
+              AND l.files_json IS NOT NULL
+              AND jsonb_array_length(l.files_json) > 0
+              AND l.available = true
+              AND NOT EXISTS (
+                  SELECT 1 FROM link_archive_contents lac WHERE lac.link_id = l.id
+              )
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(l.files_json) AS f
+                  WHERE (f->>'name') ~* '\\.(zip|rar|7z)$'
+                    AND (f->>'size') IS NOT NULL
+                    AND (f->>'size')::bigint BETWEEN 1 AND 524288000
+              )
+            ORDER BY l.id DESC
+        """)
+
+        archive_scan_status["total"] = len(pending)
+        logger.info("[archive_scan] %d magnet link(s) with uninspected archives", len(pending))
+
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _process_one(row):
+            async with sem:
+                if not archive_scan_status.get("running"):
+                    archive_scan_status["skipped"] += 1
+                    return
+                lid = row["id"]
+                url = row["url"] or ""
+                archive_scan_status["current"] = url[:80]
+                try:
+                    results = await archive_inspector.inspect_magnet_archives(
+                        url, timeout=per_link_timeout
+                    )
+                    if results:
+                        for path, contents in results.items():
+                            await database.store_link_archive_contents(lid, path, contents)
+                        archive_scan_status["success"] += 1
+                        logger.info("[archive_scan] link %d: %d archive(s) inspected", lid, len(results))
+                    else:
+                        archive_scan_status["fail"] += 1
+                except Exception as exc:
+                    logger.warning("[archive_scan] link %d error: %s", lid, exc)
+                    archive_scan_status["fail"] += 1
+                finally:
+                    archive_scan_status["done"] += 1
+
+        await asyncio.gather(*[_process_one(r) for r in pending])
+
+    except Exception as exc:
+        archive_scan_status["error"] = str(exc)
+        logger.error("[archive_scan] Fatal: %s", exc)
+    finally:
+        archive_scan_status["running"] = False
+        archive_scan_status["current"] = None

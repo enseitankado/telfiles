@@ -401,6 +401,8 @@ thead tr.flt-row input:focus{border-color:var(--accent)}
 tbody tr{border-bottom:1px solid var(--border-2);transition:background .1s;cursor:pointer}
 tbody tr:hover{background:var(--bg-hover)}
 tbody tr.row-selected{background:var(--bg-selected)!important}
+tr.link-file-row{background:rgba(37,99,235,.04)}
+tr.link-file-row:hover{background:rgba(37,99,235,.09)}
 tbody td{border-right:1px solid var(--border-3)}
 tbody td:last-child{border-right:none}
 .col-resize-handle{position:absolute;top:0;right:-3px;width:7px;height:100vh;cursor:col-resize;z-index:6;background:transparent}
@@ -438,6 +440,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #tf-update-banner .tfu-link{background:none;border:none;color:var(--text-3);font-size:.78rem;cursor:pointer;text-decoration:underline}
 #tf-update-banner .tfu-cmd{margin-top:8px;background:var(--bg-2);padding:6px 8px;border-radius:4px;font-family:ui-monospace,monospace;font-size:.72rem;color:var(--text-2);overflow-x:auto;white-space:nowrap}
 .link-files-ok{color:var(--text-1);font-weight:500;cursor:default}
+.link-files-clickable{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.link-files-clickable:hover{color:var(--accent)}
 .link-files-pending{color:var(--text-4);cursor:default}
 .link-files-dead{color:#dc2626;font-style:italic;cursor:default}
 .link-files-retry{cursor:pointer;font-style:normal;text-decoration:underline dotted}
@@ -462,6 +466,14 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #links-table{table-layout:auto;width:100%}
 #links-table .lcol-platform{width:1%;white-space:nowrap}
 #links-table .lcol-date    {width:1%;white-space:nowrap}
+/* Dosya adı + Grup sütunlarını kırp → tablo #table-wrap'e sığsın, yatay kaydırma
+   olmasın; böylece magnet içi dosya listesinin sağ kaydırma çubuğu görünür alanda kalır. */
+#links-table .cell-clip{display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+#links-table .link-files-cell .cell-clip{max-width:280px}
+#links-table .lcol-group,#links-table .link-group-cell{max-width:220px}
+/* Dosyalar (adet) ve Boyut sütunları: dar, sarmasız, sağa hizalı */
+#links-table .lcol-fcount,#links-table .lcol-fsize,#links-table td.lcol-fcount-cell,#links-table td.lcol-fsize-cell{width:1%;white-space:nowrap;text-align:right}
+#links-table .lf-num{font-variant-numeric:tabular-nums;color:var(--text-2)}
 #links-table th:nth-child(1),#links-table td:nth-child(1){position:sticky;left:0}
 #links-table th:nth-child(2),#links-table td:nth-child(2){position:sticky;left:26px}
 #links-table th:nth-child(3),#links-table td:nth-child(3){position:sticky;left:66px;border-right:1px solid var(--border-1);box-shadow:4px 0 6px -2px var(--frozen-shadow)}
@@ -536,6 +548,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #channels-table tbody .ch-col-mini{color:var(--text-3);font-variant-numeric:tabular-nums}
 #channels-table tbody td.ch-col-mini.zero{color:var(--text-4)}
 #channels-table .ch-col-user{width:1%;white-space:nowrap}
+#channels-table .ch-col-hscore{width:1%;white-space:nowrap;text-align:right}
+.ch-hscore-badge{display:inline-block;min-width:32px;padding:1px 6px;background:var(--accent);color:#fff;border-radius:10px;font-size:.72rem;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
 #channels-table .ch-col-state{width:1%;white-space:nowrap;text-align:center}
 #channels-table .ch-col-act{width:1%;white-space:nowrap;text-align:right}
 /* Kanal Adı: dinamik (geri kalan boşluğu alır) ama uzun adlar ellipsis ile kesilir. */
@@ -1054,6 +1068,10 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 
 .hunter-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:120;display:none;align-items:center;justify-content:center;padding:20px}
 .hunter-overlay.open{display:flex}
+.hunter-settings-modal{max-width:920px}
+.hs-body{padding:12px 18px 4px}
+.hs-grid4{grid-template-columns:repeat(4,1fr)}
+.hs-row-wide{grid-column:span 2}
 /* Modal is now a vertical flex container. The body sections each manage
    their own padding; the file-list region grows to absorb leftover vertical
    space and is the only place that scrolls. The modal itself never scrolls. */
@@ -1095,9 +1113,15 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .settings-tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;background:#dc2626;color:#fff;border-radius:9px;font-size:.66rem;font-weight:700;margin-left:4px;line-height:1}
 .watches-help{font-size:.74rem;color:var(--text-3);margin-bottom:9px;line-height:1.5}
 .watches-help b{color:var(--text-2)}
-.watch-form{display:flex;gap:6px;margin-bottom:10px}
-.watch-form input{flex:1;padding:7px 10px;border:1px solid var(--input-border);border-radius:7px;font-size:.85rem;background:var(--bg-2);color:var(--text-1);outline:none}
-.watch-form input:focus{border-color:var(--accent)}
+.watch-form{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.watch-form input[type=text]{flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--input-border);border-radius:7px;font-size:.85rem;background:var(--bg-2);color:var(--text-1);outline:none}
+.watch-form input[type=text]:focus{border-color:var(--accent)}
+.watch-form .wf-size-wrap{display:flex;gap:4px;align-items:center;border:1px solid var(--input-border);border-radius:7px;padding:0 8px;background:var(--bg-2)}
+.watch-form .wf-size-label{font-size:.72rem;color:var(--text-3);white-space:nowrap;user-select:none}
+.watch-form .wf-size-num{width:58px;padding:6px 4px;border:none;font-size:.82rem;background:transparent;color:var(--text-1);outline:none;text-align:right}
+.watch-form .wf-size-num:disabled{opacity:.45;cursor:not-allowed}
+.watch-form .wf-unit{padding:6px 4px;border:none;font-size:.78rem;background:transparent;color:var(--text-1);outline:none;cursor:pointer}
+.watch-form .wf-size-wrap:focus-within{border-color:var(--accent)}
 .watch-form button{padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:.82rem;font-weight:600}
 .watch-form button:hover{background:var(--accent-h)}
 #watches-list{display:flex;flex-direction:column;gap:6px}
@@ -1145,11 +1169,15 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 tr.torrent-tree-row>td{padding:0!important;background:var(--bg-3)!important;border-bottom:1px solid var(--border-1)!important;box-shadow:inset 3px 0 0 var(--border-1)}
 .torrent-tree-panel{padding:10px 16px 14px 20px}
 .torrent-tree-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px dashed var(--border-2)}
-.torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%;letter-spacing:.01em}
+.torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;letter-spacing:.01em}
 .torrent-tree-stats{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:.7rem;flex-shrink:0;background:var(--bg-2);border:1px solid var(--border-2);border-radius:10px;padding:2px 10px;font-variant-numeric:tabular-nums}
 .torrent-tree-filter{flex:1;min-width:160px;max-width:300px;padding:4px 10px;border:1px solid var(--border-2);border-radius:14px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none;transition:border-color .12s,box-shadow .12s}
 .torrent-tree-filter:focus{border-color:var(--text-3);box-shadow:0 0 0 2px var(--border-1)}
-.torrent-tree-list{font-size:.73rem;max-height:300px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);box-shadow:inset 0 1px 0 rgba(0,0,0,.02)}
+.torrent-tree-list{font-size:.73rem;max-height:300px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);box-shadow:inset 0 1px 0 rgba(0,0,0,.02);scrollbar-width:auto;scrollbar-color:var(--text-4) transparent}
+.torrent-tree-list::-webkit-scrollbar{width:16px}
+.torrent-tree-list::-webkit-scrollbar-track{background:transparent}
+.torrent-tree-list::-webkit-scrollbar-thumb{background:var(--text-4);border-radius:8px;border:3px solid var(--bg-2);min-height:36px}
+.torrent-tree-list::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 .tt-entry{display:flex;align-items:center;gap:7px;padding:4px 10px;min-height:24px;position:relative;transition:background .1s}
 .tt-entry:hover{background:var(--bg-hover)}
 .tt-entry+.tt-entry:not(.tt-dir){border-top:1px solid var(--border-3)}
@@ -1174,10 +1202,16 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-3)!important;bord
 .tt-loading{padding:18px 16px;text-align:center;color:var(--text-3);font-size:.76rem;display:flex;align-items:center;justify-content:center;gap:8px}
 .tt-error{padding:10px 14px;color:#dc2626;font-size:.75rem;background:rgba(220,38,38,.06);border-radius:5px}
 tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;border-bottom:2px solid #6d28d9!important}
-.magnet-tree-panel{padding:8px 14px 12px}
+.magnet-tree-panel{padding:8px 14px 12px;width:fit-content;min-width:320px;max-width:min(720px,100%)}
 .magnet-infohash{font-size:.68rem;color:var(--text-3);font-family:monospace;flex-shrink:0;cursor:default}
 .tt-empty{padding:10px 12px;color:var(--text-3);font-size:.75rem;text-align:center}
 .tt-more-notice{padding:7px 14px;color:var(--text-3);font-size:.72rem;text-align:center;border-top:1px dashed var(--border-2);font-style:italic}
+.tt-inspect-btn{margin-left:4px;padding:1px 6px;font-size:.7rem;background:var(--bg-3);border:1px solid var(--border-2);border-radius:4px;cursor:pointer;color:var(--text-2);transition:background .1s;flex-shrink:0}
+.tt-inspect-btn:hover:not(:disabled){background:var(--bg-hover);color:var(--text-1)}
+.tt-inspect-btn:disabled{opacity:.5;cursor:default}
+.tt-archive-badge{margin-left:4px;font-size:.68rem;color:var(--accent);flex-shrink:0;white-space:nowrap}
+.tt-archive-inner{background:var(--bg-1)!important;font-size:.70rem;opacity:.92}
+.tt-archive-contents{border-left:2px solid var(--border-2);margin:0 0 2px 28px}
 /* ── Torrent parse bar ─────────────────────────────────────────── */
 #torrent-parse-bar{display:flex;align-items:center;gap:8px;padding:6px 16px;background:linear-gradient(90deg,var(--bg-selected),var(--bg-info));border-bottom:1px solid var(--accent-soft);font-size:.74rem;color:var(--text-1);flex-shrink:0;animation:hbbslide .2s ease}
 .tpb-label{font-weight:600;color:var(--accent-h);white-space:nowrap}
@@ -1261,6 +1295,20 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 #leave-modal .lm-sub{font-size:.78rem;color:var(--text-4);margin-bottom:18px;line-height:1.5}
 .lm-btn{display:flex;align-items:center;gap:10px;width:100%;padding:11px 14px;border-radius:8px;border:1px solid var(--border-2);background:var(--bg-3);cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text-1);margin-bottom:8px;text-align:left}
 .lm-btn:hover{border-color:var(--accent);background:var(--bg-4)}
+.lm-btn-default{border-color:var(--accent);background:var(--bg-info);box-shadow:0 0 0 2px var(--accent-soft)}
+.lm-btn-default:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+
+#bulk-leave-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:230;display:none;align-items:center;justify-content:center}
+#bulk-leave-overlay.open{display:flex}
+#bulk-leave-modal{background:var(--bg-2);border-radius:12px;padding:22px 24px;width:440px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+#bulk-leave-modal h3{font-size:.95rem;font-weight:700;color:var(--text-1);margin:0 0 12px}
+.bl-current{font-size:.82rem;color:var(--text-2);margin-bottom:10px;padding:8px 12px;background:var(--bg-3);border-radius:6px;font-family:'Cascadia Code',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:34px;display:flex;align-items:center}
+.bl-bar{width:100%;height:8px;background:var(--bg-3);border-radius:4px;overflow:hidden;margin-bottom:10px}
+.bl-bar-fill{height:100%;background:var(--accent);width:0%;transition:width .25s ease}
+.bl-counts{display:flex;justify-content:space-between;font-size:.78rem;color:var(--text-3);margin-bottom:14px;font-family:'Cascadia Code',monospace}
+.bl-counts-num{color:var(--text-1);font-weight:600}
+.bl-counts-ok{color:#16a34a;font-weight:600}
+.bl-counts-fail{color:#dc2626;font-weight:600}
 .lm-btn-icon{font-size:1.1rem;flex-shrink:0}
 .lm-btn-text{}
 .lm-btn-desc{font-size:.72rem;color:var(--text-4);font-weight:400;display:block;margin-top:1px}
@@ -1382,6 +1430,10 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 .st-tbl tr:last-child td{border-bottom:none}
 .st-tbl tr:hover td{background:var(--bg-3)}
 .st-tbl td.r,.st-tbl th.r{text-align:right}
+.st-tbl th.st-sortable{cursor:pointer;user-select:none;white-space:nowrap}
+.st-tbl th.st-sortable:hover{color:var(--accent)}
+.st-tbl th.st-sorted{color:var(--accent)}
+.st-tbl th .st-arrow{font-size:.7em;font-weight:600}
 .mini-bar{height:3px;border-radius:2px;background:var(--border-2);overflow:hidden;margin-top:4px;width:100%;min-width:40px}
 .mini-bar-fill{height:100%;border-radius:2px;transition:width .4s}
 .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:.76rem}
@@ -1574,6 +1626,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
         </div>
         <span id="link-flt-count" class="flt-count-pill" data-i18n-title="filter.linkCountTitle" title="Eşleşen benzersiz link sayısı">—</span>
         <button class="type-btn" id="link-retry-dead-btn" onclick="retryDeadMagnets()" data-i18n-title="links.retryDeadTip" title="Daha önce peer bulunamadığı için pas geçilmiş magnetlerin probe_error işaretini temizler. Sonraki magnet backfill turunda yeniden denenirler."><span data-i18n="links.retryDeadBtn">↻ Ölü magnetleri yeniden dene</span></button>
+        <button class="type-btn" id="archive-scan-btn" onclick="startArchiveScan()" data-i18n-title="archiveScan.btnTip" title="Magnet linklerdeki arşiv dosyalarını kısmen indirerek içeriklerini tarar"><span data-i18n="archiveScan.btn">📦 Arşivleri tara</span></button>
+        <span id="archive-scan-status" class="backfill-progress"></span>
       </div>
 
       <!-- Settings: sub-tabs (Groups | Account & Theme) -->
@@ -1704,7 +1758,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
         <div class="settings-card" id="telemetry-card">
           <h3 data-i18n="telemetry.title">Kullanıcı istatistiklerini gönder</h3>
           <label class="tlm-row">
-            <input type="checkbox" id="tlm-enabled" onchange="tlmToggle(this.checked)">
+            <input type="checkbox" id="tlm-enabled" onchange="tlmToggle(this.checked)" checked>
             <span data-i18n="telemetry.enabledLabel">Bu kuruluma ait istatistikleri gönder</span>
           </label>
         </div>
@@ -1922,6 +1976,16 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <div class="watches-help" data-i18n-html="watch.help">Buraya eklediğin terimler dosya adı ve açıklamada %like% ile aranır. Birden fazla kelime girersen aralarında <b>OR</b> uygulanır. Sonraki tarama turunda eşleşen yeni dosyalar gelirse bildirim oluşur.</div>
             <div class="watch-form">
               <input id="watch-input" type="text" placeholder="örn: linux iso, ubuntu, kitap pdf" data-i18n-ph="watch.placeholder" onkeydown="if(event.key==='Enter')addWatch()">
+              <div class="wf-size-wrap">
+                <span class="wf-size-label" data-i18n="watch.minLabel">min.</span>
+                <input id="watch-size-num" type="number" class="wf-size-num" min="0" step="1" value="" placeholder="0" title="" disabled>
+                <select id="watch-size-unit" class="wf-unit" onchange="watchSizeUnitChange()" title="">
+                  <option value="" data-i18n="watch.unitNone">— boyut</option>
+                  <option value="KB">KB</option>
+                  <option value="MB">MB</option>
+                  <option value="GB">GB</option>
+                </select>
+              </div>
               <button onclick="addWatch()" data-i18n="watch.add">Ekle</button>
             </div>
             <div id="watches-list"></div>
@@ -1950,16 +2014,13 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           </button>
           <span id="ch-count-pill" class="flt-count-pill">—</span>
           <span class="ch-spacer"></span>
+          <button class="ch-btn" id="sync-status-btn" onclick="openSyncStatusModal()">🔄 Senkronizasyon Durumu</button>
           <span id="ch-bulk-bar" style="display:none">
             <span id="ch-bulk-count" class="ch-bulk-info">0</span>
             <button class="ch-bulk-btn" id="ch-bulk-hide" onclick="bulkToggleHide()"
                     data-i18n="groups.bulkHide"
                     data-i18n-title="channels.tipHide"
                     title="Bu kanalı arayüzden gizle. Dosyalar veritabanında kalır ama listede görünmez. Yeni mesajlar senkronlanmaya devam eder.">Gizle</button>
-            <button class="ch-bulk-btn" id="ch-bulk-excl" onclick="bulkToggleExcluded()"
-                    data-i18n="groups.bulkUntrack"
-                    data-i18n-title="channels.tipUntrack"
-                    title="Yeni senkronizasyonlarda bu kanalı atla. Geçmiş dosyalar kalır, ama yeni mesajlar yakalanmaz. (Telegram üyeliğin bozulmaz.)">Takip Etme</button>
             <button class="ch-bulk-btn" onclick="bulkRescanGroups()"
                     data-i18n="groups.bulkRescan"
                     data-i18n-title="channels.tipRescan"
@@ -1967,7 +2028,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <button class="ch-bulk-btn ch-bulk-btn-danger" onclick="bulkLeaveGroups()"
                     data-i18n="groups.bulkLeave"
                     data-i18n-title="channels.tipLeave"
-                    title="Telegram üyeliğini sonlandır. Geri dönüş yok; isteğe bağlı olarak yerel verileri de silebilirsin.">Telegram'dan Ayrıl</button>
+                    title="Telegram üyeliğini sonlandır. Geri dönüş yok; isteğe bağlı olarak yerel verileri de silebilirsin.">Üyelikten çık</button>
             <button class="ch-bulk-btn ch-bulk-btn-alt" onclick="bulkClearSelection()"
                     data-i18n="common.cancel"
                     data-i18n-title="channels.tipCancel"
@@ -2027,6 +2088,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
                 <th class="ch-sortable ch-col-mini" title="Diğer" onclick="channelsSortBy('type_other')"><span style="color:#9ca3af">dğr</span> <span class="sort-arrow" id="ch-arr-to"></span></th>
                 <th class="ch-sortable ch-col-msg" onclick="channelsSortBy('msg')"><span data-i18n="channels.colLastMsg">Son Mesaj</span> <span class="sort-arrow" id="ch-arr-msg"></span></th>
                 <th class="ch-sortable ch-col-sync" onclick="channelsSortBy('sync')"><span data-i18n="channels.colSync">Son Senkron</span> <span class="sort-arrow" id="ch-arr-sync"></span></th>
+                <th class="ch-sortable ch-col-hscore" onclick="channelsSortBy('hunter_score')" title="Kanal Avcısı Puanı"><span data-i18n="channels.colHScore">Puan</span> <span class="sort-arrow" id="ch-arr-hscore"></span></th>
                 <th class="ch-sortable ch-col-state" onclick="channelsSortBy('state')"><span data-i18n="channels.colState">Durum</span> <span class="sort-arrow" id="ch-arr-state"></span></th>
                 <th class="ch-col-act" data-i18n="channels.colAct">İşlemler</th>
               </tr>
@@ -2039,6 +2101,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
                 <th><input id="ch-flt-min-files" type="number" placeholder="min" oninput="renderChannelsTable()"></th>
                 <th><input id="ch-flt-min-size" type="number" placeholder="MB" title="Toplam boyut min (MB)" oninput="renderChannelsTable()"></th>
                 <th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th>
+                <th></th>
                 <th></th>
                 <th></th>
                 <th>
@@ -2134,6 +2197,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <span id="hunter-total-count" class="hunter-total-pill" style="display:none"></span>
           <button class="hunter-btn-alt" onclick="hunterClearList()" data-i18n="hunter.clearListBtn" title="">🗑 Listeyi Temizle</button>
           <button class="hunter-btn-alt" id="hunter-enrich-btn" onclick="hunterEnrichDiscovered()" data-i18n-title="hunter.enrichTip" title="'Keşfedildi' durumundaki adayları Telegram üzerinden zenginleştirir (örnekleme + skor + dosya tipi dağılımı).">✨ <span data-i18n="hunter.enrichBtn">Keşfedileni Zenginleştir</span></button>
+          <button class="hunter-btn-alt" onclick="hunterShowQuota()" data-i18n="hunter.quotaBtn">📊 API Kotaları</button>
           <button class="hunter-btn-alt" id="hunter-settings-btn" onclick="hunterToggleSettings()" data-i18n="hunter.settingsBtn">⚙ Ayarlar</button>
           <select id="hunter-filter-status" class="hunter-sel" onchange="hunterFilterChange()">
             <option value="" data-i18n="hunter.statusAll">Tüm durumlar</option>
@@ -2148,43 +2212,6 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <button class="hunter-whatis-btn" onclick="hunterShowWhatis()" data-i18n-title="hunter.infoTitle" title="Kanal Avcısı nedir?">?</button>
         </div>
 
-        <div id="hunter-settings-card" class="hunter-card" style="display:none">
-          <h3 data-i18n="hunter.settingsTitle">Avcı Ayarları</h3>
-          <div class="hunter-grid">
-            <label class="hunter-row"><span data-i18n="hunter.enabled">Etkin</span><span class="hf-help" data-i18n-help="hunter.helpEnabled">?</span><input type="checkbox" id="h-enabled"></label>
-            <label class="hunter-row"><span data-i18n="hunter.stage0">Stage 0: Benzer kanal grafiği (Telegram)</span><span class="hf-help" data-i18n-help="hunter.helpStage0">?</span><input type="checkbox" id="h-stage0"></label>
-            <label class="hunter-row"><span data-i18n="hunter.stage1">Stage 1: Dahili tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage1">?</span><input type="checkbox" id="h-stage1"></label>
-            <label class="hunter-row"><span data-i18n="hunter.stage2">Stage 2: Web tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage2">?</span><input type="checkbox" id="h-stage2"></label>
-            <label class="hunter-row"><span data-i18n="hunter.magnetHunt">🧲 Magnet Avı (Stage 2 ↔ 3 arası)</span><span class="hf-help" data-i18n-help="hunter.helpMagnetHunt">?</span><input type="checkbox" id="h-magnethunt"></label>
-            <label class="hunter-row"><span data-i18n="hunter.magnetBackfill">📥 Magnet Backfill (geçmiş tarama + dosya listesi)</span><span class="hf-help" data-i18n-help="hunter.helpMagnetBackfill">?</span><input type="checkbox" id="h-magnet-backfill"></label>
-            <label class="hunter-row"><span data-i18n="hunter.webDelay">Web istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpWebDelay">?</span><input type="number" min="500" id="h-web-delay"></label>
-            <label class="hunter-row"><span data-i18n="hunter.webConcurrency">Web eşzamanlı</span><span class="hf-help" data-i18n-help="hunter.helpWebConc">?</span><input type="number" min="1" max="8" id="h-web-conc"></label>
-            <label class="hunter-row"><span data-i18n="hunter.tgDelay">Telegram istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpTgDelay">?</span><input type="number" min="500" id="h-tg-delay"></label>
-            <label class="hunter-row"><span data-i18n="hunter.tgCap">Günlük lookup limiti</span><span class="hf-help" data-i18n-help="hunter.helpTgCap">?</span><input type="number" min="10" id="h-tg-cap"></label>
-            <label class="hunter-row"><span data-i18n="hunter.tgSample">Örneklenecek mesaj</span><span class="hf-help" data-i18n-help="hunter.helpTgSample">?</span><input type="number" min="20" max="2000" id="h-tg-sample"></label>
-            <label class="hunter-row"><span data-i18n="hunter.tgAccount">Telegram hesabı</span><span class="hf-help" data-i18n-help="hunter.helpTgAccount">?</span><input type="number" min="1" id="h-tg-account"></label>
-            <label class="hunter-row"><span data-i18n="hunter.tempJoin">Geçici üyelik ile tara</span><span class="hf-help" data-i18n-help="hunter.helpTempJoin">?</span><input type="checkbox" id="h-temp-join"></label>
-            <label class="hunter-row"><span data-i18n="hunter.skipOld">1 yıldan eski kanalları atla</span><span class="hf-help" data-i18n-help="hunter.helpSkipOld">?</span><input type="checkbox" id="h-skip-old"></label>
-            <label class="hunter-row"><span data-i18n="hunter.scheduleKind">Zamanlama</span><span class="hf-help" data-i18n-help="hunter.helpScheduleKind">?</span>
-              <select id="h-schedule-kind">
-                <option value="manual" data-i18n="hunter.schManual">Manuel</option>
-                <option value="interval" data-i18n="hunter.schInterval">Aralıkla</option>
-              </select>
-            </label>
-            <label class="hunter-row"><span data-i18n="hunter.scheduleInterval">Aralık (saniye)</span><span class="hf-help" data-i18n-help="hunter.helpScheduleInt">?</span><input type="number" min="3600" id="h-schedule-int"></label>
-            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.keywords">Anahtar kelimeler (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpKeywords">?</span><input type="text" id="h-keywords"></label>
-            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.sources">Kaynaklar</span><span class="hf-help" data-i18n-help="hunter.helpSources">?</span><input type="text" id="h-sources" placeholder="boş bırak = tümü; ya da: internal,tgstat,telemetrio,combot,tdirectory,tlgrm,telegramic,tgchannels,searchtg,tdoru,telegaio,google,duckduckgo,brave,bing,mojeek,startpage,yandex,ecosia,reddit,hackernews,github,pastesites,wayback,urlscan,commoncrawl,llm"></label>
-            <label class="hunter-row hunter-row-wide"><span data-i18n="hunter.anthropicKey">Anthropic API Anahtarı <small style="color:var(--text-3)">(LLM kaynağı için)</small></span><input type="password" id="h-anthropic-key" placeholder="sk-ant-…" autocomplete="off"></label>
-            <label class="hunter-row"><span data-i18n="hunter.minSubs">Min. üye</span><span class="hf-help" data-i18n-help="hunter.helpMinSubs">?</span><input type="number" min="0" id="h-min-subs"></label>
-            <label class="hunter-row"><span data-i18n="hunter.languages">Diller (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpLanguages">?</span><input type="text" id="h-languages" placeholder="tr,en"></label>
-          </div>
-          <div class="hunter-foot">
-            <span id="hunter-cap-info" class="hunter-meta"></span>
-            <span class="hunter-flex"></span>
-            <button class="hunter-btn-alt" onclick="hunterToggleSettings()" data-i18n="common.cancel">İptal</button>
-            <button class="hunter-btn-primary" onclick="hunterSaveSettings()" data-i18n="common.save">Kaydet</button>
-          </div>
-        </div>
 
         <div id="hunter-monitor" style="display:none">
           <div class="hm-head">
@@ -2294,6 +2321,61 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
         <div class="hunter-help-modal" id="hunter-quota-body"></div>
       </div>
 
+      <div id="hunter-settings-overlay" class="hunter-overlay" onclick="hunterSettingsOverlayClick(event)">
+        <div class="hunter-help-modal hunter-settings-modal">
+          <div class="hh-head">
+            <h2 data-i18n="hunter.settingsTitle">⚙ Avcı Ayarları</h2>
+            <button class="hh-close" onclick="hunterCloseSettings()" data-i18n="common.close">Kapat</button>
+          </div>
+          <div class="hh-body hs-body">
+            <div class="hunter-grid hs-grid4">
+              <label class="hunter-row"><span data-i18n="hunter.enabled">Etkin</span><span class="hf-help" data-i18n-help="hunter.helpEnabled">?</span><input type="checkbox" id="h-enabled"></label>
+              <label class="hunter-row"><span data-i18n="hunter.stage0">Stage 0: Benzer kanal grafiği</span><span class="hf-help" data-i18n-help="hunter.helpStage0">?</span><input type="checkbox" id="h-stage0"></label>
+              <label class="hunter-row"><span data-i18n="hunter.stage1">Stage 1: Dahili tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage1">?</span><input type="checkbox" id="h-stage1"></label>
+              <label class="hunter-row"><span data-i18n="hunter.stage2">Stage 2: Web tarama</span><span class="hf-help" data-i18n-help="hunter.helpStage2">?</span><input type="checkbox" id="h-stage2"></label>
+              <label class="hunter-row"><span data-i18n="hunter.magnetHunt">🧲 Magnet Avı</span><span class="hf-help" data-i18n-help="hunter.helpMagnetHunt">?</span><input type="checkbox" id="h-magnethunt"></label>
+              <label class="hunter-row"><span data-i18n="hunter.magnetBackfill">📥 Magnet Backfill</span><span class="hf-help" data-i18n-help="hunter.helpMagnetBackfill">?</span><input type="checkbox" id="h-magnet-backfill"></label>
+              <label class="hunter-row"><span data-i18n="hunter.webDelay">Web istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpWebDelay">?</span><input type="number" min="500" id="h-web-delay"></label>
+              <label class="hunter-row"><span data-i18n="hunter.webConcurrency">Web eşzamanlı</span><span class="hf-help" data-i18n-help="hunter.helpWebConc">?</span><input type="number" min="1" max="8" id="h-web-conc"></label>
+              <label class="hunter-row"><span data-i18n="hunter.tgDelay">Telegram istek aralığı (ms)</span><span class="hf-help" data-i18n-help="hunter.helpTgDelay">?</span><input type="number" min="500" id="h-tg-delay"></label>
+              <label class="hunter-row"><span data-i18n="hunter.tgCap">Günlük lookup limiti</span><span class="hf-help" data-i18n-help="hunter.helpTgCap">?</span><input type="number" min="10" id="h-tg-cap"></label>
+              <label class="hunter-row"><span data-i18n="hunter.tgSample">Örneklenecek mesaj</span><span class="hf-help" data-i18n-help="hunter.helpTgSample">?</span><input type="number" min="20" max="2000" id="h-tg-sample"></label>
+              <label class="hunter-row"><span data-i18n="hunter.tgAccount">Telegram hesabı</span><span class="hf-help" data-i18n-help="hunter.helpTgAccount">?</span><input type="number" min="1" id="h-tg-account"></label>
+              <label class="hunter-row"><span data-i18n="hunter.tempJoin">Geçici üyelik ile tara</span><span class="hf-help" data-i18n-help="hunter.helpTempJoin">?</span><input type="checkbox" id="h-temp-join"></label>
+              <label class="hunter-row"><span data-i18n="hunter.skipOld">1 yıldan eski kanalları atla</span><span class="hf-help" data-i18n-help="hunter.helpSkipOld">?</span><input type="checkbox" id="h-skip-old"></label>
+              <label class="hunter-row"><span data-i18n="hunter.scheduleKind">Zamanlama</span><span class="hf-help" data-i18n-help="hunter.helpScheduleKind">?</span>
+                <select id="h-schedule-kind">
+                  <option value="manual" data-i18n="hunter.schManual">Manuel</option>
+                  <option value="interval" data-i18n="hunter.schInterval">Aralıkla</option>
+                </select>
+              </label>
+              <label class="hunter-row"><span data-i18n="hunter.scheduleInterval">Aralık (saniye)</span><span class="hf-help" data-i18n-help="hunter.helpScheduleInt">?</span><input type="number" min="3600" id="h-schedule-int"></label>
+              <label class="hunter-row"><span data-i18n="hunter.minSubs">Min. üye</span><span class="hf-help" data-i18n-help="hunter.helpMinSubs">?</span><input type="number" min="0" id="h-min-subs"></label>
+              <label class="hunter-row"><span data-i18n="hunter.languages">Diller (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpLanguages">?</span><input type="text" id="h-languages" placeholder="tr,en"></label>
+              <label class="hunter-row hs-row-wide"><span data-i18n="hunter.keywords">Anahtar kelimeler (virgülle)</span><span class="hf-help" data-i18n-help="hunter.helpKeywords">?</span><input type="text" id="h-keywords"></label>
+              <label class="hunter-row hs-row-wide"><span data-i18n="hunter.sources">Kaynaklar</span><span class="hf-help" data-i18n-help="hunter.helpSources">?</span><input type="text" id="h-sources" placeholder="boş bırak = tümü; ya da: internal,tgstat,telemetrio,combot,tdirectory,tlgrm,telegramic,tgchannels,searchtg,tdoru,telegaio,google,duckduckgo,brave,bing,mojeek,startpage,yandex,ecosia,reddit,hackernews,github,pastesites,wayback,urlscan,commoncrawl,llm"></label>
+              <label class="hunter-row hs-row-wide"><span data-i18n="hunter.anthropicKey">Anthropic API Anahtarı <small style="color:var(--text-3)">(LLM kaynağı için)</small></span><input type="password" id="h-anthropic-key" placeholder="sk-ant-…" autocomplete="off"></label>
+            </div>
+            <div class="hunter-foot" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-3)">
+              <span id="hunter-cap-info" class="hunter-meta"></span>
+              <span class="hunter-flex"></span>
+              <button class="hunter-btn-alt" onclick="hunterCloseSettings()" data-i18n="common.cancel">İptal</button>
+              <button class="hunter-btn-primary" onclick="hunterSaveSettings()" data-i18n="common.save">Kaydet</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sync-status-overlay" class="hunter-overlay" onclick="syncStatusOverlayClick(event)">
+        <div class="hunter-help-modal" style="max-width:900px">
+          <div class="hh-head">
+            <h2>🔄 Senkronizasyon Durumu</h2>
+            <button class="hh-close" onclick="closeSyncStatusModal()">Kapat</button>
+          </div>
+          <div class="hh-body" id="sync-status-body" style="padding:0"></div>
+        </div>
+      </div>
+
       <div id="watch-banner" style="display:none"></div>
 
       <div id="sb-tip"></div>
@@ -2365,7 +2447,9 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
               <th class="num-cell" style="font-size:.72rem">#</th>
               <th class="sortable" onclick="linkSortBy('url')"><span data-i18n="table.url">URL</span> <span class="sort-arrow" id="larr-url"></span></th>
               <th class="sortable lcol-platform" onclick="linkSortBy('platform')"><span data-i18n="table.platform">Platform</span> <span class="sort-arrow" id="larr-platform"></span></th>
-              <th class="sortable lcol-files" onclick="linkSortBy('files')"><span data-i18n="table.linkFiles">Dosyalar</span> <span class="sort-arrow" id="larr-files"></span></th>
+              <th class="lcol-files"><span data-i18n="table.linkFileName">Dosya Adı</span></th>
+              <th class="sortable lcol-fcount" onclick="linkSortBy('files')" title="Dosya sayısı"><span data-i18n="table.linkFileCount">Dosyalar</span> <span class="sort-arrow" id="larr-files"></span></th>
+              <th class="sortable lcol-fsize" onclick="linkSortBy('size')" title="Toplam boyut (byte cinsinden sıralanır)"><span data-i18n="table.linkFileSize">Boyut</span> <span class="sort-arrow" id="larr-size"></span></th>
               <th class="sortable lcol-group" onclick="linkSortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="larr-group"></span></th>
               <th class="sortable lcol-date" onclick="linkSortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="larr-date"></span></th>
               <th class="sortable lcol-ctx" onclick="linkSortBy('context')"><span data-i18n="table.context">İçerik</span> <span class="sort-arrow" id="larr-context"></span></th>
@@ -2386,6 +2470,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
                 </select>
               </th>
               <th><input id="lcol-files-name" type="text" placeholder="dosya adı…" data-i18n-ph="filter.colFileName" oninput="debouncedLoadLinks()"></th>
+              <th></th>
+              <th></th>
               <th><input id="lcol-group" type="text" placeholder="grup…" data-i18n-ph="filter.colGroup" oninput="debouncedLoadLinks()"></th>
               <th>
                 <div class="range-input-wrap">
@@ -2478,7 +2564,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   <div id="leave-modal">
     <h3 id="leave-modal-title"></h3>
     <div class="lm-sub" id="leave-modal-sub"></div>
-    <button class="lm-btn" id="lm-btn-keep">
+    <button class="lm-btn lm-btn-default" id="lm-btn-keep">
       <span class="lm-btn-icon">📁</span>
       <span class="lm-btn-text">
         <span data-i18n="leaveModal.keepBtn">Dosyaları koru, ayrıl</span>
@@ -2493,6 +2579,20 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
       </span>
     </button>
     <button class="lm-cancel" id="lm-btn-cancel" data-i18n="common.cancel">İptal</button>
+  </div>
+</div>
+<!-- Bulk leave progress modal -->
+<div id="bulk-leave-overlay">
+  <div id="bulk-leave-modal">
+    <h3 id="bulk-leave-title"></h3>
+    <div class="bl-current" id="bulk-leave-current">—</div>
+    <div class="bl-bar"><div class="bl-bar-fill" id="bulk-leave-bar"></div></div>
+    <div class="bl-counts">
+      <span><span class="bl-counts-num" id="bulk-leave-progress">0/0</span></span>
+      <span class="bl-counts-ok">✓ <span id="bulk-leave-ok">0</span></span>
+      <span class="bl-counts-fail">✗ <span id="bulk-leave-fail">0</span></span>
+    </div>
+    <button class="lm-cancel" id="bulk-leave-cancel" data-i18n="bulkLeave.cancel">Devam edenleri iptal et</button>
   </div>
 </div>
 <div id="dl-dest-overlay" onclick="if(event.target===this)closeDlDestModal()">
@@ -2577,8 +2677,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   }
 })();
 </script>
-<script src="i18n.js"></script>
-<script src="app.js"></script>
+<script src="i18n.js?v=1783234800"></script>
+<script src="app.js?v=1783234800"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});

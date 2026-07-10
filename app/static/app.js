@@ -1067,9 +1067,14 @@ function channelsToggleShowExcluded() {
 
 function channelsToggleAddCard() {
   const card = document.getElementById('channels-add-card');
+  const btn  = document.getElementById('ch-add-btn');
   if (!card) return;
   const open = card.style.display !== 'none';
   card.style.display = open ? 'none' : '';
+  if (btn) {
+    btn.classList.toggle('ch-btn-primary', open);   // blue only when closed
+    btn.classList.toggle('active', !open);           // highlighted when open
+  }
   if (!open) setTimeout(() => document.getElementById('ch-add-input')?.focus(), 30);
 }
 
@@ -1114,6 +1119,7 @@ function _chSortFn(a, b) {
     case 'type_software': av = a.type_software || 0; bv = b.type_software || 0; break;
     case 'type_torrent':  av = a.type_torrent  || 0; bv = b.type_torrent  || 0; break;
     case 'type_other':    av = a.type_other    || 0; bv = b.type_other    || 0; break;
+    case 'hunter_score':  av = a.hunter_score  || 0; bv = b.hunter_score  || 0; break;
     default:         av = 0; bv = 0;
   }
   const cmp = (typeof av === 'string') ? av.localeCompare(bv, 'tr') : (av - bv);
@@ -1139,9 +1145,9 @@ function renderChannelsTable() {
   const tbody = document.getElementById('channels-tbody');
   if (!tbody) return;
 
-  const qSearch  = (document.getElementById('ch-search')?.value || '').toLowerCase();
+  const qSearch  = (document.getElementById('ch-search')?.value || '').replace(/^@+/, '').toLowerCase();
   const qName    = (document.getElementById('ch-flt-name')?.value || '').toLowerCase();
-  const qUser    = (document.getElementById('ch-flt-user')?.value || '').toLowerCase();
+  const qUser    = (document.getElementById('ch-flt-user')?.value || '').replace(/^@+/, '').toLowerCase();
   const minFiles = parseInt(document.getElementById('ch-flt-min-files')?.value || '', 10);
   const minMembers = parseInt(document.getElementById('ch-flt-min-members')?.value || '', 10);
   const minSizeMB = parseFloat(document.getElementById('ch-flt-min-size')?.value || '');
@@ -1160,7 +1166,7 @@ function renderChannelsTable() {
     const un = (g.username || '').toLowerCase();
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
     if (qName   && !nm.includes(qName))                            return false;
-    if (qUser   && !un.includes(qUser))                            return false;
+    if (qUser   && !un.includes(qUser) && !nm.includes(qUser))    return false;
     if (!isNaN(minMembers)  && (g.member_count || 0) < minMembers) return false;
     if (!isNaN(minFiles)    && (g.file_count   || 0) < minFiles)   return false;
     if (minSizeBytes != null && (g.total_size  || 0) < minSizeBytes) return false;
@@ -1176,6 +1182,7 @@ function renderChannelsTable() {
     sync:'sync', msg:'msg', state:'state',
     type_video:'tv', type_audio:'ta', type_image:'ti', type_archive:'tar',
     type_document:'td', type_software:'ts', type_torrent:'tt', type_other:'to',
+    hunter_score:'hscore',
   };
   Object.entries(_arr).forEach(([k, id]) => {
     const el = document.getElementById('ch-arr-' + id);
@@ -1216,7 +1223,7 @@ function renderChannelsTable() {
       : (g.excluded
           ? `<span class="ch-state ch-state-excl">${esc(t('channels.stUntracked'))}</span>`
           : `<span class="ch-state ch-state-active">${esc(t('channels.stActive'))}</span>`);
-    return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)" oncontextmenu="event.preventDefault();_ctxMenuShowChannel(event, ${g.id}, ${JSON.stringify(user || '').replace(/"/g, '&quot;')})">
+    return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)" ondblclick="channelsRowDblClick(${g.id},event)" oncontextmenu="event.preventDefault();_ctxMenuShowChannel(event, ${g.id}, ${JSON.stringify(user || '').replace(/"/g, '&quot;')})">
       <td class="chk-cell"><input type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();_chChk(event,${g.id},this.checked)"></td>
       <td class="num-cell">${i + 1}</td>
       <td class="ch-name-cell" title="${esc(name)}">${esc(name)}</td>
@@ -1234,6 +1241,7 @@ function renderChannelsTable() {
       <td class="ch-col-mini">${_mini(g.type_other)}</td>
       <td class="ch-col-msg"  title="${g.last_message_at ? esc(new Date(g.last_message_at).toLocaleString()) : ''}">${esc(_fmtAgo(g.last_message_at))}</td>
       <td class="ch-col-sync" title="${g.last_sync_at    ? esc(new Date(g.last_sync_at).toLocaleString())    : ''}">${esc(_fmtAgo(g.last_sync_at))}</td>
+      <td class="ch-col-hscore">${g.hunter_score > 0 ? `<span class="ch-hscore-badge">${Math.round(g.hunter_score)}</span>` : ''}</td>
       <td class="ch-col-state">${state}</td>
       <td class="ch-col-act"><div class="ch-row-acts">
         <button class="ga" onclick="event.stopPropagation();openGroupNameEdit(event,${g.id})" title="${esc(t('groups.editName'))}">✏</button>
@@ -1252,11 +1260,8 @@ function renderChannelsTable() {
       const ids = [...S.selectedGroups];
       const sel = ids.map(id => _groups.find(x => x.id === id)).filter(Boolean);
       const allHidden   = sel.length > 0 && sel.every(g => g.hidden);
-      const allExcluded = sel.length > 0 && sel.every(g => g.excluded);
       const hideBtn = document.getElementById('ch-bulk-hide');
-      const exclBtn = document.getElementById('ch-bulk-excl');
       if (hideBtn) hideBtn.textContent = t(allHidden   ? 'groups.bulkShow'  : 'groups.bulkHide');
-      if (exclBtn) exclBtn.textContent = t(allExcluded ? 'groups.bulkTrack' : 'groups.bulkUntrack');
     } else {
       bar.style.display = 'none';
     }
@@ -1268,9 +1273,10 @@ function renderChannelsTable() {
 }
 
 function channelsRowClick(id, e) {
-  // Don't hijack clicks on row-internal interactive elements (checkboxes,
-  // links, per-row action buttons). Plain row click opens the detail popup;
-  // selection is done via the explicit checkbox column.
+  if (e && (e.target.closest('a') || e.target.closest('button') || e.target.closest('input'))) return;
+}
+
+function channelsRowDblClick(id, e) {
   if (e && (e.target.closest('a') || e.target.closest('button') || e.target.closest('input'))) return;
   channelShowDetail(id);
 }
@@ -1376,13 +1382,6 @@ function _bindChDetailActions() {
         const next = !(g && g.hidden);
         await api(`/api/groups/${gid}`, { method: 'PATCH', json: { hidden: next } });
         _setGroupOverride(gid, { hidden: next });
-        await loadGroups();
-        closeChannelDetail();
-        break;
-      }
-      case 'ch-excl': {
-        const next = !(g && g.excluded);
-        await api(`/api/groups/${gid}`, { method: 'PATCH', json: { excluded: next } });
         await loadGroups();
         closeChannelDetail();
         break;
@@ -1710,19 +1709,6 @@ async function bulkToggleHide() {
   await loadGroups();
 }
 
-async function bulkToggleExcluded() {
-  const ids = [...S.selectedGroups];
-  if (!ids.length) return;
-  const allExcluded = ids.every(id => {
-    const g = _groups.find(x => x.id === id);
-    return g && g.excluded;
-  });
-  const next = !allExcluded;
-  await Promise.all(ids.map(id =>
-    api(`/api/groups/${id}`, {method:'PATCH', json:{excluded: next}})
-  ));
-  await loadGroups();
-}
 
 async function leaveGroup(e, id) {
   if (e) e.stopPropagation();
@@ -1783,11 +1769,48 @@ function showLeaveModal({ title, sub, countDesc }) {
     const overlay = document.getElementById('leave-modal-overlay');
     overlay.classList.add('open');
     const close = result => { overlay.classList.remove('open'); resolve(result); };
-    document.getElementById('lm-btn-keep').onclick   = () => close(false);
+    const keepBtn = document.getElementById('lm-btn-keep');
+    keepBtn.onclick = () => close(false);
     document.getElementById('lm-btn-purge').onclick  = () => close(true);
     document.getElementById('lm-btn-cancel').onclick = () => close(null);
     overlay.onclick = e => { if (e.target === overlay) close(null); };
+    // Pre-select "keep files" — it's the safe default; Enter triggers it.
+    setTimeout(() => keepBtn.focus(), 30);
   });
+}
+
+let _bulkLeaveCancelled = false;
+function _bulkLeaveProgressOpen(total) {
+  _bulkLeaveCancelled = false;
+  document.getElementById('bulk-leave-title').textContent =
+    t('bulkLeave.title', { n: total });
+  document.getElementById('bulk-leave-current').textContent = '…';
+  document.getElementById('bulk-leave-bar').style.width = '0%';
+  document.getElementById('bulk-leave-progress').textContent = `0/${total}`;
+  document.getElementById('bulk-leave-ok').textContent = '0';
+  document.getElementById('bulk-leave-fail').textContent = '0';
+  const cancel = document.getElementById('bulk-leave-cancel');
+  cancel.disabled = false;
+  cancel.textContent = t('bulkLeave.cancel');
+  cancel.onclick = () => {
+    _bulkLeaveCancelled = true;
+    cancel.disabled = true;
+    cancel.textContent = t('bulkLeave.cancelling');
+  };
+  document.getElementById('bulk-leave-overlay').classList.add('open');
+}
+function _bulkLeaveProgressUpdate({ i, total, ok, fail, currentLabel }) {
+  document.getElementById('bulk-leave-progress').textContent = `${i}/${total}`;
+  document.getElementById('bulk-leave-ok').textContent = ok;
+  document.getElementById('bulk-leave-fail').textContent = fail;
+  document.getElementById('bulk-leave-bar').style.width =
+    Math.round((i / Math.max(1, total)) * 100) + '%';
+  if (currentLabel != null) {
+    document.getElementById('bulk-leave-current').textContent = currentLabel;
+  }
+}
+function _bulkLeaveProgressClose() {
+  document.getElementById('bulk-leave-overlay').classList.remove('open');
 }
 
 async function bulkLeaveGroups() {
@@ -1803,19 +1826,43 @@ async function bulkLeaveGroups() {
     countDesc: t('leaveModal.purgeDesc', { count: totalFiles.toLocaleString() }),
   });
   if (purge === null) return;
-  let ok = 0, failed = 0;
+
+  _bulkLeaveProgressOpen(ids.length);
+  let ok = 0, failed = 0, cancelled = 0;
+  let i = 0;
   for (const id of ids) {
+    i++;
+    if (_bulkLeaveCancelled) {
+      cancelled = ids.length - (i - 1);
+      break;
+    }
+    const g = _groups.find(x => x.id === id);
+    const label = g
+      ? (plainName(g.display_name || g.name || ('#' + id)) +
+         (g.username ? ' (@' + g.username + ')' : ''))
+      : ('#' + id);
+    _bulkLeaveProgressUpdate({
+      i: i - 1, total: ids.length, ok, fail: failed,
+      currentLabel: t('bulkLeave.leaving', { name: label }),
+    });
     try {
       await api(`/api/groups/${id}/leave?purge=${purge}`, { method: 'POST' });
       ok++;
     } catch (e) {
       failed++;
     }
+    _bulkLeaveProgressUpdate({ i, total: ids.length, ok, fail: failed });
   }
+  _bulkLeaveProgressClose();
   S.selectedGroups.clear();
   await loadGroups();
-  if (failed) showToast(t('groups.bulkLeaveSome', { ok, fail: failed }), 4500);
-  else showToast(t('groups.bulkLeaveOk', { ok }), 3000);
+  if (cancelled > 0) {
+    showToast(t('bulkLeave.cancelledSummary', { ok, fail: failed, skipped: cancelled }), 5000);
+  } else if (failed) {
+    showToast(t('groups.bulkLeaveSome', { ok, fail: failed }), 4500);
+  } else {
+    showToast(t('groups.bulkLeaveOk', { ok }), 3000);
+  }
 }
 
 function bulkClearSelection() { S.selectedGroups.clear(); renderSidebar(); renderChannelsTable(); }
@@ -1881,8 +1928,8 @@ function switchTab(tab) {
     if (addCard) addCard.style.display = 'none';
     loadChannelsTab();
   }
-  else if (isLinks)    { stopStatusPoll(); stopHunterPoll(); loadLinks(); }
-  else if (isSettings) { stopStatusPoll(); stopHunterPoll(); loadCredentials(); loadSyncInterval(); _refreshUiPwState(); loadAccountsList(); }
+  else if (isLinks)    { stopStatusPoll(); stopHunterPoll(); loadLinks(); _initArchiveScanBar(); }
+  else if (isSettings) { stopStatusPoll(); stopHunterPoll(); loadCredentials(); loadSyncInterval(); _refreshUiPwState(); loadAccountsList(); loadTelemetrySettings(); }
   else if (isDownloads){ stopStatusPoll(); stopHunterPoll(); loadDownloadsList(); }
   else if (isStatus)   { stopHunterPoll(); startStatusPoll(); }
   else if (isHunter)   { stopStatusPoll(); startHunterPoll(); _magnetHuntInitOnSwitch(); requestAnimationFrame(_hgUpdateStickyTop); }
@@ -1915,21 +1962,35 @@ async function _fetchGroupsForStatus() {
   return _statusGroupsCache || [];
 }
 
+let _lastStatusData = null;
+
 async function loadStatus() {
   try {
     const d = await api('/api/status');
+    _lastStatusData = d;
     const el = document.getElementById('status-panel');
-    if (!el || el.style.display === 'none') return;
-    const scroll = el.scrollTop;
+    const panelVisible = el && el.style.display !== 'none';
+    const syncModal = document.getElementById('sync-status-overlay');
+    const modalOpen = syncModal && syncModal.classList.contains('open');
+
+    if (!panelVisible && !modalOpen) return;
+
     const groups = await _fetchGroupsForStatus();
-    renderStatus(d, groups);
-    // Repaint heatmap from cache (fast) or trigger first fetch
-    if (_hmapData !== null) {
-      _renderHeatmapCells();
-    } else {
-      loadActivityHeatmap(null);
+
+    if (panelVisible) {
+      const scroll = el.scrollTop;
+      renderStatus(d, groups);
+      if (_hmapData !== null) {
+        _renderHeatmapCells();
+      } else {
+        loadActivityHeatmap(null);
+      }
+      el.scrollTop = scroll;
     }
-    el.scrollTop = scroll;
+
+    if (modalOpen) {
+      _renderSyncStatusModal(groups, d.sync || {});
+    }
   } catch(e) { /* ignore while tab is switching */ }
 }
 
@@ -1947,7 +2008,6 @@ function renderStatus(d, groups = []) {
     stCards(d) +
     stFileTypes(d) +
     `<div class="st-2col">${stGroups(d)}${stPlatforms(d)}</div>` +
-    stIndexStatus(groups, d.sync || {}) +
     stPgTables(d) +
     `<div class="st-2col">${stSystem(d)}${stSync(d)}</div>` +
     stActivityHeatmap(groups) +
@@ -2109,13 +2169,81 @@ function stGroups(d) {
   </div>`;
 }
 
+function openSyncStatusModal() {
+  document.getElementById('sync-status-overlay').classList.add('open');
+  const body = document.getElementById('sync-status-body');
+  body.innerHTML = '<div style="text-align:center;padding:30px"><span class="hd-spinner"></span></div>';
+  _fetchGroupsForStatus().then(groups => {
+    _renderSyncStatusModal(groups, (_lastStatusData?.sync) || {});
+  });
+}
+
+function closeSyncStatusModal() {
+  document.getElementById('sync-status-overlay').classList.remove('open');
+}
+
+function syncStatusOverlayClick(e) {
+  if (e.target.id === 'sync-status-overlay') closeSyncStatusModal();
+}
+
+// Sync-durumu lightbox'ı sıralama durumu (istemci tarafı; veri zaten bellekte).
+let _syncStatusGroups = [];
+let _syncStatusSync = {};
+let _stSortBy = null;      // 'name' | 'files' | 'types' | 'last' | 'status'
+let _stSortDir = 'asc';
+
+function _renderSyncStatusModal(groups, sync) {
+  _syncStatusGroups = groups || [];
+  _syncStatusSync = sync || {};
+  const el = document.getElementById('sync-status-body');
+  if (!el) return;
+  el.innerHTML = stIndexStatus(_syncStatusGroups, _syncStatusSync);
+}
+
+// Başlığa tıklayınca sırala / aynı sütuna tekrar tıklayınca yönü çevir.
+function stSortBy(col) {
+  if (_stSortBy === col) _stSortDir = (_stSortDir === 'asc') ? 'desc' : 'asc';
+  else { _stSortBy = col; _stSortDir = 'asc'; }
+  _renderSyncStatusModal(_syncStatusGroups, _syncStatusSync);
+}
+
+// Durum sütunu sıralama rütbesi (badge mantığıyla aynı): Aktif<Senkronize<Bekliyor<Hariç.
+function _stStatusRank(g, currentGroup) {
+  const isActive = currentGroup && (
+    (g.username||'').toLowerCase() === currentGroup ||
+    String(g.id) === currentGroup ||
+    (g.name||'').toLowerCase().includes(currentGroup)
+  );
+  if (isActive) return 0;
+  if (g.excluded) return 3;
+  if (g.last_synced_at) return 1;
+  return 2;
+}
+
 function stIndexStatus(groups, sync) {
   if (!groups || !groups.length) return '';
   const currentGroup = (sync.current_group || '').toLowerCase();
   const typeKeys = ['video','audio','image','archive','document','software','torrent','other'];
   const typeColors = {video:'#ef4444',audio:'#7c3aed',image:'#059669',archive:'#f59e0b',document:'#2563eb',software:'#374151',torrent:'#0891b2',other:'#9ca3af'};
 
-  const rows = groups.filter(g => !g.hidden).map(g => {
+  let _list = groups.filter(g => !g.hidden);
+  if (_stSortBy) {
+    const _dir = (_stSortDir === 'asc') ? 1 : -1;
+    const _key = {
+      name:   g => (g.display_name || g.name || '').toLowerCase(),
+      files:  g => (g.file_count || 0),
+      types:  g => typeKeys.reduce((s, k) => s + (g['type_'+k] || 0), 0),
+      last:   g => (g.last_synced_at ? new Date(g.last_synced_at).getTime() : -Infinity),
+      status: g => _stStatusRank(g, currentGroup),
+    }[_stSortBy];
+    if (_key) _list = _list.slice().sort((a, b) => {
+      const ka = _key(a), kb = _key(b);
+      if (typeof ka === 'string') return _dir * ka.localeCompare(kb, 'tr');
+      return _dir * (ka - kb);
+    });
+  }
+
+  const rows = _list.map(g => {
     const isActive = currentGroup && (
       (g.username||'').toLowerCase() === currentGroup ||
       String(g.id) === currentGroup ||
@@ -2151,13 +2279,21 @@ function stIndexStatus(groups, sync) {
     </tr>`;
   }).join('');
 
-  return `<div class="st-section">
-    <h4>İndeksleme Durumu <button onclick="_statusGroupsTs=0;loadStatus()" style="font-size:.7rem;padding:1px 8px;border:1px solid var(--border-2);border-radius:4px;background:var(--bg-3);cursor:pointer;color:var(--text-2)">↻ Yenile</button></h4>
+  return `<div style="padding:14px 18px">
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:8px">
+      <button onclick="_statusGroupsTs=0;openSyncStatusModal()" style="font-size:.7rem;padding:2px 10px;border:1px solid var(--border-2);border-radius:4px;background:var(--bg-3);cursor:pointer;color:var(--text-2)">↻ Yenile</button>
+    </div>
     <div style="overflow-x:auto">
-    <table class="st-tbl">
-      <tr><th>Kanal/Grup</th><th class="r">Dosya</th><th>Tür Dağılımı</th><th>Son Senkronizasyon</th><th>Durum</th></tr>
-      ${rows || '<tr><td colspan="5" style="text-align:center;color:var(--text-4);padding:10px">Grup bulunamadı</td></tr>'}
-    </table>
+      <table class="st-tbl" style="min-width:560px">
+        <tr>
+          <th class="st-sortable${_stSortBy==='name'?' st-sorted':''}" onclick="stSortBy('name')">Kanal/Grup<span class="st-arrow">${_stSortBy==='name'?(_stSortDir==='asc'?' ▲':' ▼'):''}</span></th>
+          <th class="r st-sortable${_stSortBy==='files'?' st-sorted':''}" onclick="stSortBy('files')">Dosya<span class="st-arrow">${_stSortBy==='files'?(_stSortDir==='asc'?' ▲':' ▼'):''}</span></th>
+          <th class="st-sortable${_stSortBy==='types'?' st-sorted':''}" onclick="stSortBy('types')">Tür Dağılımı<span class="st-arrow">${_stSortBy==='types'?(_stSortDir==='asc'?' ▲':' ▼'):''}</span></th>
+          <th class="st-sortable${_stSortBy==='last'?' st-sorted':''}" onclick="stSortBy('last')">Son Senkronizasyon<span class="st-arrow">${_stSortBy==='last'?(_stSortDir==='asc'?' ▲':' ▼'):''}</span></th>
+          <th class="st-sortable${_stSortBy==='status'?' st-sorted':''}" onclick="stSortBy('status')">Durum<span class="st-arrow">${_stSortBy==='status'?(_stSortDir==='asc'?' ▲':' ▼'):''}</span></th>
+        </tr>
+        ${rows || '<tr><td colspan="5" style="text-align:center;color:var(--text-4);padding:10px">Grup bulunamadı</td></tr>'}
+      </table>
     </div>
   </div>`;
 }
@@ -2686,6 +2822,9 @@ async function loadFiles(silent = false, allowCache = false, mode = 'replace') {
     ? fetch(`/api/torrents/search?q=${encodeURIComponent(nameQ)}&limit=200`)
         .then(r => r.ok ? r.json() : []).catch(() => [])
     : null;
+  const linkFilesPromise = nameQ
+    ? api('/api/link-files?' + new URLSearchParams({ q: nameQ, limit: 200 })).catch(() => ({ files: [] }))
+    : null;
 
   const data = await filesPromise;
   _filesCache.set(key, { ts: Date.now(), data });
@@ -2697,6 +2836,16 @@ async function loadFiles(silent = false, allowCache = false, mode = 'replace') {
   if (torrentMatchPromise) {
     const matches = await torrentMatchPromise;
     _autoExpandTorrentMatches(matches, nameQ);
+  }
+  // Link-files sorgusu bitmişse ekle (paint'i bloke etmeden arka planda tamamlanır).
+  if (linkFilesPromise) {
+    linkFilesPromise.then(lfd => {
+      const linkFiles = (lfd.files || []).map(f => ({ ...f, _is_link_file: true }));
+      if (!linkFiles.length) return;
+      const knownNames = new Set((data.files || []).map(f => (f.file_name || '').toLowerCase()));
+      const unique = linkFiles.filter(f => !knownNames.has((f.file_name || '').toLowerCase()));
+      if (unique.length) renderFiles(unique, null, 'append');
+    });
   }
 }
 
@@ -2713,6 +2862,10 @@ function renderFiles(files, gFilter, mode = 'replace') {
     _currentFiles = _currentFiles.concat(files);
   } else {
     _currentFiles = files;
+    // Yeni sonuç yüklenince her zaman en üstten başla; önceki scroll konumu
+    // grid'in boş görünmesine ya da kaydırma çubuğunun yanlış yerde durmasına
+    // neden olur.
+    document.getElementById('table-wrap')?.scrollTo(0, 0);
   }
   if (mode === 'replace' && !files.length) {
     tbody.innerHTML = `<tr><td colspan="10" class="no-data">${esc(t("table.noFiles"))}</td></tr>`;
@@ -2721,6 +2874,37 @@ function renderFiles(files, gFilter, mode = 'replace') {
   const rows = [];
   files.forEach((f, i) => {
     const rowNum  = startIdx + i + 1;
+
+    // ── Harici link dosyası (files_json'dan gelen) ────────────────────────
+    if (f._is_link_file) {
+      const fname  = cleanText(f.file_name || '') || '—';
+      const rawExt = (f.file_name || '').split('.').pop() || '';
+      const ext    = rawExt.length <= 6 ? rawExt.toUpperCase() : '';
+      const color  = extColor(rawExt);
+      const badge  = ext ? `<span class="ext-badge" style="${color}">${esc(ext)}</span>` : '—';
+      const gName  = plainName(f.group_name || '');
+      const gLink  = f.group_id
+        ? `<span class="g-link" onclick="filterByGroup(${f.group_id})">${esc(gName)}</span>`
+        : esc(gName);
+      const platLabel = esc(f.platform || 'Link');
+      const openBtn = f.link_url
+        ? `<a href="${esc(f.link_url)}" target="_blank" rel="noopener" class="dl-link" title="${esc(f.link_url)}" onclick="event.stopPropagation()">↗ ${platLabel}</a>`
+        : platLabel;
+      rows.push(`<tr class="link-file-row">
+        <td class="chk-cell"></td>
+        <td class="num-cell">${rowNum}</td>
+        <td>${badge}</td>
+        <td title="${esc(fname)}"><div class="fname-cell"><span class="fname-trunc">${esc(fname)}</span></div></td>
+        <td class="ctx-cell">—</td>
+        <td>${f.file_size ? fmtSize(f.file_size) : '—'}</td>
+        <td>${gLink}</td>
+        <td>${fmtDate(f.date)}</td>
+        <td class="col-shares"></td>
+        <td>${openBtn}</td>
+      </tr>`);
+      return;
+    }
+
     const checked = S.selectedFiles.has(f.id) ? ' checked' : '';
     const ext     = (f.file_ext||'').toUpperCase();
     const color   = extColor(f.file_ext||'');
@@ -4054,6 +4238,75 @@ async function _initBackfillBar() {
   } catch { /* ignore */ }
 }
 
+// ── Archive scan (bulk) ────────────────────────────────────────────────────────
+let _archiveScanPollTimer;
+
+async function startArchiveScan() {
+  const btn = document.getElementById('archive-scan-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/links/scan-archives', { method: 'POST' });
+    if (r.status === 409) {
+      // already running
+    } else if (!r.ok) {
+      if (btn) btn.disabled = false;
+      return;
+    }
+    _pollArchiveScan();
+  } catch {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _pollArchiveScan() {
+  clearTimeout(_archiveScanPollTimer);
+  _archiveScanPollTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/links/scan-archives/status');
+      if (!r.ok) return;
+      const s = await r.json();
+      _updateArchiveScanBar(s);
+      if (s.running) _pollArchiveScan();
+    } catch { /* ignore */ }
+  }, 2000);
+}
+
+function _updateArchiveScanBar(s) {
+  const txt = document.getElementById('archive-scan-status');
+  const btn = document.getElementById('archive-scan-btn');
+  if (!txt) return;
+  if (s.running) {
+    if (btn) btn.disabled = true;
+    const cur = s.current ? ` — ${s.current.substring(0, 60)}` : '';
+    txt.textContent = t('archiveScan.progress', {
+      done: s.done || 0, total: s.total || 0,
+      ok: s.success || 0, fail: s.fail || 0,
+    }) + cur;
+    txt.className = 'backfill-progress';
+  } else if (s.error) {
+    if (btn) btn.disabled = false;
+    txt.textContent = t('archiveScan.error', { msg: s.error });
+    txt.className = 'backfill-progress';
+  } else if ((s.done || 0) > 0) {
+    if (btn) btn.disabled = false;
+    txt.textContent = t('archiveScan.done', { ok: s.success || 0, total: s.done || 0 });
+    txt.className = 'backfill-progress backfill-done';
+  } else {
+    txt.textContent = '';
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _initArchiveScanBar() {
+  try {
+    const r = await fetch('/api/links/scan-archives/status');
+    if (!r.ok) return;
+    const s = await r.json();
+    _updateArchiveScanBar(s);
+    if (s.running) _pollArchiveScan();
+  } catch { /* ignore */ }
+}
+
 // ── Links ─────────────────────────────────────────────────────────────────────
 let _debounceLinksTimer;
 function debouncedLoadLinks() {
@@ -4081,7 +4334,7 @@ async function loadLinks(silent = false, mode = 'replace') {
   const dfrom = v('lcol-date-from');   if (dfrom) p.set('date_from', dfrom);
   const dto   = v('lcol-date-to');     if (dto)   p.set('date_to',   dto);
 
-  if (mode === 'replace' && !silent) _paintGridLoading('links-body', 8);
+  if (mode === 'replace' && !silent) _paintGridLoading('links-body', 10);
   try {
     const data = await api('/api/links?' + p);
     renderLinks(data.links, mode);
@@ -4106,7 +4359,7 @@ function linkSortBy(col) {
 }
 
 function _updateLinkSortArrows() {
-  ['url','platform','files','group','date','context'].forEach(c => {
+  ['url','platform','files','size','group','date','context'].forEach(c => {
     const el = document.getElementById('larr-' + c);
     if (!el) return;
     el.textContent = (S.linkSortBy === c) ? (S.linkSortDir === 'asc' ? '▲' : '▼') : '▲▼';
@@ -4150,7 +4403,7 @@ async function retryDeadMagnets() {
 
 // ── Magnet file tree (inline expand in links grid) ────────────────────────────
 
-function toggleMagnetTree(lid, btn) {
+async function toggleMagnetTree(lid, btn) {
   const row   = document.getElementById(`magnet-tree-${lid}`);
   const panel = document.getElementById(`magnet-tree-panel-${lid}`);
   if (!row || !panel) return;
@@ -4166,6 +4419,8 @@ function toggleMagnetTree(lid, btn) {
   if (!link) return;
   let files = link.files_json;
   if (typeof files === 'string') { try { files = JSON.parse(files); } catch(e) { files = []; } }
+  // Pre-load any previously-inspected archive contents before rendering
+  if (!_magnetArchiveCache[lid]) await loadMagnetArchiveContents(lid);
   // Re-render every time so the highlight from the current file-name filter
   // stays in sync. (Previously cached innerHTML froze a stale highlight.)
   const hl = (document.getElementById('lcol-files-name')?.value || '').trim();
@@ -4194,6 +4449,12 @@ function _autoExpandMagnetMatches() {
   }
 }
 
+const _ARCHIVE_EXTS = new Set(['.zip', '.rar', '.7z']);
+function _isInspectableArchive(name) {
+  const m = (name || '').match(/(\.[^.]+)$/);
+  return m ? _ARCHIVE_EXTS.has(m[1].toLowerCase()) : false;
+}
+
 function _buildMagnetPanelHtml(link, files, highlight) {
   const totalSz = +(link.file_size_total || 0);
   const hm = (link.url || '').match(/xt=urn:btih:([a-zA-Z0-9]+)/i);
@@ -4204,14 +4465,12 @@ function _buildMagnetPanelHtml(link, files, highlight) {
     : `${files.length.toLocaleString()} ${t('torrent.files')}`;
   const sizeStr = totalSz > 0 ? ` · ${fmtSize(totalSz)}` : '';
   const hl = (highlight || '').trim().toLowerCase();
-  // Build a regex once so the per-row highlighter doesn't recompile.
+  const lid = link.id;
   let hlRe = null;
   if (hl) {
     const safe = hl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     hlRe = new RegExp('(' + safe + ')', 'ig');
   }
-  // Put matching files first so the user sees what they searched for without
-  // scrolling. Order is stable inside each bucket.
   const matched = [];
   const rest    = [];
   for (const f of files) {
@@ -4219,23 +4478,103 @@ function _buildMagnetPanelHtml(link, files, highlight) {
     else rest.push(f);
   }
   const ordered = [...matched, ...rest];
+
+  // Check whether any archive has already been inspected (pre-loaded via loadMagnetArchiveContents)
+  const cachedContents = (_magnetArchiveCache[lid] || {});
+
   let rows = '';
   for (const f of ordered) {
     const nm  = cleanText(f.name || '');
     const sz  = f.size ? fmtSize(f.size) : (files.length === 1 && totalSz ? fmtSize(totalSz) : '');
     let nmHtml = esc(nm);
     if (hlRe) nmHtml = nmHtml.replace(hlRe, '<mark>$1</mark>');
+
+    const isArchive = _isInspectableArchive(nm);
+    let inspectBtn = '';
+    let archiveContents = '';
+
+    if (isArchive && lid) {
+      const archPath = f.name || nm;
+      if (cachedContents[archPath]) {
+        // Already inspected — show inline expand
+        const inner = cachedContents[archPath];
+        const innerRows = inner.slice(0, 200).map(af =>
+          `<div class="tt-entry tt-archive-inner" style="padding-left:28px">` +
+          `<span class="tt-icon">└ 📄</span>` +
+          `<span class="tt-path" title="${esc(af.name || '')}">${esc(cleanText(af.name || ''))}</span>` +
+          (af.size ? `<span class="tt-size">${fmtSize(af.size)}</span>` : '') +
+          `</div>`
+        ).join('');
+        const more = inner.length > 200 ? `<div class="tt-entry" style="padding-left:28px;opacity:.6">+${inner.length - 200} daha…</div>` : '';
+        archiveContents = `<div class="tt-archive-contents" id="arc-${lid}-${esc(archPath)}">${innerRows}${more}</div>`;
+        inspectBtn = `<span class="tt-archive-badge">${inner.length} ${t('archive.files')}</span>`;
+      } else {
+        inspectBtn = `<button class="tt-inspect-btn" title="${esc(t('archive.inspect'))}" ` +
+          `onclick="event.stopPropagation();inspectMagnetArchive(${lid},${esc(JSON.stringify(archPath))},this)">📦</button>`;
+      }
+    }
+
     rows += `<div class="tt-entry${hl && nm.toLowerCase().includes(hl) ? ' tt-entry-match' : ''}" style="padding-left:8px">
-      <span class="tt-icon">📄</span>
+      <span class="tt-icon">${isArchive ? '🗜️' : '📄'}</span>
       <span class="tt-path" title="${esc(nm)}">${nmHtml}</span>
       ${sz ? `<span class="tt-size">${sz}</span>` : ''}
-    </div>`;
+      ${inspectBtn}
+    </div>${archiveContents}`;
   }
   return `<div class="torrent-tree-header">
     <span class="torrent-tree-name" title="${esc(infohash)}">🧲 ${esc(name)}</span>
     <span class="torrent-tree-stats">${countStr}${sizeStr}</span>
     ${infohash ? `<span class="magnet-infohash" title="${esc(t('magnet.infohash'))}">📋 ${esc(infohash.substring(0, 16))}…</span>` : ''}
   </div><div class="torrent-tree-list">${rows}</div>`;
+}
+
+// Cache of {link_id: {archive_path: [{name,size}]}} for already-inspected archives
+const _magnetArchiveCache = {};
+
+async function loadMagnetArchiveContents(lid) {
+  try {
+    const data = await api(`/api/links/${lid}/archive-contents`);
+    if (data && data.archives && Object.keys(data.archives).length > 0) {
+      _magnetArchiveCache[lid] = data.archives;
+    }
+  } catch (_) {}
+}
+
+async function inspectMagnetArchive(lid, archivePath, btn) {
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  btn.title = t('archive.inspecting');
+
+  try {
+    const data = await api(`/api/links/${lid}/inspect-archives`, { method: 'POST' });
+    if (!data.ok || !data.archives || !data.archives[archivePath]) {
+      btn.textContent = '❌';
+      btn.title = data.reason === 'no_archives_or_timeout'
+        ? t('archive.noArchives')
+        : t('archive.inspectFailed');
+      btn.disabled = false;
+      return;
+    }
+    // Update cache and re-render the magnet panel
+    if (!_magnetArchiveCache[lid]) _magnetArchiveCache[lid] = {};
+    for (const [p, v] of Object.entries(data.archives)) {
+      _magnetArchiveCache[lid][p] = v.files || v;
+    }
+    // Find the link in current results and re-render panel
+    const link = _currentLinks.find(l => l.id === lid);
+    if (link) {
+      const panel = document.getElementById(`magnet-tree-panel-${lid}`);
+      if (panel) {
+        let files = link.files_json;
+        if (typeof files === 'string') { try { files = JSON.parse(files); } catch(e) { files = []; } }
+        panel.innerHTML = _buildMagnetPanelHtml(link, Array.isArray(files) ? files : [], '');
+      }
+    }
+  } catch (e) {
+    btn.textContent = '❌';
+    btn.title = t('archive.inspectFailed') + ': ' + e.message;
+    btn.disabled = false;
+  }
 }
 
 function _linkFilesCell(l) {
@@ -4265,8 +4604,6 @@ function _linkFilesCell(l) {
     }
     return `<span class="link-files-unknown" title="${esc(t('links.unsupported'))}">—</span>`;
   }
-  const totalSz = +(l.file_size_total || 0);
-  const sizeStr = totalSz > 0 ? ' · ' + fmtSize(totalSz) : '';
   // Tooltip: up to 20 file lines as a stacked list. Newlines render as
   // separate lines inside the native title attribute.
   const lines = files.slice(0, 20).map(f => {
@@ -4275,11 +4612,53 @@ function _linkFilesCell(l) {
   });
   if (files.length > 20) lines.push(`+${files.length - 20} daha`);
   const tip = lines.join('\n');
+  // Bu sütun artık yalnızca dosya adını gösterir (ilk dosyanın adı). Dosya sayısı
+  // ve toplam boyut ayrı "Dosyalar" / "Boyut" sütunlarında listelenir.
   const headline = cleanText(files[0]?.name || '');
-  const visible = files.length === 1
-    ? `${esc(headline.substring(0, 28))}`
-    : `${files.length} dosya${sizeStr}`;
-  return `<span class="link-files-ok" title="${esc(tip)}">${visible}</span>`;
+  if (!headline) {
+    return `<span class="link-files-ok" title="${esc(tip)}">—</span>`;
+  }
+  const visible = esc(headline.substring(0, 48));
+  // Tıklanınca lcol-files-name filtresini doldurur — dosya adına göre linklerde ara.
+  const clickFn = `filterLinksByFileName(${JSON.stringify(headline)})`;
+  return `<span class="link-files-ok link-files-clickable cell-clip" title="${esc(tip)}" onclick="${esc(clickFn)}">${visible}</span>`;
+}
+
+// "Dosyalar" (adet) sütunu — dosya sayısı. l.file_count doğrudan API'den gelir;
+// yoksa files_json uzunluğuna düşer.
+function _linkFileCountCell(l) {
+  let n = l.file_count;
+  if (n == null) {
+    let files = l.files_json;
+    if (typeof files === 'string') { try { files = JSON.parse(files); } catch(e) { files = []; } }
+    n = Array.isArray(files) ? files.length : 0;
+  }
+  return n > 0 ? `<span class="lf-num">${(+n).toLocaleString()}</span>` : '';
+}
+
+// "Boyut" sütunu — toplam dosya boyutu (byte). Sıralama sunucu tarafında
+// file_size_total (BIGINT byte) üzerinden yapılır, bu yüzden birimden bağımsız.
+function _linkFileSizeCell(l) {
+  const sz = +(l.file_size_total || 0);
+  return sz > 0 ? `<span class="lf-num" title="${sz.toLocaleString()} B">${fmtSize(sz)}</span>` : '';
+}
+
+function filterLinksByFileName(name) {
+  const inp = document.getElementById('lcol-files-name');
+  if (!inp) return;
+  inp.value = name;
+  loadLinks();
+}
+
+async function _magnetCopyClick(lid, btn) {
+  const link = _currentLinks.find(l => l.id === lid);
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link.url);
+    const orig = btn.innerHTML;
+    btn.textContent = '✓';
+    setTimeout(() => { btn.innerHTML = orig; }, 1500);
+  } catch {}
 }
 
 function renderLinks(links, mode = 'replace') {
@@ -4293,7 +4672,7 @@ function renderLinks(links, mode = 'replace') {
   }
   const tbody = document.getElementById('links-body');
   if (mode === 'replace' && !links.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="no-data">${esc(t("table.noLinks"))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="no-data">${esc(t("table.noLinks"))}</td></tr>`;
     return;
   }
   const rowsHtml = links.map((l, i) => {
@@ -4324,9 +4703,9 @@ function renderLinks(links, mode = 'replace') {
       // auto-expand matching magnets even when they hold a single file).
       const hasFiles = mFiles.length >= 1;
       const toggleBtn = hasFiles
-        ? `<button class="torrent-toggle magnet-toggle" data-mlid="${l.id}" title="${esc(t('magnet.expand'))}">▶</button>`
+        ? `<button class="torrent-toggle magnet-toggle" data-mlid="${l.id}" title="${esc(t('magnet.expand'))}" onclick="event.stopPropagation();toggleMagnetTree(${l.id},this)">▶</button>`
         : '';
-      urlTd = `${toggleBtn}<span class="magnet-name" title="${esc(l.url)}">${esc(magnetLabel)}</span><button class="magnet-copy-btn" data-lid="${l.id}" title="${esc(t('link.copyMagnet'))}">&#x2398;</button>${dupBadge}`;
+      urlTd = `${toggleBtn}<span class="magnet-name" title="${esc(l.url)}">${esc(magnetLabel)}</span><button class="magnet-copy-btn" data-lid="${l.id}" title="${esc(t('link.copyMagnet'))}" onclick="event.stopPropagation();_magnetCopyClick(${l.id},this)">&#x2398;</button>${dupBadge}`;
     } else {
       const shortUrl = l.url.replace(/^https?:\/\//,'').substring(0,55);
       urlTd = `<a href="${esc(l.url)}" target="_blank" rel="noopener" style="color:#2563eb">${esc(shortUrl)}</a>${dupBadge}`;
@@ -4341,13 +4720,15 @@ function renderLinks(links, mode = 'replace') {
       <td title="${isMagnet ? '' : esc(l.url)}">${urlTd}</td>
       <td>${platBadge(l.platform)}</td>
       <td class="link-files-cell">${_linkFilesCell(l)}</td>
-      <td>${esc(gName)}</td>
+      <td class="lcol-fcount-cell">${_linkFileCountCell(l)}</td>
+      <td class="lcol-fsize-cell">${_linkFileSizeCell(l)}</td>
+      <td class="link-group-cell"><span class="cell-clip" title="${esc(gName)}">${esc(gName)}</span></td>
       <td>${fmtDate(l.date)}</td>
       <td class="ctx-cell" title="${esc(ctxRaw)}">${esc(ctxRaw.substring(0,40))}</td>
     </tr>`;
     const subRow = (isMagnet && mFiles.length >= 1)
       ? `<tr id="magnet-tree-${l.id}" class="magnet-tree-row" style="display:none">
-           <td colspan="8"><div class="magnet-tree-panel" id="magnet-tree-panel-${l.id}"></div></td>
+           <td colspan="10"><div class="magnet-tree-panel" id="magnet-tree-panel-${l.id}"></div></td>
          </tr>`
       : '';
     return mainRow + subRow;
@@ -4359,31 +4740,14 @@ function renderLinks(links, mode = 'replace') {
   }
   // Direct per-checkbox click listeners — gives us a real DOM event with shiftKey.
   document.querySelectorAll('#links-body .link-chk').forEach(cb => {
+    if (cb.dataset.bound) return;
+    cb.dataset.bound = '1';
     cb.addEventListener('click', _linkCbClick);
-  });
-  document.querySelectorAll('#links-body .magnet-copy-btn').forEach(btn => {
-    btn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const lid = parseInt(btn.getAttribute('data-lid'), 10);
-      const link = _currentLinks.find(l => l.id === lid);
-      if (!link) return;
-      try {
-        await navigator.clipboard.writeText(link.url);
-        const orig = btn.innerHTML;
-        btn.textContent = '✓';
-        setTimeout(() => { btn.innerHTML = orig; }, 1500);
-      } catch {}
-    });
-  });
-  document.querySelectorAll('#links-body .magnet-toggle').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const lid = parseInt(btn.dataset.mlid, 10);
-      toggleMagnetTree(lid, btn);
-    });
   });
   // Click a "❌ metadata yok ↻" cell → re-run aria2c+DHT for that magnet.
   document.querySelectorAll('#links-body .link-files-retry').forEach(el => {
+    if (el.dataset.bound) return;
+    el.dataset.bound = '1';
     el.addEventListener('click', async ev => {
       ev.stopPropagation();
       const lid = parseInt(el.dataset.lid, 10);
@@ -4558,6 +4922,7 @@ function renderPagination(total, limit, offset) {
   const el = document.getElementById('pagination');
   if (el) el.innerHTML = '';
 }
+
 
 // Infinite-scroll footer for the Files tab. Keeps the bulk-download button
 // + page-size selector + "loaded / total" indicator visible. No page-nav.
@@ -4857,6 +5222,22 @@ function _wgArrow(col) {
   return _watchSortBy === col ? (_watchSortDir === 'asc' ? '▲' : '▼') : '▲▼';
 }
 
+function watchSizeUnitChange() {
+  const unit = (document.getElementById('watch-size-unit')?.value || '');
+  const num  = document.getElementById('watch-size-num');
+  if (!num) return;
+  num.disabled = !unit;
+  if (!unit) num.value = '';
+}
+
+function _watchMinSizeBytes() {
+  const unit = (document.getElementById('watch-size-unit')?.value || '');
+  const raw  = parseFloat(document.getElementById('watch-size-num')?.value || '0') || 0;
+  if (!unit || raw <= 0) return 0;
+  const mult = { KB: 1024, MB: 1024*1024, GB: 1024*1024*1024 };
+  return Math.round(raw * (mult[unit] || 1));
+}
+
 function renderWatches() {
   const el = document.getElementById('watches-list');
   if (!el) return;
@@ -4884,7 +5265,8 @@ function renderWatches() {
     <table class="wg-table">
       <thead><tr>
         <th class="wg-sortable" onclick="watchSort('keywords')">${esc(t('watch.colKeywords'))} <span class="sort-arrow">${_wgArrow('keywords')}</span></th>
-        <th class="wg-sortable" onclick="watchSort('matches')" style="width:100px">${esc(t('watch.colMatches'))} <span class="sort-arrow">${_wgArrow('matches')}</span></th>
+        <th style="width:90px">${esc(t('watch.colMinSize'))}</th>
+        <th class="wg-sortable" onclick="watchSort('matches')" style="width:90px">${esc(t('watch.colMatches'))} <span class="sort-arrow">${_wgArrow('matches')}</span></th>
         <th class="wg-sortable" onclick="watchSort('created_at')" style="width:152px">${esc(t('watch.colCreated'))} <span class="sort-arrow">${_wgArrow('created_at')}</span></th>
         <th class="wg-sortable" onclick="watchSort('last_match')" style="width:152px">${esc(t('watch.colLastMatch'))} <span class="sort-arrow">${_wgArrow('last_match')}</span></th>
         <th style="width:185px">${esc(t('hg.actions'))}</th>
@@ -4894,12 +5276,14 @@ function renderWatches() {
         const last    = w.active_last_match_at ? fmtDate(w.active_last_match_at).substring(0,16) : '—';
         const matchN  = w.active_match_count || 0;
         const cntCls  = matchN > 0 ? 'wg-count' : 'wg-count wg-count-zero';
+        const minSz   = w.min_size_bytes > 0 ? fmtSize(w.min_size_bytes) : '—';
         const showBtn = matchN > 0
           ? `<button class="wg-btn wg-btn-show" onclick="showWatchMatches(${w.id})">${esc(t('watch.view'))}</button>
              <button class="wg-btn" onclick="dismissWatchNotif(${w.active_notification_id})">${esc(t('watch.dismiss'))}</button>`
           : `<span style="color:var(--text-4);font-size:.7rem">—</span>`;
         return `<tr>
           <td><code class="wg-kw">${esc(w.keywords)}</code></td>
+          <td class="wg-time">${esc(minSz)}</td>
           <td><span class="${cntCls}">${matchN}</span></td>
           <td class="wg-time">${esc(created)}</td>
           <td class="wg-time">${esc(last)}</td>
@@ -4913,9 +5297,13 @@ async function addWatch() {
   const inp = document.getElementById('watch-input');
   const kw  = (inp.value || '').trim();
   if (!kw) return;
+  const min_size_bytes = _watchMinSizeBytes();
   try {
-    await api('/api/watches', { method:'POST', json:{ keywords: kw } });
+    await api('/api/watches', { method:'POST', json:{ keywords: kw, min_size_bytes } });
     inp.value = '';
+    document.getElementById('watch-size-unit').value = '';
+    document.getElementById('watch-size-num').value = '';
+    document.getElementById('watch-size-num').disabled = true;
     await loadWatches();
     await loadActiveNotifications();
   } catch (e) {
@@ -5294,11 +5682,13 @@ function cgfToggleId(id, checked) {
 }
 
 function cgfSelectAll() {
-  // Apply to currently filtered list (search-aware)
   const q = (document.getElementById('cgf-search')?.value || '').toLowerCase().trim();
+  // Arama filtresi yokken tümünü seçmek = filtre yok = temizle ile aynı sonuç;
+  // boş set ile sorgu çalıştırmak group_ids koşulu eklemediğinden çok daha hızlı.
+  if (!q) { cgfClear(); return; }
   for (const g of (_groups || [])) {
     if (g.hidden) continue;
-    if (q && !(g.display_name||g.name||'').toLowerCase().includes(q)) continue;
+    if (!(g.display_name||g.name||'').toLowerCase().includes(q)) continue;
     S.colGroupIds.add(g.id);
   }
   cgfRenderList();
@@ -5648,16 +6038,22 @@ async function loadHunterSettings() {
 }
 
 function hunterToggleSettings() {
-  const card = document.getElementById('hunter-settings-card');
-  const btn  = document.getElementById('hunter-settings-btn');
-  if (card.style.display === 'none') {
-    loadHunterSettings();
-    card.style.display = '';
-    btn && btn.classList.add('active');
-  } else {
-    card.style.display = 'none';
-    btn && btn.classList.remove('active');
-  }
+  hunterOpenSettings();
+}
+
+function hunterOpenSettings() {
+  loadHunterSettings();
+  document.getElementById('hunter-settings-overlay').classList.add('open');
+  document.getElementById('hunter-settings-btn')?.classList.add('active');
+}
+
+function hunterCloseSettings() {
+  document.getElementById('hunter-settings-overlay').classList.remove('open');
+  document.getElementById('hunter-settings-btn')?.classList.remove('active');
+}
+
+function hunterSettingsOverlayClick(e) {
+  if (e.target.id === 'hunter-settings-overlay') hunterCloseSettings();
 }
 
 async function hunterSaveSettings() {
@@ -5693,7 +6089,7 @@ async function hunterSaveSettings() {
   };
   try {
     await api('/api/hunter/settings', { method: 'PUT', json: patch });
-    hunterToggleSettings();
+    hunterCloseSettings();
     loadHunterSettings();
   } catch (e) {
     alert(e.message);
@@ -6098,7 +6494,6 @@ function _renderDetailModal(c) {
       <button class="h-btn" data-act="ch-files" data-i18n-title="channels.openFilesTip" title="Bu kanaldaki dosyaları Dosyalar sekmesinde aç">📁 ${esc(t('channels.openFiles'))}</button>
       <button class="h-btn" data-act="ch-rescan" data-i18n-title="channels.tipRescan" title="">${esc(t('groups.bulkRescan'))}</button>
       <button class="h-btn" data-act="ch-hide"   data-i18n-title="channels.tipHide"   title="">${esc(c.hidden ? t('groups.bulkShow') : t('groups.bulkHide'))}</button>
-      <button class="h-btn" data-act="ch-excl"   data-i18n-title="channels.tipUntrack" title="">${esc(c.excluded ? t('groups.bulkTrack') : t('groups.bulkUntrack'))}</button>
       <button class="h-btn h-btn-reject" data-act="ch-leave" data-i18n-title="channels.tipLeave" title="">${esc(t('groups.bulkLeave'))}</button>
       <button class="h-btn" style="margin-left:auto" data-act="close">${esc(t('common.close'))}</button>`;
   } else {
@@ -7139,6 +7534,20 @@ function _ctxMenuHide() {
 function _ctxMenuShowChannel(event, groupId, username) {
   _ctxMenuShow(event, [
     {
+      label: t('ctx.openFilesTab'),
+      action: () => {
+        S.colGroupIds.clear();
+        S.colGroupIds.add(groupId);
+        S.offset = 0;
+        cgfUpdateLabel();
+        switchTab('files');
+      },
+    },
+    {
+      label: t('ctx.showDetail'),
+      action: () => channelShowDetail(groupId),
+    },
+    {
       label: t('ctx.showSimilar'),
       action: () => showSimilarChannels({ group_id: groupId, username: username || null }),
     },
@@ -7146,6 +7555,10 @@ function _ctxMenuShowChannel(event, groupId, username) {
       label: t('ctx.openTelegram'),
       action: () => window.open('https://t.me/' + encodeURIComponent(username), '_blank'),
     }] : []),
+    {
+      label: t('ctx.leaveChannel'),
+      action: () => leaveGroup(null, groupId),
+    },
   ]);
 }
 

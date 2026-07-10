@@ -1,7 +1,7 @@
 import json as _json
 import os
 import asyncpg
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -258,6 +258,10 @@ ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS similar_expand_max_seeds IN
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_until TIMESTAMPTZ;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_scope TEXT;
 ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS last_floodwait_seconds INTEGER;
+-- Stage 0 tekrar tarama önleme: bir kanal/aday benzer-kanal için sorgulandığında
+-- zaman damgası basılır; bir sonraki oturumda bu kayıtlar atlanır.
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS stage0_scanned_at TIMESTAMPTZ;
+ALTER TABLE hunter_candidates ADD COLUMN IF NOT EXISTS stage0_scanned_at TIMESTAMPTZ;
 -- Otomatik anahtar-kelime havuzu: Stage 3 başarılı zenginleştirmeden sonra
 -- kanal açıklamasından / başlığından çıkarılan anlamlı kelimeler buraya
 -- birikiyor. Stage 2 bir sonraki koşuda user keywords + bunları birleştiriyor
@@ -405,6 +409,15 @@ CREATE TABLE IF NOT EXISTS telemetry_sent_groups (
 CREATE TABLE IF NOT EXISTS telemetry_sent_files (
     file_id BIGINT PRIMARY KEY,
     sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS link_archive_contents (
+    id           SERIAL PRIMARY KEY,
+    link_id      BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+    archive_path TEXT NOT NULL,
+    contents     JSONB NOT NULL DEFAULT '[]',
+    inspected_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (link_id, archive_path)
 );
 
 -- Versioned migration tracker. Created here so it exists before
@@ -613,8 +626,11 @@ async def init_db():
             "file_size","date","local_path","downloading","download_progress",
             "context","appearances","share_count","share_count_7d","share_count_30d",
         }
-        if _VECTOR_AVAILABLE:
-            _MV_EXPECTED_COLS = _MV_EXPECTED_COLS | {"name_embedding"}
+        # name_embedding is intentionally excluded from files_canonical even
+        # when pgvector is available. Keeping it inline (1542 bytes/row) bloats
+        # the MV to 22+ GB after repeated REFRESH CONCURRENTLY cycles, making
+        # every Bitmap Heap Scan 5-10× slower. Semantic search uses
+        # files.name_embedding (separate HNSW index) joined by id instead.
         existing_rows = await conn.fetch(
             """SELECT a.attname
                  FROM pg_attribute a
@@ -639,16 +655,10 @@ async def init_db():
                 len(_MV_EXPECTED_COLS), len(existing_cols),
             )
             mv_sql = _MV_SCHEMA.format(
-                emb_proj_inner="f.name_embedding," if _VECTOR_AVAILABLE else "",
-                emb_proj_outer="name_embedding," if _VECTOR_AVAILABLE else "",
+                emb_proj_inner="",
+                emb_proj_outer="",
             )
             await conn.execute(mv_sql)
-            # HNSW index on the MV's embedding column (after MV exists)
-            if _VECTOR_AVAILABLE:
-                try:
-                    await conn.execute(_MV_VECTOR_INDEX)
-                except Exception as e:
-                    log.warning("MV vector index apply failed: %s", e)
     await _migrate_to_multi_account()
     # Populate the dedupe MV on first run AND after a schema rebuild (DROP+CREATE
     # leaves the MV in "not populated" state, where SELECT raises). We probe
@@ -719,6 +729,7 @@ async def _migrate_to_multi_account():
     await _exec("""ALTER TABLE hunter_settings ADD COLUMN IF NOT EXISTS anthropic_api_key TEXT DEFAULT ''""")
     # Add explicit schedule time to scheduled_downloads if missing
     await _exec("ALTER TABLE scheduled_downloads ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ")
+    await _exec("ALTER TABLE watch_terms ADD COLUMN IF NOT EXISTS min_size_bytes BIGINT NOT NULL DEFAULT 0")
 
     # If no accounts exist but legacy credentials/session is present, seed default Account 1
     n = await _qval("SELECT COUNT(*) FROM accounts")
@@ -922,15 +933,44 @@ async def get_groups() -> List[Dict]:
                   COUNT(f.id) FILTER (WHERE f.file_ext IS NULL OR LOWER(f.file_ext) NOT IN
                       ({audio_l[1:-1]}, {video_l[1:-1]}, {image_l[1:-1]},
                        {archv_l[1:-1]}, {docu_l[1:-1]}, {soft_l[1:-1]}, {torr_l[1:-1]}))
-                                                                  AS type_other
+                                                                  AS type_other,
+                  hc.score                                        AS hunter_score
            FROM groups g
            LEFT JOIN files f ON f.group_id = g.id
+           LEFT JOIN hunter_candidates hc ON LOWER(hc.username) = LOWER(g.username)
            WHERE g.id < 0
               OR EXISTS (SELECT 1 FROM account_groups ag WHERE ag.group_id = g.id)
-           GROUP BY g.id
+           GROUP BY g.id, hc.score
            ORDER BY g.name"""
     )
-    return [dict(r) for r in rows]
+    now = datetime.now(timezone.utc)
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d["hunter_score"] is None:
+            # No hunter_candidates row — compute score from actual file data
+            useful = (
+                (d.get("type_archive") or 0)
+                + (d.get("type_document") or 0)
+                + (d.get("type_software") or 0)
+                + (d.get("type_other") or 0)
+            )
+            file_count = d.get("file_count") or 0
+            last_msg = d.get("last_message_at")
+            if useful > 0 and file_count > 0:
+                useful_density = min(1.0, useful / file_count)
+                if last_msg:
+                    if last_msg.tzinfo is None:
+                        last_msg = last_msg.replace(tzinfo=timezone.utc)
+                    days_since = (now - last_msg).total_seconds() / 86400
+                else:
+                    days_since = 999.0
+                recency = max(0.0, 1.0 - days_since / 60.0)
+                d["hunter_score"] = round((0.55 * useful_density + 0.30 * recency) * 100, 2)
+            else:
+                d["hunter_score"] = 0.0
+        result.append(d)
+    return result
 
 
 async def get_last_synced_message_id(group_id: int) -> int:
@@ -1012,6 +1052,52 @@ async def insert_link(
 
 
 # ── Link probe helpers ────────────────────────────────────────────────────────
+
+_DEAD_PLATFORMS = (
+    "Zippyshare",   # closed Mar 2023
+    "Uploaded",     # closed 2024
+    "Anonfiles",    # closed Aug 2023
+    "Bayfiles",     # closed with Anonfiles
+)
+
+
+async def delete_dead_platforms() -> int:
+    """Remove links from file hosts that have permanently shut down.
+    Idempotent — subsequent runs match zero rows."""
+    status = await _exec(
+        "DELETE FROM links WHERE platform = ANY($1::text[])",
+        list(_DEAD_PLATFORMS),
+    )
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except Exception:
+        return 0
+
+
+async def reset_mega_probes_for_rescan() -> int:
+    """One-shot helper: invalidate `probed_at` on Mega links that don't yet
+    carry a decrypted filename so the (now decryption-aware) link prober
+    re-fetches them. Idempotent — after the new probe writes real names,
+    later runs match zero rows. The rate-limit gate inside link_prober keeps
+    Mega's API happy."""
+    status = await _exec(
+        """UPDATE links
+              SET probed_at = NULL
+            WHERE platform = 'Mega'
+              -- Skip links that already failed decryption permanently.
+              AND (probe_error IS NULL OR probe_error NOT LIKE 'mega:%')
+              AND (files_json IS NULL
+                   OR files_json::text LIKE '%şifreli%'
+                   OR files_json::text LIKE '%encrypted%'
+                   OR file_count IS NULL
+                   OR file_count = 0)"""
+    )
+    # asyncpg's _exec returns a status string like "UPDATE 42".
+    try:
+        return int(str(status).rsplit(" ", 1)[-1])
+    except Exception:
+        return 0
+
 
 async def get_links_due_for_probe(limit: int = 50, stale_days: int = 7) -> List[Dict]:
     """Pick up unprobed links first, then ones stale enough to recheck. Magnet links are excluded — their info is parsed from the URI at insert time."""
@@ -1168,10 +1254,11 @@ async def _search_files_hybrid(
         ),
         sem_hits AS (
           SELECT fc.id,
-                 ROW_NUMBER() OVER (ORDER BY fc.name_embedding <=> $2::vector) AS r
-          FROM files_canonical fc
-          WHERE fc.name_embedding IS NOT NULL {extra_where}
-          ORDER BY fc.name_embedding <=> $2::vector
+                 ROW_NUMBER() OVER (ORDER BY fl2.name_embedding <=> $2::vector) AS r
+          FROM files fl2
+          JOIN files_canonical fc ON fc.id = fl2.id
+          WHERE fl2.name_embedding IS NOT NULL {extra_where}
+          ORDER BY fl2.name_embedding <=> $2::vector
           LIMIT 300
         ),
         fused AS (
@@ -1211,7 +1298,8 @@ async def _search_files_hybrid(
             WHERE fc.file_name ILIKE $1 {extra_where}
             UNION
             SELECT fc.id FROM files_canonical fc
-            WHERE fc.name_embedding IS NOT NULL {extra_where}
+            JOIN files fl2 ON fl2.id = fc.id AND fl2.name_embedding IS NOT NULL
+            {("WHERE" + extra_where.lstrip(" AND")) if extra_where else ""}
             ORDER BY 1 LIMIT 600
           ) u
         )
@@ -1368,22 +1456,32 @@ async def search_files(
         stats = await _files_dedupe_stats_cached(where_fc, c_args)
         return cached_rows, stats
 
-    # Live overlay JOIN to files: keeps local_path / downloading /
-    # download_progress current between MV refreshes (PK lookup on the
-    # 100-row page is sub-ms).
-    sql = f"""SELECT fc.id, fc.group_id, fc.message_id, fc.file_name, fc.file_ext,
-                     fc.mime_type, fc.file_size, fc.date,
+    # Subquery-first pattern: select the page from files_canonical (index scan),
+    # then join only the 100 result rows against files/groups (PK lookups).
+    # This lets PostgreSQL use idx_fc_date (or other sort indexes) without
+    # scanning the full MV just to sort — critical when name_embedding makes
+    # each row wide and the default sort has no filter to reduce cardinality.
+    col_inner = col_fc                            # fc.date / fc.file_size …
+    col_outer = col_fc.replace("fc.", "fc2.")     # fc2.date / fc2.file_size …
+    sql = f"""SELECT fc2.id, fc2.group_id, fc2.message_id, fc2.file_name, fc2.file_ext,
+                     fc2.mime_type, fc2.file_size, fc2.date,
                      fl.local_path, fl.downloading, fl.download_progress,
-                     fc.context, fc.appearances,
-                     fc.share_count, fc.share_count_7d, fc.share_count_30d,
+                     fc2.context, fc2.appearances,
+                     fc2.share_count, fc2.share_count_7d, fc2.share_count_30d,
                      COALESCE(g.display_name, g.name) AS group_name,
                      g.username AS group_username
-              FROM files_canonical fc
-              JOIN groups g ON g.id = fc.group_id
-              JOIN files  fl ON fl.id = fc.id
-              {where_fc}
-              ORDER BY {col_fc} {direction}
-              LIMIT ${idx} OFFSET ${idx+1}"""
+              FROM (
+                  SELECT fc.id, fc.group_id, fc.message_id, fc.file_name, fc.file_ext,
+                         fc.mime_type, fc.file_size, fc.date, fc.context, fc.appearances,
+                         fc.share_count, fc.share_count_7d, fc.share_count_30d
+                  FROM files_canonical fc
+                  {where_fc}
+                  ORDER BY {col_inner} {direction}
+                  LIMIT ${idx} OFFSET ${idx+1}
+              ) fc2
+              JOIN groups g  ON g.id  = fc2.group_id
+              JOIN files  fl ON fl.id = fc2.id
+              ORDER BY {col_outer} {direction}"""
 
     rows = await _q(sql, *args)
     result = [dict(r) for r in rows]
@@ -1468,6 +1566,16 @@ async def refresh_files_canonical(force: bool = False) -> None:
                 import logging as _lg
                 _lg.getLogger(__name__).warning("refresh files_canonical: %s", e)
                 return
+        # VACUUM removes dead tuples left by CONCURRENTLY (which replaces all rows
+        # each run). Without it the table bloats to 22+ GB after ~15 refreshes.
+        # ANALYZE follows to give the planner accurate row counts.
+        try:
+            await _exec("VACUUM ANALYZE files_canonical")
+        except Exception:
+            try:
+                await _exec("ANALYZE files_canonical")
+            except Exception:
+                pass
         _FC_LAST_REFRESH_TS = _t.time()
 
 
@@ -1644,6 +1752,7 @@ _LINK_SORT_COLS = {
     "url":      "l.url",
     "platform": "l.platform",
     "files":    "l.file_count",
+    "size":     "l.file_size_total",
     "group":    "g.name",
     "context":  "l.context",
 }
@@ -1776,6 +1885,33 @@ async def search_links(
         *c_args,
     )
     return [dict(r) for r in rows], total or 0
+
+
+async def search_link_files(query: str, limit: int = 200, offset: int = 0) -> List[Dict]:
+    """files_json içinde dosya adına göre link kayıtlarını arar.
+    Her eşleşen (link, dosya) çifti için dosya adı, boyut, kaynak link ve
+    kanal bilgisi döndürür. Dosyalar tabında Telegram dosyalarıyla birlikte gösterilir."""
+    rows = await _q(
+        """SELECT
+               l.id          AS link_id,
+               lf->>'name'   AS file_name,
+               COALESCE((lf->>'size')::bigint, 0) AS file_size,
+               l.platform,
+               l.url         AS link_url,
+               l.group_id,
+               l.date,
+               COALESCE(g.display_name, g.name) AS group_name,
+               g.username    AS group_username
+           FROM links l
+           JOIN groups g ON g.id = l.group_id,
+           jsonb_array_elements(COALESCE(l.files_json, '[]'::jsonb)) AS lf
+           WHERE lf->>'name' ILIKE $1
+             AND (l.available IS NULL OR l.available = TRUE)
+           ORDER BY l.date DESC NULLS LAST
+           LIMIT $2 OFFSET $3""",
+        f"%{query}%", limit, offset,
+    )
+    return [dict(r) for r in rows]
 
 
 async def get_file_by_id(file_id: int) -> Optional[Dict]:
@@ -2114,7 +2250,8 @@ async def export_files_cursor():
 
 async def list_watches() -> List[Dict]:
     rows = await _q(
-        """SELECT w.id, w.keywords, w.created_at, w.baseline_file_id, w.last_checked_file_id,
+        """SELECT w.id, w.keywords, w.min_size_bytes, w.created_at,
+                  w.baseline_file_id, w.last_checked_file_id,
                   (SELECT n.id FROM watch_notifications n
                    WHERE n.watch_id = w.id AND n.dismissed_at IS NULL
                    ORDER BY n.first_match_at DESC LIMIT 1) AS active_notification_id,
@@ -2130,12 +2267,12 @@ async def list_watches() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-async def create_watch(keywords: str) -> int:
+async def create_watch(keywords: str, min_size_bytes: int = 0) -> int:
     max_id = await _qval("SELECT COALESCE(MAX(id), 0) FROM files") or 0
     row = await _qrow(
-        """INSERT INTO watch_terms (keywords, baseline_file_id, last_checked_file_id)
-           VALUES ($1, $2, $2) RETURNING id""",
-        keywords, max_id,
+        """INSERT INTO watch_terms (keywords, min_size_bytes, baseline_file_id, last_checked_file_id)
+           VALUES ($1, $2, $3, $3) RETURNING id""",
+        keywords, int(min_size_bytes), max_id,
     )
     return row["id"]
 
@@ -2149,7 +2286,7 @@ async def check_watches() -> Tuple[int, List[Dict]]:
     them into the active notification (creating one if none exists). Returns
     (total_new_matches, per_watch_payload) where the payload describes the new
     rows so the sync layer can push them to the user's Saved Messages."""
-    watches = await _q("SELECT id, keywords, last_checked_file_id FROM watch_terms")
+    watches = await _q("SELECT id, keywords, min_size_bytes, last_checked_file_id FROM watch_terms")
     if not watches:
         return 0, []
 
@@ -2167,6 +2304,7 @@ async def check_watches() -> Tuple[int, List[Dict]]:
 
         # Watch semantics: ALL keywords must appear in the FILE NAME (AND).
         # Each term contributes one ILIKE condition over file_name only.
+        # Optional: minimum file_size condition.
         conds: List[str] = []
         args: List = [w["last_checked_file_id"]]
         idx = 2
@@ -2175,9 +2313,15 @@ async def check_watches() -> Tuple[int, List[Dict]]:
             args.append(f"%{t}%")
             idx += 1
 
+        min_sz = int(w.get("min_size_bytes") or 0)
+        size_clause = ""
+        if min_sz > 0:
+            size_clause = f" AND file_size >= ${idx}"
+            args.append(min_sz)
+
         sql = (
             "SELECT id FROM files "
-            f"WHERE id > $1 AND ({' AND '.join(conds)}) "
+            f"WHERE id > $1 AND ({' AND '.join(conds)}){size_clause} "
             "ORDER BY id ASC"
         )
         rows = await _q(sql, *args)
@@ -2406,12 +2550,14 @@ async def get_groups_for_account(account_id: int) -> List[Dict]:
                   COALESCE(ag.display_name, g.name) AS display_name,
                   ag.last_synced_at,
                   COUNT(f.id) FILTER (WHERE f.discovered_by_account_id = $1) AS file_count,
-                  COALESCE(SUM(f.file_size) FILTER (WHERE f.discovered_by_account_id = $1), 0) AS total_size
+                  COALESCE(SUM(f.file_size) FILTER (WHERE f.discovered_by_account_id = $1), 0) AS total_size,
+                  COALESCE(hc.score, 0) AS hunter_score
            FROM account_groups ag
            JOIN groups g ON g.id = ag.group_id
            LEFT JOIN files f ON f.group_id = g.id
+           LEFT JOIN hunter_candidates hc ON LOWER(hc.username) = LOWER(g.username)
            WHERE ag.account_id = $1
-           GROUP BY g.id, ag.excluded, ag.hidden, ag.display_name, ag.last_synced_at
+           GROUP BY g.id, ag.excluded, ag.hidden, ag.display_name, ag.last_synced_at, hc.score
            ORDER BY g.name""",
         account_id,
     )
@@ -3553,3 +3699,42 @@ async def get_activity_heatmap(group_id: int = None) -> list:
             "  FROM files GROUP BY dow, hour"
         )
     return [dict(r) for r in rows]
+
+
+# ── Archive contents (link_archive_contents) ───────────────────────────────────
+
+async def get_link_archive_contents(link_id: int) -> Dict[str, List]:
+    """Return all inspected archive contents for a link as {path: [file_list]}."""
+    rows = await _q(
+        "SELECT archive_path, contents FROM link_archive_contents WHERE link_id = $1",
+        link_id,
+    )
+    result: Dict[str, List] = {}
+    for r in rows:
+        contents = r["contents"]
+        if isinstance(contents, str):
+            import json as _j
+            try:
+                contents = _j.loads(contents)
+            except Exception:
+                contents = []
+        result[r["archive_path"]] = contents or []
+    return result
+
+
+async def store_link_archive_contents(
+    link_id: int,
+    archive_path: str,
+    contents: List[Dict],
+) -> None:
+    """Upsert the file listing for one archive inside a torrent link."""
+    import json as _j
+    await _exec(
+        """INSERT INTO link_archive_contents (link_id, archive_path, contents, inspected_at)
+           VALUES ($1, $2, $3::jsonb, NOW())
+           ON CONFLICT (link_id, archive_path)
+           DO UPDATE SET contents = EXCLUDED.contents, inspected_at = NOW()""",
+        link_id,
+        archive_path,
+        _j.dumps(contents),
+    )

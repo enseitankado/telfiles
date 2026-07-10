@@ -27,6 +27,9 @@ from sync import (
     run_sync,
     setup_realtime_handler,
     sync_status,
+    kick_archive_scan,
+    cancel_archive_scan,
+    archive_scan_status,
 )
 from telegram_client import (
     get_client,
@@ -477,6 +480,24 @@ async def lifespan(app: FastAPI):
     stale = await database.reset_stale_downloads()
     if stale:
         logger.info(f"Reset {stale} stale download(s) left over from previous run.")
+
+    # One-shot: queue old Mega links (probed before the decryption-aware
+    # prober landed) for a re-fetch so their real filenames get recorded.
+    try:
+        mega_re = await database.reset_mega_probes_for_rescan()
+        if mega_re:
+            logger.info(f"Queued {mega_re} Mega link(s) for re-probe with filename decryption.")
+    except Exception as e:
+        logger.warning(f"Mega backfill prep failed: {e}")
+
+    # Remove links from file hosts that have permanently shut down
+    # (Zippyshare/Uploaded/Anonfiles/Bayfiles). Idempotent.
+    try:
+        dead = await database.delete_dead_platforms()
+        if dead:
+            logger.info(f"Deleted {dead} link(s) from defunct file hosts.")
+    except Exception as e:
+        logger.warning(f"Dead-platform cleanup failed: {e}")
 
     accounts = await database.list_accounts()
     if not accounts:
@@ -1399,6 +1420,20 @@ async def embed_status():
     return {"available": available, **progress}
 
 
+@app.get("/api/link-files")
+async def search_link_files(
+    q: str = Query(""),
+    limit: int = Query(200, le=500),
+    offset: int = Query(0),
+):
+    """Harici link kayıtlarının files_json içinde dosya adına göre arama.
+    Sonuçlar Dosyalar tabında Telegram dosyalarıyla birlikte gösterilir."""
+    if not q:
+        return {"files": []}
+    rows = await database.search_link_files(q, limit, offset)
+    return {"files": rows}
+
+
 @app.get("/api/files/shares")
 async def file_shares(fname: str = Query(...), fsize: int = Query(...)):
     """Return the channels in which the (file_name, file_size) pair appears.
@@ -1838,6 +1873,79 @@ async def retry_magnet_metadata(link_id: int):
     return {"ok": False, "error": "no peers / metadata unavailable"}
 
 
+@app.post("/api/links/{link_id}/inspect-archives")
+async def inspect_link_archives(link_id: int):
+    """Partially download archive files inside a magnet torrent and return their contents.
+
+    Uses aria2c with --bt-prioritize-piece=head,tail so only the header/footer
+    pieces (where archive metadata lives) are fetched, not the full torrent.
+    Results are stored in link_archive_contents and returned immediately.
+    """
+    row = await database._qrow(
+        "SELECT url, platform, files_json FROM links WHERE id = $1", link_id
+    )
+    if not row:
+        raise HTTPException(404, "Link not found")
+    if row["platform"] != "Magnet":
+        raise HTTPException(400, "Not a magnet link")
+
+    magnet_uri = row["url"]
+    if not magnet_uri.lower().startswith("magnet:"):
+        raise HTTPException(400, "Invalid magnet URI")
+
+    import archive_inspector
+    try:
+        results = await archive_inspector.inspect_magnet_archives(magnet_uri, timeout=150)
+    except Exception as exc:
+        logger.error("inspect-archives error for link %s: %s", link_id, exc)
+        raise HTTPException(500, f"İnceleme başarısız: {exc}")
+
+    if not results:
+        return {"ok": False, "archives": {}, "reason": "no_archives_or_timeout"}
+
+    # Persist to DB
+    for archive_path, contents in results.items():
+        await database.store_link_archive_contents(link_id, archive_path, contents)
+
+    # Return with file counts
+    out = {
+        path: {"files": files, "count": len(files)}
+        for path, files in results.items()
+    }
+    return {"ok": True, "archives": out}
+
+
+@app.get("/api/links/{link_id}/archive-contents")
+async def get_link_archive_contents_endpoint(link_id: int):
+    """Return previously-inspected archive contents (without re-downloading)."""
+    row = await database._qrow("SELECT id FROM links WHERE id = $1", link_id)
+    if not row:
+        raise HTTPException(404, "Link not found")
+    contents = await database.get_link_archive_contents(link_id)
+    return {"link_id": link_id, "archives": contents}
+
+
+@app.post("/api/links/scan-archives")
+async def start_archive_scan():
+    """Toplu arşiv tarama: mevcut magnet linklerdeki ZIP/RAR/7z dosyalarını
+    kısmen indirerek içeriklerini listeler ve DB'ye kaydeder."""
+    started = kick_archive_scan()
+    if not started:
+        return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
+    return {"ok": True}
+
+
+@app.get("/api/links/scan-archives/status")
+async def get_archive_scan_status():
+    return dict(archive_scan_status)
+
+
+@app.post("/api/links/scan-archives/cancel")
+async def cancel_archive_scan_endpoint():
+    cancelled = cancel_archive_scan()
+    return {"ok": True, "cancelled": cancelled}
+
+
 @app.post("/api/links/retry-dead-magnets")
 async def retry_dead_magnets_bulk():
     """Bulk: clear `magnet-enrich:*` errors on every dead magnet so the next
@@ -2028,6 +2136,7 @@ async def get_status():
 
 class WatchRequest(BaseModel):
     keywords: str
+    min_size_bytes: int = 0
 
 
 @app.get("/api/watches")
@@ -2040,7 +2149,8 @@ async def create_watch(req: WatchRequest):
     kw = (req.keywords or "").strip()
     if not kw:
         raise HTTPException(400, "keywords required")
-    wid = await database.create_watch(kw)
+    min_sz = max(0, int(req.min_size_bytes or 0))
+    wid = await database.create_watch(kw, min_size_bytes=min_sz)
     return {"id": wid}
 
 
