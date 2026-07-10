@@ -93,20 +93,26 @@ def _compact_ft(r: dict) -> dict:
             if r.get(long)}
 
 
-async def _send_silently() -> bool:
+async def _send_silently() -> tuple[bool, int | None, str | None]:
+    """Returns (success, http_status_or_None, error_msg_or_None).
+
+    http_status is None when there was nothing to send or a network exception.
+    Callers use None to skip updating last_sent_* fields.
+    """
     payload, group_ids, file_ids = await collect_payload()
 
     if not group_ids and not file_ids:
-        return True  # nothing new to send; not a failure
+        return True, None, None  # nothing new to send; not a failure
 
     headers = {
-        "User-Agent":        "TelFiles/1.0 telemetry",
+        "User-Agent":         "TelFiles/1.0 telemetry",
         "X-Telemetry-Secret": TELEMETRY_SECRET,
-        "Content-Type":      "application/json; charset=utf-8",
-        "Content-Encoding":  "gzip",
+        "Content-Type":       "application/json; charset=utf-8",
+        "Content-Encoding":   "gzip",
     }
     compressed = gzip.compress(_json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                compresslevel=6)
+    status: int | None = None
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -114,21 +120,24 @@ async def _send_silently() -> bool:
                 timeout=aiohttp.ClientTimeout(total=60),
                 headers=headers,
             ) as r:
-                ok = r.status < 400
-    except Exception:
-        return False
+                status = r.status
+                ok = status < 400
+                if not ok:
+                    body = await r.text()
+                    return False, status, body[:300]
+    except Exception as exc:
+        return False, None, str(exc)[:300]
 
-    if ok:
-        try:
-            await database.mark_groups_sent(group_ids)
-            await database.mark_files_sent(file_ids)
-        except Exception:
-            pass
-    return ok
+    try:
+        await database.mark_groups_sent(group_ids)
+        await database.mark_files_sent(file_ids)
+    except Exception:
+        pass
+    return True, status, None
 
 
 async def telemetry_loop():
-    """Background loop. Silent: no logs, no DB error writes, no UI surface."""
+    """Background loop. Logs status/errors to DB after each real attempt."""
     while True:
         try:
             await asyncio.sleep(300)  # check every 5 min
@@ -141,13 +150,18 @@ async def telemetry_loop():
                 nxt = nxt.replace(tzinfo=timezone.utc)
             if nxt and nxt > now:
                 continue
-            ok = await _send_silently()
+            ok, status, err = await _send_silently()
+            patch: dict = {
+                "next_send_at": now + timedelta(
+                    seconds=INTERVAL_SECONDS if ok else 3600
+                ),
+            }
+            if status is not None:  # a real HTTP attempt was made
+                patch["last_sent_at"] = datetime.now(timezone.utc)
+                patch["last_sent_status"] = status
+                patch["last_sent_error"] = err or ""
             try:
-                await database.update_telemetry_settings({
-                    "next_send_at": now + timedelta(
-                        seconds=INTERVAL_SECONDS if ok else 3600
-                    ),
-                })
+                await database.update_telemetry_settings(patch)
             except Exception:
                 pass
         except asyncio.CancelledError:

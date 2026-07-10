@@ -256,17 +256,18 @@ def _normalize_username(u: str) -> Optional[str]:
 # treat it as a complement to Stage 1/2, not a replacement.
 
 async def _stage0_collect_seed_usernames(max_seeds: int) -> List[Tuple[str, int]]:
-    """Return [(username, group_id_or_0), ...] of seed channels:
-    1) followed channels in `groups` (priority — known-good)
-    2) recently enriched hunter candidates with a username
+    """Return [(username, group_id_or_0), ...] of seed channels NOT yet queried.
+    1) followed channels in `groups` (stage0_scanned_at IS NULL, priority)
+    2) recently enriched hunter candidates (stage0_scanned_at IS NULL)
     Caps to `max_seeds` total. Skips entries without a username (private chats)."""
     seeds: List[Tuple[str, int]] = []
     seen: Set[str] = set()
-    # 1) followed channels
+    # 1) followed channels that have never been used as Stage 0 seeds
     rows = await database._q(
         """SELECT id, username FROM groups
            WHERE is_channel = TRUE AND username IS NOT NULL AND username <> ''
              AND COALESCE(hidden, FALSE) = FALSE
+             AND stage0_scanned_at IS NULL
            ORDER BY COALESCE(last_synced_at, '1970-01-01'::timestamptz) DESC
            LIMIT $1""",
         max_seeds,
@@ -278,7 +279,7 @@ async def _stage0_collect_seed_usernames(max_seeds: int) -> List[Tuple[str, int]
             seeds.append((u, int(r["id"])))
         if len(seeds) >= max_seeds:
             return seeds
-    # 2) Fill remainder from enriched candidates with cached peer/access
+    # 2) Fill remainder from enriched candidates not yet scanned
     remaining = max_seeds - len(seeds)
     if remaining > 0:
         rows = await database._q(
@@ -286,6 +287,7 @@ async def _stage0_collect_seed_usernames(max_seeds: int) -> List[Tuple[str, int]
                WHERE status IN ('enriched', 'joined')
                  AND username IS NOT NULL
                  AND peer_id IS NOT NULL AND access_hash IS NOT NULL
+                 AND stage0_scanned_at IS NULL
                ORDER BY COALESCE(enriched_at, discovered_at) DESC
                LIMIT $1""",
             remaining,
@@ -338,6 +340,24 @@ async def stage0_similar_expand(settings: dict) -> int:
         key="hl.stage0.start", params={"n": len(seeds)},
     )
 
+    async def _mark_scanned(username: str, gid: int) -> None:
+        """Stamp stage0_scanned_at so this seed is never re-queried."""
+        now = datetime.now(timezone.utc)
+        try:
+            if gid:
+                await database._q(
+                    "UPDATE groups SET stage0_scanned_at = $1 WHERE id = $2",
+                    now, gid,
+                )
+            else:
+                await database._q(
+                    "UPDATE hunter_candidates SET stage0_scanned_at = $1"
+                    " WHERE lower(username) = lower($2)",
+                    now, username,
+                )
+        except Exception as _e:
+            logger.warning(f"stage0 mark_scanned failed for @{username}: {_e}")
+
     n_added = 0
     n_found = 0
     for idx, (seed_username, _seed_gid) in enumerate(seeds, 1):
@@ -362,6 +382,7 @@ async def stage0_similar_expand(settings: dict) -> int:
                 "info", key="hl.stage0.seedSkip",
                 params={"username": seed_username, "err": type(e).__name__},
             )
+            await _mark_scanned(seed_username, _seed_gid)  # kalıcı hata — bir daha deneme
             continue
         except FloodWaitError as fw:
             wait_s = int(getattr(fw, "seconds", 30))
@@ -371,16 +392,18 @@ async def stage0_similar_expand(settings: dict) -> int:
                 params={"username": seed_username, "wait": wait_s},
             )
             await _interruptible_sleep(min(wait_s, 60))
-            continue
+            continue  # geçici hata — sonraki oturumda tekrar dene
         except Exception as e:
             _emit_event(
                 "stage0", f"@{seed_username}: çözümleme hatası ({str(e)[:60]})",
                 "warn", key="hl.stage0.seedErr",
                 params={"username": seed_username, "err": str(e)[:60]},
             )
+            await _mark_scanned(seed_username, _seed_gid)
             continue
 
         if not isinstance(entity, Channel):
+            await _mark_scanned(seed_username, _seed_gid)
             continue
 
         try:
@@ -393,13 +416,14 @@ async def stage0_similar_expand(settings: dict) -> int:
                 params={"username": seed_username, "wait": wait_s},
             )
             await _interruptible_sleep(min(wait_s, 60))
-            continue
+            continue  # geçici hata — sonraki oturumda tekrar dene
         except Exception as e:
             _emit_event(
                 "stage0", f"@{seed_username}: öneri alınamadı ({str(e)[:60]})",
                 "warn", key="hl.stage0.recErr",
                 params={"username": seed_username, "err": str(e)[:60]},
             )
+            await _mark_scanned(seed_username, _seed_gid)
             continue
 
         recs = list(getattr(res, "chats", []) or [])
@@ -409,6 +433,7 @@ async def stage0_similar_expand(settings: dict) -> int:
                 "info", key="hl.stage0.seedEmpty",
                 params={"username": seed_username},
             )
+            await _mark_scanned(seed_username, _seed_gid)
             await _interruptible_sleep(delay_ms / 1000.0)
             continue
 
@@ -457,6 +482,7 @@ async def stage0_similar_expand(settings: dict) -> int:
                 seed_added += 1
                 n_added += 1
 
+        await _mark_scanned(seed_username, _seed_gid)
         status["stage_detail"]["seeds_done"] = idx
         status["stage_detail"]["found"] = n_found
         status["stage_detail"]["added"] = n_added
@@ -2262,51 +2288,50 @@ def _score_breakdown(
     avg_size: int = 0,
     duplicate_ratio: float = 0.0,
     unnamed_ratio: float = 0.0,
+    breakdown: dict = None,
 ) -> float:
     """Composite 0..100 channel score.
 
-    Base components (weighted sum, max 100):
-      - density       (0.36) file_count / sampled — what fraction of recent
-                              messages are media
-      - members       (0.16) capped at 50k subscribers
-      - recency       (0.16) decays linearly over 30 days since last post
-      - diversity     (0.12) how many of the file-type buckets are non-empty
-      - keyword_bonus (0.20) substring hits of the user's interest keywords
-                              against message text+caption+description
+    Scoring is driven by USEFUL files only — images, videos, and audio are
+    excluded entirely.  Components (weighted sum, max 100):
+      - useful_density (0.55) useful_count / sampled  (fraction of messages
+                               that contain a non-image/video/audio file)
+      - recency        (0.30) linear decay over 60 days since last post
+      - keyword_bonus  (0.15) keyword hits in message text / description
 
-    Penalties (each 0..1, applied multiplicatively, capped at 60% total cut):
-      - trivia      → many small files (sticker/chit-chat-style channels)
-      - duplicate   → same filename repeats (sticker.webp, photo_*.jpg)
-      - unnamed     → most documents are auto-generated names (forwards)
+    Returns 0 immediately when there are no useful files.
+
+    Penalties (each 0..1, multiplicative, capped at 60% total cut):
+      - duplicate  → same filename repeats (sticker.webp pattern)
+      - unnamed    → most documents are auto-generated names (forwards)
     """
     if sampled <= 0:
         return 0.0
-    density        = file_count / sampled
-    member_score   = min(1.0, (members or 0) / 50000.0)
-    recency        = max(0.0, 1.0 - (days_since_last / 30.0)) if days_since_last is not None else 0.0
-    diversity_score = min(1.0, diversity / 5.0)
-    # Keyword bonus: ~33% hit ratio (1 hit per 3 sampled messages) saturates.
-    keyword_bonus  = min(1.0, (keyword_hits / max(1, sampled)) * 3.0)
 
-    # --- Penalties ---
-    # 1) Trivia channel: many tiny files (≤500 KB avg) → likely sticker/chat spam.
-    trivia_penalty = 0.0
-    if file_count >= 50 and 0 < avg_size < 500_000:
-        trivia_penalty = (500_000 - avg_size) / 500_000  # 0..1
-    # 2) Same filename repeats across many messages — sticker.webp pattern.
-    dup_penalty = min(1.0, duplicate_ratio)
-    # 3) Auto-named documents (no real filename). Mild penalty above 50%.
+    _EXCLUDED = {"image", "video", "audio"}
+    bd = breakdown or {}
+    if bd:
+        useful_count = sum(v for k, v in bd.items() if k not in _EXCLUDED)
+    else:
+        # No breakdown available — fall back to total count (legacy callers).
+        useful_count = file_count
+
+    if useful_count == 0:
+        return 0.0
+
+    useful_density = min(1.0, useful_count / sampled)
+    # Linear decay: full score at 0 days, zero at 60 days.
+    recency       = max(0.0, 1.0 - (days_since_last / 60.0)) if days_since_last is not None else 0.0
+    keyword_bonus = min(1.0, (keyword_hits / max(1, sampled)) * 3.0)
+
+    base = (0.55 * useful_density
+            + 0.30 * recency
+            + 0.15 * keyword_bonus)
+
+    # Penalties
+    dup_penalty     = min(1.0, duplicate_ratio)
     unnamed_penalty = max(0.0, (unnamed_ratio - 0.5) * 2.0)
-
-    base = (0.36 * density
-            + 0.16 * member_score
-            + 0.16 * recency
-            + 0.12 * diversity_score
-            + 0.20 * keyword_bonus)
-
-    # Average the three penalties, then cap the overall reduction at 60% so
-    # a really bad signal can't zero out an otherwise interesting channel.
-    penalty_factor = min(1.0, (trivia_penalty + dup_penalty + unnamed_penalty) / 2.0)
+    penalty_factor  = min(1.0, (dup_penalty + unnamed_penalty) / 2.0)
     return round(100.0 * base * (1.0 - 0.60 * penalty_factor), 2)
 
 
@@ -2693,6 +2718,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
         file_count, sampled or sample_limit, members or 0, diversity, days_since or 999,
         keyword_hits=keyword_hits, avg_size=avg_size,
         duplicate_ratio=duplicate_ratio, unnamed_ratio=unnamed_ratio,
+        breakdown=breakdown,
     )
 
     # Cache peer_id + access_hash so future API calls (deep_scan, join, …)
@@ -2760,6 +2786,7 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
                     days_since or 999,
                     keyword_hits=keyword_hits, avg_size=avg_size,
                     duplicate_ratio=duplicate_ratio, unnamed_ratio=unnamed_ratio,
+                    breakdown=breakdown,
                 )
                 _emit_event(
                     "stage3",
@@ -3746,6 +3773,7 @@ async def deep_scan_candidate(candidate_id: int):
             avg_size=avg_size,
             duplicate_ratio=duplicate_ratio,
             unnamed_ratio=unnamed_ratio,
+            breakdown=breakdown,
         )
 
         # Reject channels whose newest file is older than 1 year (deep-scan confirmed).
