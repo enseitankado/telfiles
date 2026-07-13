@@ -48,6 +48,7 @@ logger = logging.getLogger("main")
 _log_buffer: collections.deque = collections.deque(maxlen=200)
 _app_start = _time.time()
 _status_cache: dict = {}
+_status_lock = asyncio.Lock()
 _next_sync_at: float = 0.0
 _DEFAULT_SYNC_INTERVAL: int = 7200          # fallback if settings.json is missing/corrupt
 _MIN_SYNC_INTERVAL: int = 900               # 15 minutes — below this floodwait is realistic
@@ -2090,46 +2091,60 @@ async def get_version():
 
 @app.get("/api/status")
 async def get_status():
+    def _patch_live(c):
+        c["sync"] = {**sync_status, "next_sync_at": _next_sync_at}
+        c["logs"] = list(_log_buffer)
+        c["system"]["uptime"] = _time.time() - _app_start
+        return c
+
     now = _time.time()
     cached = _status_cache.get("data")
-    if cached and now - _status_cache.get("ts", 0) < 2.0:
-        # Always return fresh sync + logs on top of cached DB data
-        cached["sync"] = {**sync_status, "next_sync_at": _next_sync_at}
-        cached["logs"] = list(_log_buffer)
-        cached["system"]["uptime"] = now - _app_start
-        return cached
+    if cached and now - _status_cache.get("ts", 0) < 15.0:
+        return _patch_live(cached)
 
-    status_stats = await database.get_status_stats()
-    base_stats   = await database.get_stats()
+    # If another coroutine is already computing, return stale cache to avoid pileup
+    if _status_lock.locked():
+        if cached:
+            return _patch_live(cached)
 
-    result = {
-        "files": {
-            "total":          base_stats["total_files"],
-            "total_size":     base_stats["total_size"],
-            "downloaded":     base_stats["downloaded"],
-            "downloaded_size": base_stats["downloaded_size"],
-            "by_type":        status_stats["by_type"],
-            "recent_24h":     status_stats["recent_24h"],
-            "recent_7d":      status_stats["recent_7d"],
-            "recent_30d":     status_stats["recent_30d"],
-        },
-        "links": {
-            "total":       base_stats["total_links"],
-            "by_platform": status_stats["by_platform"],
-        },
-        "groups":  status_stats["groups"],
-        "db": {
-            "tables":      status_stats["pg_tables"],
-            "size_pretty": status_stats["pg_db_size_pretty"],
-            "size_bytes":  status_stats["pg_db_size"],
-        },
-        "sync":   {**sync_status, "next_sync_at": _next_sync_at},
-        "system": _read_sys_info(),
-        "logs":   list(_log_buffer),
-    }
-    _status_cache["data"] = result
-    _status_cache["ts"]   = now
-    return result
+    async with _status_lock:
+        # Re-check: another waiter may have just filled the cache
+        now = _time.time()
+        cached = _status_cache.get("data")
+        if cached and now - _status_cache.get("ts", 0) < 15.0:
+            return _patch_live(cached)
+
+        status_stats = await database.get_status_stats()
+        base_stats   = await database.get_stats()
+
+        result = {
+            "files": {
+                "total":          base_stats["total_files"],
+                "total_size":     base_stats["total_size"],
+                "downloaded":     base_stats["downloaded"],
+                "downloaded_size": base_stats["downloaded_size"],
+                "by_type":        status_stats["by_type"],
+                "recent_24h":     status_stats["recent_24h"],
+                "recent_7d":      status_stats["recent_7d"],
+                "recent_30d":     status_stats["recent_30d"],
+            },
+            "links": {
+                "total":       base_stats["total_links"],
+                "by_platform": status_stats["by_platform"],
+            },
+            "groups":  status_stats["groups"],
+            "db": {
+                "tables":      status_stats["pg_tables"],
+                "size_pretty": status_stats["pg_db_size_pretty"],
+                "size_bytes":  status_stats["pg_db_size"],
+            },
+            "sync":   {**sync_status, "next_sync_at": _next_sync_at},
+            "system": _read_sys_info(),
+            "logs":   list(_log_buffer),
+        }
+        _status_cache["data"] = result
+        _status_cache["ts"]   = _time.time()
+        return result
 
 
 # ── Watch terms & notifications ───────────────────────────────────────────────

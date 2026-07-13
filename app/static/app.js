@@ -1161,7 +1161,10 @@ function renderChannelsTable() {
       if (_chState(g) !== stFlt) return false;
     } else if (S.showHidden) { if (!g.hidden) return false; }
       else if (S.showExcluded) { if (!g.excluded) return false; }
-      else                    { if (g.hidden || g.excluded) return false; }
+      // Varsayılan: gizli/hariç kanalları gizle. Ama aktif ad/username araması varsa
+      // (kullanıcı belirli bir kanalı arıyor) bunları da dahil et — arama görünürlük
+      // filtresini geçersiz kılar; eşleşen gizli kanallar gizli stiliyle listelenir.
+      else if (!(qSearch || qName || qUser)) { if (g.hidden || g.excluded) return false; }
     const nm = (g.display_name || g.name || '').toLowerCase();
     const un = (g.username || '').toLowerCase();
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
@@ -1942,7 +1945,7 @@ function switchTab(tab) {
 // ── Status tab ────────────────────────────────────────────────────────────────
 function startStatusPoll() {
   loadStatus();
-  _statusInterval = setInterval(loadStatus, 500);
+  _statusInterval = setInterval(loadStatus, 10000);
 }
 
 function stopStatusPoll() {
@@ -1965,15 +1968,15 @@ async function _fetchGroupsForStatus() {
 let _lastStatusData = null;
 
 async function loadStatus() {
+  const el = document.getElementById('status-panel');
+  const panelVisible = el && el.style.display !== 'none';
+  const syncModal = document.getElementById('sync-status-overlay');
+  const modalOpen = syncModal && syncModal.classList.contains('open');
+  if (!panelVisible && !modalOpen) return;
+
   try {
     const d = await api('/api/status');
     _lastStatusData = d;
-    const el = document.getElementById('status-panel');
-    const panelVisible = el && el.style.display !== 'none';
-    const syncModal = document.getElementById('sync-status-overlay');
-    const modalOpen = syncModal && syncModal.classList.contains('open');
-
-    if (!panelVisible && !modalOpen) return;
 
     const groups = await _fetchGroupsForStatus();
 

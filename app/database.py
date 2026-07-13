@@ -77,6 +77,8 @@ CREATE INDEX IF NOT EXISTS idx_files_size      ON files (file_size DESC);
 CREATE INDEX IF NOT EXISTS idx_files_grp_date  ON files (group_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_files_name_size ON files (file_name, file_size);
 CREATE INDEX IF NOT EXISTS idx_files_ext_date  ON files (file_ext, date DESC);
+CREATE INDEX IF NOT EXISTS idx_files_synced_at ON files (synced_at DESC) WHERE synced_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_files_downloaded ON files (file_size) WHERE local_path IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_links_plat_date ON links (platform, date DESC, group_id);
 CREATE INDEX IF NOT EXISTS idx_links_grp_date  ON links (group_id, date DESC);
 
