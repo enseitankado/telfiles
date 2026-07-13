@@ -1145,7 +1145,8 @@ function renderChannelsTable() {
   const tbody = document.getElementById('channels-tbody');
   if (!tbody) return;
 
-  const _normQ = s => s.replace(/[''']\w+$/, '').trim().toLowerCase();
+  const _lc    = s => s.normalize('NFC').toLocaleLowerCase('tr').replace(/ı/g, 'i');
+  const _normQ = s => _lc(s.replace(/[''']\w+$/, '').trim());
   const qSearch  = _normQ((document.getElementById('ch-search')?.value || '').replace(/^@+/, ''));
   const qName    = _normQ(document.getElementById('ch-flt-name')?.value || '');
   const qUser    = _normQ((document.getElementById('ch-flt-user')?.value || '').replace(/^@+/, ''));
@@ -1166,8 +1167,8 @@ function renderChannelsTable() {
         else if (S.showExcluded) { if (!g.excluded)  return false; }
         else                     { if (g.hidden || g.excluded) return false; }
     }
-    const nm = plainName(g.display_name || g.name || '').toLowerCase();
-    const un = (g.username || '').toLowerCase();
+    const nm = _lc(plainName(g.display_name || g.name || ''));
+    const un = _lc(g.username || '');
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
     if (qName   && !nm.includes(qName)   && !un.includes(qName))  return false;
     if (qUser   && !un.includes(qUser)   && !nm.includes(qUser))  return false;
@@ -2394,6 +2395,152 @@ function stSync(d) {
     <div class="kv-row"><span class="kv-key">${esc(t("status.newLinksSession"))}</span><span class="kv-val">${s.new_links||0}</span></div>
     ${s.error?`<div style="font-size:.73rem;color:#dc2626;margin-top:8px;word-break:break-word">⚠ ${esc(s.error)}</div>`:''}
   </div>`;
+}
+
+// ── Dedike Log Penceresi (gelişmiş) ───────────────────────────────────────────
+let _lvLogs = [];
+let _lvLevel = 'all';
+let _lvAutoscroll = true;
+let _lvTimer = null;
+let _lvClearTs = 0;
+
+function _lvNorm(level) {
+  const L = String(level || '').toUpperCase();
+  if (L === 'ERROR' || L === 'CRITICAL' || L === 'FATAL') return 'error';
+  if (L === 'WARNING' || L === 'WARN') return 'warn';
+  return 'info';
+}
+
+function openLogViewer() {
+  const ov = document.getElementById('logviewer-overlay');
+  if (!ov) return;
+  ov.classList.add('open');
+  _lvAutoscroll = true;
+  document.getElementById('lv-autoscroll-btn')?.classList.add('active');
+  document.getElementById('lv-live')?.classList.remove('paused');
+  const body = document.getElementById('lv-body');
+  if (body) body.onscroll = () => {
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    if (!nearBottom && _lvAutoscroll) {
+      _lvAutoscroll = false;
+      document.getElementById('lv-autoscroll-btn')?.classList.remove('active');
+      document.getElementById('lv-live')?.classList.add('paused');
+    }
+  };
+  lvFetch(true);
+  if (_lvTimer) clearInterval(_lvTimer);
+  _lvTimer = setInterval(() => lvFetch(false), 2000);
+  document.addEventListener('keydown', _lvEsc);
+}
+
+function closeLogViewer() {
+  document.getElementById('logviewer-overlay')?.classList.remove('open');
+  if (_lvTimer) { clearInterval(_lvTimer); _lvTimer = null; }
+  document.removeEventListener('keydown', _lvEsc);
+}
+
+function _lvEsc(e) { if (e.key === 'Escape') closeLogViewer(); }
+function lvOverlayClick(e) { if (e.target.id === 'logviewer-overlay') closeLogViewer(); }
+
+async function lvFetch(force) {
+  try {
+    const d = await api('/api/logs');
+    _lvLogs = d.logs || [];
+  } catch (e) { if (force) _lvLogs = []; }
+  // Kaynak (logger) dropdown'ı — yalnızca liste değişince yeniden kur (açık
+  // dropdown'ı ve seçimi bozmamak için).
+  const sel = document.getElementById('lv-source');
+  if (sel) {
+    const names = [...new Set(_lvLogs.map(l => l.name).filter(Boolean))].sort();
+    const sig = names.join(',');
+    if (sel.dataset.sig !== sig) {
+      const cur = sel.value;
+      sel.innerHTML = `<option value="">${esc(t('logs.allSources') || 'Tüm kaynaklar')}</option>`
+        + names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+      sel.value = cur;
+      sel.dataset.sig = sig;
+    }
+  }
+  lvRender();
+}
+
+function lvRender() {
+  const body = document.getElementById('lv-body');
+  const emptyEl = document.getElementById('lv-empty');
+  if (!body) return;
+  const src  = document.getElementById('lv-source')?.value || '';
+  const q    = (document.getElementById('lv-search')?.value || '').toLowerCase().trim();
+  const wrap = document.getElementById('lv-wrapchk')?.checked;
+  body.classList.toggle('nowrap', !wrap);
+
+  const pool = _lvLogs.filter(l => l.ts > _lvClearTs);
+  const cnt = { all: 0, info: 0, warn: 0, error: 0 };
+  pool.forEach(l => { const n = _lvNorm(l.level); cnt.all++; cnt[n]++; });
+  const setN = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setN('lvn-all', cnt.all); setN('lvn-info', cnt.info); setN('lvn-warn', cnt.warn); setN('lvn-error', cnt.error);
+
+  let hlRe = null;
+  if (q) { try { hlRe = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'); } catch (e) {} }
+
+  const rows = [];
+  for (const l of pool) {
+    const nl = _lvNorm(l.level);
+    if (_lvLevel !== 'all' && nl !== _lvLevel) continue;
+    if (src && l.name !== src) continue;
+    let msg = l.msg || '';
+    if (l.name && msg.startsWith(l.name + ': ')) msg = msg.slice(l.name.length + 2);
+    if (q && !(msg + ' ' + (l.name || '')).toLowerCase().includes(q)) continue;
+    const dt = new Date(l.ts * 1000);
+    const badge = nl === 'error' ? '<span class="lv-badge lv-badge-error">ERR</span>'
+                : nl === 'warn'  ? '<span class="lv-badge lv-badge-warn">WARN</span>'
+                :                  '<span class="lv-badge lv-badge-info">INFO</span>';
+    let msgHtml = esc(msg);
+    if (hlRe) msgHtml = msgHtml.replace(hlRe, '<span class="lv-hl">$1</span>');
+    rows.push(`<div class="lv-row lv-${nl}" title="${esc(dt.toLocaleString())}">`
+      + `<span class="lv-ts">${esc(dt.toLocaleTimeString())}</span>${badge}`
+      + `<span class="lv-srcb">${esc(l.name || '')}</span>`
+      + `<span class="lv-msg">${msgHtml}</span></div>`);
+  }
+  body.innerHTML = rows.join('');
+  if (emptyEl) emptyEl.style.display = rows.length ? 'none' : '';
+  setN('lv-count', `${rows.length} / ${cnt.all}`);
+  if (_lvAutoscroll) body.scrollTop = body.scrollHeight;
+}
+
+function lvSetLevel(l) {
+  _lvLevel = l;
+  document.querySelectorAll('#logviewer-overlay .lv-lvl').forEach(b => b.classList.toggle('active', b.dataset.lvl === l));
+  lvRender();
+}
+
+function lvToggleAutoscroll() {
+  _lvAutoscroll = !_lvAutoscroll;
+  document.getElementById('lv-autoscroll-btn')?.classList.toggle('active', _lvAutoscroll);
+  document.getElementById('lv-live')?.classList.toggle('paused', !_lvAutoscroll);
+  if (_lvAutoscroll) { const b = document.getElementById('lv-body'); if (b) b.scrollTop = b.scrollHeight; }
+}
+
+function lvClear() { _lvClearTs = Date.now() / 1000; lvRender(); }
+
+function _lvVisibleText() {
+  return [...document.querySelectorAll('#lv-body .lv-row')].map(r =>
+    `[${r.querySelector('.lv-ts')?.textContent || ''}] `
+    + `${(r.querySelector('.lv-badge')?.textContent || '').padEnd(4)} `
+    + `${r.querySelector('.lv-srcb')?.textContent || ''}: `
+    + `${r.querySelector('.lv-msg')?.textContent || ''}`).join('\n');
+}
+
+async function lvCopy() {
+  try { await navigator.clipboard.writeText(_lvVisibleText()); showToast(t('logs.copied') || 'Loglar kopyalandı', 1500); } catch (e) {}
+}
+
+function lvDownload() {
+  const blob = new Blob([_lvVisibleText()], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'telfiles-logs-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function stLogs(d) {

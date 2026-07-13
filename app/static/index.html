@@ -741,6 +741,9 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 .hf-help::after{content:attr(data-help);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e293b;color:#f1f5f9;padding:8px 11px;border-radius:7px;font-size:.74rem;font-weight:400;white-space:normal;width:max-content;max-width:300px;line-height:1.45;box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .12s;z-index:300;text-align:left;font-style:normal;letter-spacing:0}
 .hf-help::before{content:'';position:absolute;bottom:calc(100% + 1px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#1e293b;opacity:0;pointer-events:none;transition:opacity .12s;z-index:300}
 .hf-help:hover::after,.hf-help:hover::before{opacity:1}
+/* Sekmenin üst kenarına yakın "?"ler için tooltip'i AŞAĞI aç (üstte kesilmesin) */
+.hf-help.hf-below::after{bottom:auto;top:calc(100% + 6px)}
+.hf-help.hf-below::before{bottom:auto;top:calc(100% + 1px);border-top-color:transparent;border-bottom-color:#1e293b}
 /* Edge-clip protection: rightmost rows shift tooltip leftward */
 .hunter-grid > .hunter-row:nth-child(3n) .hf-help::after{left:auto;right:0;transform:none}
 .hunter-grid > .hunter-row:nth-child(3n) .hf-help::before{left:auto;right:7px;transform:none}
@@ -1454,6 +1457,49 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 .act-legend{display:flex;align-items:center;gap:6px;font-size:.65rem;color:var(--text-4);margin-top:6px}
 .act-leg-bar{height:6px;border-radius:3px;background:linear-gradient(to right,var(--bg-3),var(--accent));flex:1;max-width:100px}
 .log-wrap{font-family:'Cascadia Code','JetBrains Mono',monospace;font-size:.71rem;line-height:1.7;max-height:220px;overflow-y:auto;background:var(--bg-3);border-radius:6px;padding:6px 10px}
+/* ── Log Viewer (dedike log penceresi) ── */
+#logviewer-overlay.lv-overlay{position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:24px}
+#logviewer-overlay.lv-overlay.open{display:flex}
+.lv-modal{display:flex;flex-direction:column;width:min(1200px,94vw);height:88vh;background:var(--bg-2);border:1px solid var(--border-2);border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.45);overflow:hidden}
+.lv-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border-2);background:var(--bg-3)}
+.lv-title{display:flex;align-items:center;gap:8px;font-size:.95rem;font-weight:600;color:var(--text-1)}
+.lv-live{width:9px;height:9px;border-radius:50%;background:#22c55e;animation:lvpulse 1.8s infinite;flex-shrink:0}
+.lv-live.paused{background:var(--text-4);animation:none}
+@keyframes lvpulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.lv-count{font-size:.78rem;color:var(--text-4);font-weight:400}
+.lv-hactions{display:flex;align-items:center;gap:4px}
+.lv-ibtn,.lv-close{background:var(--bg-2);border:1px solid var(--border-2);border-radius:6px;color:var(--text-2);cursor:pointer;font-size:.9rem;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center}
+.lv-ibtn:hover,.lv-close:hover{background:var(--bg-hover);color:var(--text-1)}
+.lv-ibtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.lv-close{margin-left:6px;font-size:1rem}
+.lv-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 16px;border-bottom:1px solid var(--border-2);background:var(--bg-2)}
+.lv-levels{display:inline-flex;gap:4px}
+.lv-lvl{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;font-size:.78rem;border:1px solid var(--border-2);border-radius:99px;background:var(--bg-3);color:var(--text-2);cursor:pointer}
+.lv-lvl .lv-n{font-size:.7rem;background:var(--bg-2);padding:0 6px;border-radius:99px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.lv-lvl.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.lv-lvl.active .lv-n{background:rgba(255,255,255,.25);color:#fff}
+.lv-b-error.active{background:#dc2626;border-color:#dc2626}
+.lv-b-warn.active{background:#d97706;border-color:#d97706}
+.lv-b-info.active{background:#2563eb;border-color:#2563eb}
+.lv-src{padding:5px 8px;font-size:.78rem;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);max-width:190px}
+.lv-search{flex:1;min-width:140px;padding:5px 10px;font-size:.8rem;border:1px solid var(--input-border);border-radius:6px;background:var(--bg-2);color:var(--text-1);outline:none}
+.lv-search:focus{border-color:var(--accent)}
+.lv-wrap{display:inline-flex;align-items:center;gap:5px;font-size:.76rem;color:var(--text-3);cursor:pointer;white-space:nowrap;user-select:none}
+.lv-body{flex:1;overflow:auto;background:var(--bg-1);font-family:'Cascadia Code','JetBrains Mono',ui-monospace,monospace;font-size:.76rem;line-height:1.55;padding:6px 0}
+.lv-body.nowrap .lv-row{white-space:nowrap}
+.lv-row{display:flex;gap:8px;padding:2px 16px;border-left:3px solid transparent;white-space:pre-wrap;word-break:break-word}
+.lv-row:hover{background:var(--bg-hover)}
+.lv-row.lv-error{border-left-color:#ef4444;background:rgba(239,68,68,.07)}
+.lv-row.lv-warn{border-left-color:#f59e0b;background:rgba(245,158,11,.05)}
+.lv-ts{color:var(--text-4);flex-shrink:0;font-variant-numeric:tabular-nums}
+.lv-badge{flex-shrink:0;font-size:.62rem;font-weight:700;padding:0 5px;border-radius:4px;line-height:16px;height:16px;text-transform:uppercase;align-self:center;letter-spacing:.03em}
+.lv-badge-error{background:#ef4444;color:#fff}
+.lv-badge-warn{background:#f59e0b;color:#1a1a1a}
+.lv-badge-info{background:var(--bg-3);color:var(--text-3);font-weight:600}
+.lv-srcb{color:var(--accent);flex-shrink:0;min-width:60px;opacity:.85}
+.lv-msg{color:var(--text-1);flex:1;min-width:0}
+.lv-hl{background:#fde047;color:#111;border-radius:2px}
+.lv-empty{padding:36px;text-align:center;color:var(--text-4);font-size:.85rem}
 .log-entry{border-bottom:1px solid var(--border-3);white-space:pre-wrap;word-break:break-all}
 .log-entry:last-child{border-bottom:none}
 .log-INFO{color:var(--text-2)}.log-WARNING{color:#d97706;font-weight:600}.log-ERROR{color:#dc2626;font-weight:600}.log-DEBUG{color:var(--text-4)}
@@ -1561,6 +1607,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
       <button class="tab-btn"        id="tab-hunter"    onclick="switchTab('hunter')"><span class="tab-ico">📡</span><span data-i18n="tab.hunter">Kanal Avcısı</span></button>
     </div>
     <div id="top-actions">
+      <button class="tab-icon-btn" id="tab-logs"     onclick="openLogViewer()"       title="Loglar"  data-i18n-title="tab.logs">📜</button>
       <button class="tab-icon-btn" id="tab-status"   onclick="switchTab('status')"   title="Durum"   data-i18n-title="tab.status">📊</button>
       <button class="tab-icon-btn" id="tab-settings" onclick="switchTab('settings')" title="Ayarlar" data-i18n-title="tab.settings">⚙</button>
     </div>
@@ -1706,7 +1753,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <button class="sync-preset" data-secs="86400" data-i18n="settings.sync.preset.24h">24 saat</button>
           </div>
           <div class="sync-hint" data-i18n-html="settings.sync.hint">
-            <b>Önerim:</b> 1–2 saat. Realtime handler yeni mesajları zaten anında yakalıyor; periyodik tarama yalnızca backfill güvencesi. 30 dk altına inmek floodwait riskini artırır, gözle görülür kazanım sağlamaz.
+            Bu aralık, kanallarınızın <b>ne sıklıkla baştan taranacağını</b> belirler. Uygulama yeni mesajları zaten <b>anında</b> yakalar; bu periyodik tarama, yalnızca uygulama kapalıyken ya da bağlantı koptuğunda <b>kaçan mesajları sonradan toplayan bir güvence ağıdır</b>. <b>Önerilen: 1–2 saat.</b> Uygulama sürekli açıksa 2–6 saat de yeterli. 30 dk'nın altına inmek, kayda değer bir fayda sağlamadan Telegram'ın geçici engelleme (FloodWait) riskini artırır.
           </div>
         </div>
 
@@ -1866,7 +1913,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
               <div style="flex:1;min-width:0">
                 <h3 data-i18n="bw.title">Bant Genişliği Zamanlaması</h3>
-                <p class="creds-hint" data-i18n="bw.hint">Açıkken indirmeler yalnızca aşağıda tanımladığın zaman pencerelerinde başlar; pencere dışında talep edilenler kuyruğa alınır ve sıradaki pencere açılınca otomatik başlar. Kapalıyken indirmeler her zaman anında başlar.</p>
+                <p class="creds-hint" data-i18n="bw.hint">İndirmeleri belirli saatlere planlayarak internet hattını sürekli meşgul etmesini önler. <b>Açıkken:</b> indirmeler yalnızca aşağıda tanımladığın zaman pencerelerinde başlar (ör. sadece geceleri); pencere dışında istenenler kuyruğa alınır ve sıradaki pencere açılınca otomatik başlar. <b>Kapalıyken:</b> indirmeler her zaman anında başlar. Büyük dosyaları yoğun saatler yerine boş saatlere (gece / iş saati dışı) kaydırmak için kullanılır.</p>
               </div>
               <label class="td-toggle" style="flex-shrink:0">
                 <input type="checkbox" id="bw-enabled" onchange="bwToggleEnabled(this.checked)">
@@ -1905,6 +1952,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
                 </div>
               </div>
             </div>
+            <p class="creds-hint" data-i18n="bw.rulesHint" style="margin:0 0 10px">Bant Genişliği Zamanlaması açıkken indirmelerin hangi gün ve saatlerde çalışacağını bu kurallar belirler. Birden fazla pencere ekleyebilirsin (ör. hafta içi geceleri + hafta sonu tüm gün); herhangi bir kuralın penceresi açıkken indirmeler başlar. Hiç kural yoksa pencere hiç açılmaz.</p>
             <div id="bw-rules-list"><div style="font-size:.78rem;color:var(--text-4);padding:4px 0" data-i18n="bw.noRules">Henüz kural eklenmedi.</div></div>
           </div>
 
@@ -1963,7 +2011,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <p class="creds-hint" data-i18n="notify.pushHint">Aktif olduğunda, izlenen anahtar kelimelere uyan her yeni dosya kendi Telegram hesabınızın <b>Kaydedilenler (Saved Messages)</b> sohbetine düşer. Bot kullanılmaz; mevcut Telethon oturumunuz üzerinden kendi hesabınız size mesaj atar.</p>
             <label class="notify-push-row">
               <span class="notify-push-label" data-i18n="notify.pushToggle">Telegram bildirimi gönder</span>
-              <span class="hf-help" data-i18n-help="notify.pushHelp">?</span>
+              <span class="hf-help hf-below" data-i18n-help="notify.pushHelp">?</span>
               <span class="tf-toggle">
                 <input type="checkbox" id="notify-tg-push" onchange="saveNotifyPushToggle()">
                 <span class="tf-toggle-slider"></span>
@@ -2677,8 +2725,39 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   }
 })();
 </script>
-<script src="i18n.js?v=1783234800"></script>
-<script src="app.js?v=1783234800"></script>
+
+<!-- ── Log Viewer (dedicated, gelişmiş) ── -->
+<div id="logviewer-overlay" class="lv-overlay" onclick="lvOverlayClick(event)">
+  <div class="lv-modal">
+    <div class="lv-header">
+      <div class="lv-title"><span class="lv-live" id="lv-live"></span><span data-i18n="logs.title">Sistem Logları</span><span id="lv-count" class="lv-count"></span></div>
+      <div class="lv-hactions">
+        <button class="lv-ibtn active" id="lv-autoscroll-btn" onclick="lvToggleAutoscroll()" title="Otomatik kaydır (tail)" data-i18n-title="logs.autoscroll">⤓</button>
+        <button class="lv-ibtn" onclick="lvCopy()" title="Görüneni kopyala" data-i18n-title="logs.copy">⧉</button>
+        <button class="lv-ibtn" onclick="lvDownload()" title="Görüneni indir (.txt)" data-i18n-title="logs.download">⭳</button>
+        <button class="lv-ibtn" onclick="lvClear()" title="Görünümü temizle" data-i18n-title="logs.clear">🧹</button>
+        <button class="lv-ibtn" onclick="lvFetch(true)" title="Yenile" data-i18n-title="logs.refresh">↻</button>
+        <button class="lv-close" onclick="closeLogViewer()">✕</button>
+      </div>
+    </div>
+    <div class="lv-toolbar">
+      <div class="lv-levels">
+        <button class="lv-lvl active" data-lvl="all"   onclick="lvSetLevel('all')"><span data-i18n="logs.lvlAll">Tümü</span> <span class="lv-n" id="lvn-all">0</span></button>
+        <button class="lv-lvl lv-b-error" data-lvl="error" onclick="lvSetLevel('error')"><span data-i18n="logs.lvlError">Hata</span> <span class="lv-n" id="lvn-error">0</span></button>
+        <button class="lv-lvl lv-b-warn"  data-lvl="warn"  onclick="lvSetLevel('warn')"><span data-i18n="logs.lvlWarn">Uyarı</span> <span class="lv-n" id="lvn-warn">0</span></button>
+        <button class="lv-lvl lv-b-info"  data-lvl="info"  onclick="lvSetLevel('info')"><span data-i18n="logs.lvlInfo">Bilgi</span> <span class="lv-n" id="lvn-info">0</span></button>
+      </div>
+      <select id="lv-source" class="lv-src" onchange="lvRender()"><option value="" data-i18n="logs.allSources">Tüm kaynaklar</option></select>
+      <input id="lv-search" class="lv-search" type="search" placeholder="Ara…" data-i18n-ph="logs.searchPh" oninput="lvRender()">
+      <label class="lv-wrap"><input type="checkbox" id="lv-wrapchk" onchange="lvRender()"><span data-i18n="logs.wrap">Satır kaydır</span></label>
+    </div>
+    <div class="lv-body" id="lv-body"></div>
+    <div class="lv-empty" id="lv-empty" style="display:none" data-i18n="logs.empty">Gösterilecek log yok.</div>
+  </div>
+</div>
+
+<script src="i18n.js?v=1783935115"></script>
+<script src="app.js?v=1783935115"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
