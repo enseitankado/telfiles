@@ -1155,17 +1155,17 @@ function renderChannelsTable() {
   const stFlt    = document.getElementById('ch-flt-state')?.value || '';
   const minSizeBytes = isNaN(minSizeMB) ? null : Math.round(minSizeMB * 1048576);
 
+  const hasSearch = !!(qSearch || qName || qUser);
   const visible = _groups.filter(g => {
-    // "Gizliler" toggle handles hidden visibility; explicit state filter
-    // (Tümü/Takipte/Takip Edilmiyor/Gizli) overrides if set.
-    if (stFlt) {
-      if (_chState(g) !== stFlt) return false;
-    } else if (S.showHidden) { if (!g.hidden) return false; }
-      else if (S.showExcluded) { if (!g.excluded) return false; }
-      // Varsayılan: gizli/hariç kanalları gizle. Ama aktif ad/username araması varsa
-      // (kullanıcı belirli bir kanalı arıyor) bunları da dahil et — arama görünürlük
-      // filtresini geçersiz kılar; eşleşen gizli kanallar gizli stiliyle listelenir.
-      else if (!(qSearch || qName || qUser)) { if (g.hidden || g.excluded) return false; }
+    // Active search overrides all visibility filters so any channel can be found.
+    // Without search: respect the state dropdown + showHidden/showExcluded toggles.
+    if (!hasSearch) {
+      if (stFlt) {
+        if (_chState(g) !== stFlt) return false;
+      } else if (S.showHidden)   { if (!g.hidden)   return false; }
+        else if (S.showExcluded) { if (!g.excluded)  return false; }
+        else                     { if (g.hidden || g.excluded) return false; }
+    }
     const nm = plainName(g.display_name || g.name || '').toLowerCase();
     const un = (g.username || '').toLowerCase();
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
