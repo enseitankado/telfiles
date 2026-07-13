@@ -938,7 +938,7 @@ function renderSidebar() {
     } else {
       if (g.hidden) return false;
     }
-    if (q && !(g.display_name||g.name).toLowerCase().includes(q)) return false;
+    if (q && !plainName(g.display_name||g.name||'').toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -1166,11 +1166,11 @@ function renderChannelsTable() {
       // (kullanıcı belirli bir kanalı arıyor) bunları da dahil et — arama görünürlük
       // filtresini geçersiz kılar; eşleşen gizli kanallar gizli stiliyle listelenir.
       else if (!(qSearch || qName || qUser)) { if (g.hidden || g.excluded) return false; }
-    const nm = (g.display_name || g.name || '').toLowerCase();
+    const nm = plainName(g.display_name || g.name || '').toLowerCase();
     const un = (g.username || '').toLowerCase();
     if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
-    if (qName   && !nm.includes(qName))                            return false;
-    if (qUser   && !un.includes(qUser) && !nm.includes(qUser))    return false;
+    if (qName   && !nm.includes(qName)   && !un.includes(qName))  return false;
+    if (qUser   && !un.includes(qUser)   && !nm.includes(qUser))  return false;
     if (!isNaN(minMembers)  && (g.member_count || 0) < minMembers) return false;
     if (!isNaN(minFiles)    && (g.file_count   || 0) < minFiles)   return false;
     if (minSizeBytes != null && (g.total_size  || 0) < minSizeBytes) return false;
