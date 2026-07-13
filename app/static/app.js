@@ -928,7 +928,7 @@ function setGroupSort(by) {
 function renderSidebar() {
   // Legacy settings→groups sidebar. After the Channels tab took over, the
   // markup may not be in the DOM anymore — bail out cleanly when missing.
-  const q  = (document.getElementById('group-filter')?.value||'').toLowerCase();
+  const q  = (document.getElementById('group-filter')?.value||'').replace(/[''']\w+$/, '').trim().toLowerCase();
   const el = document.getElementById('group-list');
   if (!el) { renderChannelsTable(); return; }
 
@@ -1145,9 +1145,10 @@ function renderChannelsTable() {
   const tbody = document.getElementById('channels-tbody');
   if (!tbody) return;
 
-  const qSearch  = (document.getElementById('ch-search')?.value || '').replace(/^@+/, '').toLowerCase();
-  const qName    = (document.getElementById('ch-flt-name')?.value || '').toLowerCase();
-  const qUser    = (document.getElementById('ch-flt-user')?.value || '').replace(/^@+/, '').toLowerCase();
+  const _normQ = s => s.replace(/[''']\w+$/, '').trim().toLowerCase();
+  const qSearch  = _normQ((document.getElementById('ch-search')?.value || '').replace(/^@+/, ''));
+  const qName    = _normQ(document.getElementById('ch-flt-name')?.value || '');
+  const qUser    = _normQ((document.getElementById('ch-flt-user')?.value || '').replace(/^@+/, ''));
   const minFiles = parseInt(document.getElementById('ch-flt-min-files')?.value || '', 10);
   const minMembers = parseInt(document.getElementById('ch-flt-min-members')?.value || '', 10);
   const minSizeMB = parseFloat(document.getElementById('ch-flt-min-size')?.value || '');
