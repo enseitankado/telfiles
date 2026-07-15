@@ -928,7 +928,7 @@ function setGroupSort(by) {
 function renderSidebar() {
   // Legacy settings→groups sidebar. After the Channels tab took over, the
   // markup may not be in the DOM anymore — bail out cleanly when missing.
-  const q  = (document.getElementById('group-filter')?.value||'').replace(/[''']\w+$/, '').trim().toLowerCase();
+  const q  = searchFold((document.getElementById('group-filter')?.value||'').replace(/[''']\w+$/, '').trim());
   const el = document.getElementById('group-list');
   if (!el) { renderChannelsTable(); return; }
 
@@ -938,7 +938,9 @@ function renderSidebar() {
     } else {
       if (g.hidden) return false;
     }
-    if (q && !plainName(g.display_name||g.name||'').toLowerCase().includes(q)) return false;
+    if (q && !searchFold(g.display_name||'').includes(q)
+          && !searchFold(g.name||'').includes(q)
+          && !searchFold(g.username||'').includes(q)) return false;
     return true;
   });
 
@@ -1145,8 +1147,7 @@ function renderChannelsTable() {
   const tbody = document.getElementById('channels-tbody');
   if (!tbody) return;
 
-  const _lc    = s => s.normalize('NFC').toLocaleLowerCase('tr').replace(/ı/g, 'i');
-  const _normQ = s => _lc(s.replace(/[''']\w+$/, '').trim());
+  const _normQ = s => searchFold(s.replace(/[''']\w+$/, '').trim());
   const qSearch  = _normQ((document.getElementById('ch-search')?.value || '').replace(/^@+/, ''));
   const qName    = _normQ(document.getElementById('ch-flt-name')?.value || '');
   const qUser    = _normQ((document.getElementById('ch-flt-user')?.value || '').replace(/^@+/, ''));
@@ -1167,11 +1168,16 @@ function renderChannelsTable() {
         else if (S.showExcluded) { if (!g.excluded)  return false; }
         else                     { if (g.hidden || g.excluded) return false; }
     }
-    const nm = _lc(plainName(g.display_name || g.name || ''));
-    const un = _lc(g.username || '');
-    if (qSearch && !nm.includes(qSearch) && !un.includes(qSearch)) return false;
-    if (qName   && !nm.includes(qName)   && !un.includes(qName))  return false;
-    if (qUser   && !un.includes(qUser)   && !nm.includes(qUser))  return false;
+    // Match against the (possibly renamed) display name, the ORIGINAL
+    // Telegram name and the username — a localStorage rename override with
+    // exotic characters must never make a channel unfindable.
+    const nm  = searchFold(g.display_name || '');
+    const nm0 = searchFold(g.name || '');
+    const un  = searchFold(g.username || '');
+    const hit = q => nm.includes(q) || nm0.includes(q) || un.includes(q);
+    if (qSearch && !hit(qSearch)) return false;
+    if (qName   && !hit(qName))   return false;
+    if (qUser   && !hit(qUser))   return false;
     if (!isNaN(minMembers)  && (g.member_count || 0) < minMembers) return false;
     if (!isNaN(minFiles)    && (g.file_count   || 0) < minFiles)   return false;
     if (minSizeBytes != null && (g.total_size  || 0) < minSizeBytes) return false;
@@ -5247,6 +5253,23 @@ function plainName(s) {
     .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
     .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '')
     .replace(/[\u{2500}-\u{257F}\u{2580}-\u{259F}\u{25A0}-\u{25FF}\u{2700}-\u{27BF}]/gu, '')
+    .replace(/[​-‏‪-‮⁠-⁤︀-️]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Aggressive fold for substring search. Turkish I/İ/ı and any combining-mark
+// or invisible-character forms (e.g. a rename typed as "PRİCE" whose
+// lowercase becomes "i"+U+0307) all collapse to plain ASCII so the query and
+// the name can never disagree about what an "i" looks like.
+function searchFold(s) {
+  return String(s || '')
+    .replace(/İ/g, 'i').replace(/I/g, 'i').replace(/ı/g, 'i')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/\p{So}/gu, '')
     .replace(/[​-‏‪-‮⁠-⁤︀-️]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
