@@ -2756,11 +2756,13 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   </div>
 </div>
 
-<script src="i18n.js?v=1783935115"></script>
-<script src="app.js?v=1783935115"></script>
+<script src="i18n.js?v=1783935497"></script>
+<script src="app.js?v=1783935497"></script>
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+    .then(reg => reg.update().catch(() => {}))
+    .catch(() => {});
 }
 </script>
 </body>

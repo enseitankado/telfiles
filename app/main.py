@@ -562,6 +562,27 @@ class _UIAuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_UIAuthMiddleware)
 
 
+class _StaticNoCacheMiddleware(BaseHTTPMiddleware):
+    """Force revalidation for HTML/JS so browsers never serve stale UI code.
+
+    StaticFiles sends ETag/Last-Modified but no Cache-Control; browsers then
+    apply heuristic freshness and may serve app.js/index.html from HTTP cache
+    for days without asking the server. no-cache keeps caching (304s stay
+    cheap) but requires revalidation on every use.
+    """
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if not path.startswith("/api/") and (
+            path in ("/", "/sw.js") or path.endswith((".html", ".js"))
+        ):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
+app.add_middleware(_StaticNoCacheMiddleware)
+
+
 class _UILoginReq(BaseModel):
     password: str
     remember: bool = False

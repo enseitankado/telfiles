@@ -1,6 +1,6 @@
 // Cache name is bumped whenever the cache strategy or asset list changes so
 // previously-installed workers drop their stale entries on activate.
-const CACHE = 'telfiles-v2';
+const CACHE = 'telfiles-v3';
 const STATIC = ['/manifest.json', '/icon-192.png', '/icon-512.png'];
 // Frequently-changing assets — always go to network first, only fall back to
 // cache when offline. Prevents the "I refreshed and nothing updated" trap.
@@ -28,8 +28,10 @@ self.addEventListener('fetch', e => {
 
   if (NETWORK_FIRST.has(url.pathname)) {
     // Network-first: prefer the live copy, fall back to cache only on failure.
+    // cache:'no-cache' forces conditional revalidation against the server so
+    // the browser HTTP cache can never hand us a stale copy "successfully".
     e.respondWith(
-      fetch(e.request).then(res => {
+      fetch(e.request, { cache: 'no-cache' }).then(res => {
         if (res.ok) {
           caches.open(CACHE).then(c => c.put(e.request, res.clone()));
         }
