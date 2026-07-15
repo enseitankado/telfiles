@@ -1,5 +1,10 @@
 'use strict';
 
+// Build stamp — lets anyone verify in the console which UI build the browser
+// is actually executing (stale service-worker / HTTP-cache debugging).
+window.TF_BUILD = '1784110630';
+console.info('TelFiles UI build', window.TF_BUILD);
+
 let _stats = null;
 let _statusInterval = null;
 let _selectedFileId = null;
