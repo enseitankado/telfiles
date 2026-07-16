@@ -381,11 +381,13 @@ table{width:100%;border-collapse:collapse;font-size:.79rem}
 .trend-act-btn.primary:hover{background:var(--accent-h)}
 #trend-cards .trend-empty,#trend-cards .trend-loading{grid-column:1/-1;text-align:center;padding:50px 20px;color:var(--text-3);font-size:.85rem}
 .type-btn#trend-mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-thead{position:sticky;top:0;z-index:5}
-/* `border-collapse:collapse` (set on global `table{}`) breaks sticky-on-thead
-   in some browsers, so we make BOTH thead rows sticky at the cell level. The
-   header row sits at top:0 and the filter row stacks below it. Using `--th-h`
-   keeps the offset consistent across themes / font sizes. */
+/* Sticky headers are implemented at the CELL level only (rules below), never
+   on <thead> itself: `border-collapse:collapse` breaks sticky-on-thead in
+   some browsers, and combining thead-sticky WITH cell-sticky makes Firefox
+   ADD the two offsets — the filter row then slides down over the first data
+   row and hides it. The header row sits at top:0 and the filter row stacks
+   below it; `--th-h` keeps the offset consistent across themes/font sizes. */
+thead{z-index:5}
 :root{--th-h:32px}
 thead tr:first-child th{position:sticky;top:0;z-index:6;background:var(--bg-3);border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);padding:7px 10px;white-space:nowrap;text-align:left;font-weight:600;color:var(--text-2);user-select:none}
 thead tr.flt-row th{position:sticky;top:var(--th-h);z-index:5}
@@ -531,8 +533,13 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
    same filter-row chrome (.hg-flt-row analog). Only column widths differ. */
 #channels-table-wrap{flex:1;overflow:auto;background:var(--bg-2)}
 #channels-table{width:100%;border-collapse:collapse;table-layout:auto}
-#channels-table thead{position:sticky;top:0;z-index:5}
-#channels-table thead th{background:var(--bg-3);padding:7px 10px;font-weight:600;color:var(--text-2);text-align:left;border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);font-size:.79rem;white-space:nowrap;position:relative;user-select:none}
+#channels-table thead{z-index:5}
+/* NO `position:relative` here: this ID selector would override the global
+   cell-level sticky (thead tr:first-child th / tr.flt-row th) and the
+   flt-row's top:var(--th-h) would then shift the RELATIVE cells 32px down
+   over the first data row, hiding it. Cells inherit sticky from the global
+   rules instead. */
+#channels-table thead th{background:var(--bg-3);padding:7px 10px;font-weight:600;color:var(--text-2);text-align:left;border-bottom:1px solid var(--border-1);border-right:1px solid var(--border-2);font-size:.79rem;white-space:nowrap;user-select:none}
 #channels-table thead th:last-child{border-right:none}
 #channels-table tbody tr:hover{background:var(--bg-hover);cursor:pointer}
 #channels-table tbody tr.row-selected{background:var(--bg-selected)!important}
@@ -2756,8 +2763,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   </div>
 </div>
 
-<script src="i18n.js?v=1784110630"></script>
-<script src="app.js?v=1784110630"></script>
+<script src="i18n.js?v=1784183051"></script>
+<script src="app.js?v=1784183051"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
