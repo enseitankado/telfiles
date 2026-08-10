@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 - **Güvenli şema migrasyonları** — versiyonlu `schema_migrations` tablosu uygulanan her değişikliği takip eder; kırıcı değişiklikler (tip değişikliği, rename, silme) kendi transaction'larında çalışır; biri başarısız olursa uygulama başlamayı reddeder ve veri hiçbir zaman yarım bırakılmaz.
 - **PWA** — tarayıcıdan "Uygulamayı yükle" ile mobil veya masaüstüne kurulabilir; çevrimdışı temel UI destekli.
 - **Anonim telemetri** — opsiyonel, sadece kanal username + üye sayısı + dosya sayısı; mesaj/IP/kimlik yok. Tek tık kapatılır.
-- **5 dil** — Türkçe, English, Deutsch, Русский, 中文.
+- **5 dil** — 🇹🇷 Türkçe, 🇬🇧 English, 🇩🇪 Deutsch, 🇷🇺 Русский, 🇨🇳 中文.
 - **Tek `up -d`** — Docker Compose. Veriler host volume'unda; container'ı silseniz veriniz kalır.
 
 ---
@@ -72,7 +72,8 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 **Gereken:** Debian tabanlı Linux + [my.telegram.org](https://my.telegram.org) üzerinden alınmış `API_ID` & `API_HASH`.
 
 ```bash
-# 1) Tek satırlık kurulum
+# 1) Tek satırlık kurulum — API_ID/HASH gerekmez; kurulumdan sonra
+#    arabirimden (Ayarlar → Hesap) da girilebilir
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 
 # 2) Scripted (CI / hazır env)

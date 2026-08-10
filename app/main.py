@@ -45,10 +45,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-_log_buffer: collections.deque = collections.deque(maxlen=200)
+_log_buffer: collections.deque = collections.deque(maxlen=1000)
 _app_start = _time.time()
 _status_cache: dict = {}
 _status_lock = asyncio.Lock()
+# /api/stats ağır bir tam-tablo taraması (files + torrent_contents). Frontend her
+# Dosyalar-sekmesi yüklemesinde çağırdığı için cache'siz halde eşzamanlı kopyalar
+# DB'yi doldururdu. /api/status ile aynı cache+lock deseni pileup'ı önler.
+_stats_cache: dict = {}
+_stats_lock = asyncio.Lock()
 _next_sync_at: float = 0.0
 _DEFAULT_SYNC_INTERVAL: int = 7200          # fallback if settings.json is missing/corrupt
 _MIN_SYNC_INTERVAL: int = 900               # 15 minutes — below this floodwait is realistic
@@ -1987,7 +1992,22 @@ async def retry_dead_magnets_bulk():
 
 @app.get("/api/stats")
 async def get_stats():
-    return await database.get_stats()
+    now = _time.time()
+    cached = _stats_cache.get("data")
+    if cached and now - _stats_cache.get("ts", 0) < 30.0:
+        return cached
+    # Başka bir coroutine zaten hesaplıyorsa bayat cache ile dön → pileup yok.
+    if _stats_lock.locked() and cached:
+        return cached
+    async with _stats_lock:
+        now = _time.time()
+        cached = _stats_cache.get("data")
+        if cached and now - _stats_cache.get("ts", 0) < 30.0:
+            return cached
+        data = await database.get_stats()
+        _stats_cache["data"] = data
+        _stats_cache["ts"] = now
+        return data
 
 
 @app.get("/api/activity/heatmap")
@@ -2108,6 +2128,13 @@ async def get_version():
             f"{_GITHUB_REPO}/main/install.sh | bash"
         ),
     }
+
+
+@app.get("/api/logs")
+async def get_logs():
+    """Hafif log akışı — dedike Log penceresinin sık poll'lamasi için (ağır status
+    hesabı olmadan). Buffer son 1000 kaydı tutar."""
+    return {"logs": list(_log_buffer)}
 
 
 @app.get("/api/status")
@@ -2384,6 +2411,15 @@ async def hunter_cancel_run():
 async def hunter_skip_stage():
     ok = hunter.request_skip_stage()
     return {"ok": ok}
+
+
+@app.post("/api/hunter/backfill_blacklist_files")
+async def hunter_backfill_blacklist_files():
+    """One-shot: copy the preview file lists of every already-blacklisted
+    candidate into the main Files index so they become searchable there.
+    Newly blacklisted channels are migrated automatically at blacklist time."""
+    res = await database.backfill_blacklisted_candidate_files()
+    return {"ok": True, **res}
 
 
 @app.get("/api/hunter/candidates")

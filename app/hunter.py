@@ -24,6 +24,7 @@ import logging
 import re
 import tempfile
 import time
+import zlib
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -525,6 +526,10 @@ async def _preview_sample_files(client, entity, limit: int) -> Dict:
     last_at = None
     sampled = 0
     try:
+        from sync import _extract_platform_urls as _extract_plat_urls
+    except Exception:
+        _extract_plat_urls = lambda _m: []
+    try:
         async for msg in client.iter_messages(entity, limit=limit):
             sampled += 1
             if msg.date and (last_at is None or msg.date > last_at):
@@ -561,6 +566,17 @@ async def _preview_sample_files(client, entity, limit: int) -> Dict:
                     "date": msg.date.isoformat() if msg.date else None,
                     "message_id": msg.id,
                 })
+            else:
+                # Dosya eki yok → desteklenen dosya-paylaşım linki varsa "dosya" say.
+                for _plat, _u in (_extract_plat_urls(msg) or []):
+                    file_count += 1
+                    breakdown["link"] = breakdown.get("link", 0) + 1
+                    files.append({
+                        "name": f"{_plat}: {_u[:140]}",
+                        "size": 0, "ext": "link", "group": "link", "named": True,
+                        "date": msg.date.isoformat() if msg.date else None,
+                        "message_id": msg.id,
+                    })
     except FloodWaitError:
         raise
     except Exception as e:
@@ -1124,6 +1140,21 @@ def _build_search_queries(keywords: List[str], max_q: int = 30) -> List[str]:
         if push(f'site:t.me {kw} "new"'): return out
         if push(f'site:t.me {kw} {last_year} OR {year}'): return out
 
+    # Pattern G2: precise after:/before: operators. Google/Bing honour these as
+    # true date bounds (not just text), surfacing the freshest indexed pages —
+    # complements the softer year/month text markers above.
+    _cutoff = f"{last_year}-01-01"
+    for kw in keywords[:3]:
+        if push(f'site:t.me {kw} after:{_cutoff}'): return out
+
+    # Pattern I: content-category dorks — channels whose landing pages describe
+    # themselves with these words tend to be file/link-dense. Kept generic so
+    # they apply to any interest keyword (leaks/dumps often = large archives).
+    _CONTENT_CATS = ["database", "dump", "leaks", "breach", "mega", "collection"]
+    for kw in keywords[:3]:
+        for cat in _CONTENT_CATS[:4]:
+            if push(f'site:t.me "{cat}" {kw}'): return out
+
     # Pattern H: paste-site dorks — t.me links shared on popular paste platforms
     _PASTE_DORK_SITES = [
         "pastebin.com", "gist.github.com", "justpaste.it",
@@ -1299,6 +1330,76 @@ async def _stage2_telegaio(session, delay_ms):
     return await _crawl_directory(session, "telegaio", "https://telega.io/en/", delay_ms)
 
 
+async def _stage2_telegramdb(session, delay_ms):
+    """telegramdb.org — public directory of Telegram channels/groups indexed
+    by category. Plain directory crawl (aiohttp)."""
+    return await _crawl_directory(session, "telegramdb", "https://telegramdb.org/", delay_ms,
+                                    keywords=_DEFAULT_FILE_CATEGORIES[:6])
+
+
+async def _stage2_lyzem(session, keywords, delay_ms):
+    """Lyzem (lyzem.com) — a dedicated Telegram search engine. Unlike the
+    general engines we feed it RAW keywords (not site:t.me dorks) since it
+    already indexes only Telegram; results embed t.me/<username> links.
+    Routed through headless Chromium because the result list is JS-rendered."""
+    found: Set[str] = set()
+    kws = keywords or _DEFAULT_FILE_CATEGORIES[:6]
+    _ = await _pw_get("https://lyzem.com/")
+    await asyncio.sleep(delay_ms / 1000)
+    for kw in kws[:6]:
+        if _check_interrupt("stage2"): break
+        url = f"https://lyzem.com/search?q={aiohttp.helpers.quote(kw)}&type=channels"
+        html = await _pw_get(url, referer="https://lyzem.com/")
+        if html:
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u: found.add(u)
+        await _interruptible_sleep(delay_ms / 1000)
+    return found
+
+
+async def _stage2_telegago(session, keywords, delay_ms):
+    """Telegago — a Google Custom Search Engine scoped to Telegram public
+    pages. Results render inside the CSE widget via JS/XHR, so yield varies by
+    Google's mood; kept OUT of the default source set (opt-in via Sources).
+    We drive it through Chromium and scrape whatever t.me links the rendered
+    DOM exposes."""
+    found: Set[str] = set()
+    cx = "006368593537057042503:efxu7xprihg"   # Telegago's public CSE id
+    kws = keywords or _DEFAULT_FILE_CATEGORIES[:5]
+    for kw in kws[:5]:
+        if _check_interrupt("stage2"): break
+        url = f"https://cse.google.com/cse?cx={cx}&q={aiohttp.helpers.quote(kw)}"
+        html = await _pw_get(url)
+        if html:
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u: found.add(u)
+        await _interruptible_sleep(delay_ms / 1000)
+    return found
+
+
+async def _stage2_xtea(session, keywords, delay_ms):
+    """XTEA (xtea.io) — a Telegram search catalogue. The landing page renders
+    results inside an iframe backed by `xtea.pages.dev/search?q=…`, i.e. fully
+    JS-rendered like Telegago, so we drive the backend directly through headless
+    Chromium and scrape the t.me links from the rendered DOM. Yield varies with
+    the query; treated as a best-effort source (a failed/blocked fetch simply
+    yields nothing and the source-cooldown logic backs it off)."""
+    found: Set[str] = set()
+    kws = keywords or _DEFAULT_FILE_CATEGORIES[:5]
+    for kw in kws[:5]:
+        if _check_interrupt("stage2"): break
+        url = f"https://xtea.pages.dev/search?q={aiohttp.helpers.quote(kw)}"
+        html = await _pw_get(url, referer="https://xtea.io/")
+        if html:
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u: found.add(u)
+        await _interruptible_sleep(delay_ms / 1000)
+    return found
+
+
 async def _stage2_hackernews(session, keywords, delay_ms):
     """Hacker News mentions of t.me via the public Algolia API. Higher-signal
     than search-engine results because each match comes from a comment that a
@@ -1437,23 +1538,193 @@ async def _stage2_github(session, delay_ms):
 # ── Web archive sources ────────────────────────────────────────────────────────
 
 async def _stage2_wayback(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
-    """Wayback Machine CDX API — t.me URLs archived by the Internet Archive.
-    Collapses by urlkey to deduplicate mirror snapshots; only 200-status pages."""
+    """Wayback Machine CDX API — archived Telegram-related URLs.
+
+    (a) t.me/* — channel/joinchat URLs (collapsed by urlkey, 200-status only).
+    (b) telegra.ph/* — Telegra.ph pages very frequently host curated lists of
+        Telegram channels + file links; a capped, rate-limited sample of the
+        archived pages is fetched (id_ = raw, un-rewritten content) and mined
+        for t.me usernames. Self-filtering: non-Telegram telegra.ph pages
+        simply yield no t.me matches."""
     found: Set[str] = set()
+    _emit_event("stage2", "wayback: querying CDX API…", key="hl.stage2.waybackStart")
+    # (a) direct t.me/* channel URLs
     url = (
         "http://web.archive.org/cdx/search/cdx"
         "?url=t.me/*&output=text&fl=original&limit=10000"
         "&collapse=urlkey&matchType=prefix&filter=statuscode:200"
     )
-    _emit_event("stage2", "wayback: querying CDX API…", key="hl.stage2.waybackStart")
-    text = await _fetch_text(session, url, timeout=60)
+    text = await _fetch_text(session, url, timeout=60, referer="http://web.archive.org/")
     if text:
         for m in _TME_RE.finditer(text):
             u = _normalize_username(m.group(1))
             if u:
                 found.add(u)
-        _emit_event("stage2", f"wayback: {len(found)} candidates",
-                    key="hl.stage2.waybackDone", params={"n": len(found)})
+    # (b) telegra.ph/* curated link-list pages — sample & mine
+    try:
+        tph = await _fetch_text(
+            session,
+            "http://web.archive.org/cdx/search/cdx"
+            "?url=telegra.ph/*&output=text&fl=timestamp,original&limit=400"
+            "&collapse=urlkey&matchType=prefix&filter=statuscode:200",
+            timeout=60, referer="http://web.archive.org/",
+        )
+        pages: List[Tuple[str, str]] = []
+        if tph:
+            for line in tph.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0][:8].isdigit():
+                    pages.append((parts[0], parts[1]))
+        cfail = 0
+        for ts, orig in pages[:12]:  # cap sample to respect IA rate limits
+            if _check_interrupt("stage2"):
+                break
+            await _interruptible_sleep(delay_ms / 1000)
+            html = await _fetch_text(
+                session, f"http://web.archive.org/web/{ts}id_/{orig}",
+                timeout=40, referer="http://web.archive.org/",
+            )
+            if not html:
+                cfail += 1
+                if cfail >= 3:
+                    break
+                continue
+            cfail = 0
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u:
+                    found.add(u)
+    except Exception as e:
+        logger.debug(f"wayback telegra.ph sample failed: {e}")
+    _emit_event("stage2", f"wayback: {len(found)} candidates",
+                key="hl.stage2.waybackDone", params={"n": len(found)})
+    return found
+
+
+async def _stage2_wayback_content(session: aiohttp.ClientSession, delay_ms: int) -> Set[str]:
+    """Mine archived t.me/s/<channel> web-preview snapshots for
+    (a) cross-referenced channels and (b) file-sharing links posted in the
+    channel's historical messages.
+
+    Unique value vs. live Telethon enrichment: recovers file links from
+    channels that are now **deleted / private**, which the live API can never
+    reach. Seeds are a rotating RANDOM sample of followed channels + enriched
+    candidates that have a public username, so coverage spreads across runs
+    without a dedicated 'scanned' column. Discovered channels are returned
+    (→ web:wayback_content candidates); recovered file links are attributed to
+    the seed channel as 'link' candidate-files."""
+    found: Set[str] = set()
+    # file-link classifier + URL scanner from sync (domain-based, entity-less)
+    try:
+        from sync import (_detect_platform as _detect_plat,
+                          _HTTP_URL_RE as _url_re, _trim_url as _trim)
+    except Exception:
+        return found
+    # rotating seed sample — RANDOM() spreads coverage across scheduled runs
+    try:
+        rows = await database._q(
+            """SELECT username FROM (
+                   SELECT username FROM groups
+                   WHERE is_channel = TRUE AND username IS NOT NULL AND username <> ''
+                     AND COALESCE(hidden, FALSE) = FALSE
+                   UNION
+                   SELECT username FROM hunter_candidates
+                   WHERE status IN ('enriched','joined')
+                     AND username IS NOT NULL AND username <> ''
+               ) s ORDER BY RANDOM() LIMIT 15"""
+        )
+    except Exception as e:
+        logger.debug(f"wayback_content seed query failed: {e}")
+        rows = []
+    seeds: List[str] = []
+    for r in rows:
+        u = _normalize_username(r["username"])
+        if u and u not in seeds:
+            seeds.append(u)
+    if not seeds:
+        return found
+    _emit_event("stage2", f"wayback_content: probing {len(seeds)} archived channel(s)…",
+                key="hl.stage2.wbContentStart", params={"n": len(seeds)})
+    links_found = 0
+    cfail = 0
+    for seed in seeds:
+        if _check_interrupt("stage2"):
+            break
+        # List archived captures of the web-preview page. Each capture shows the
+        # ~20 posts live at that moment, so captures from DIFFERENT dates expose
+        # DIFFERENT historical messages — this is precisely where deleted/rotated
+        # file links survive. collapse=timestamp:8 → ~1 capture per day.
+        cdx = await _fetch_text(
+            session,
+            f"http://web.archive.org/cdx/search/cdx?url=t.me/s/{seed}"
+            "&output=text&fl=timestamp&filter=statuscode:200&collapse=timestamp:8&limit=200",
+            timeout=30, referer="http://web.archive.org/",
+        )
+        stamps = [ln.strip() for ln in cdx.splitlines()
+                  if ln.strip()[:8].isdigit()] if cdx else []
+        if not stamps:
+            continue
+        # Sample up to 3 captures spread across the timeline (newest, middle,
+        # oldest) — broadens historical coverage while keeping request budget
+        # bounded against IA rate limits.
+        picks: List[str] = []
+        for idx in (len(stamps) - 1, len(stamps) // 2, 0):
+            t = stamps[idx]
+            if t not in picks:
+                picks.append(t)
+        cid = None
+        seen_u: Set[str] = set()  # dedup file links across this seed's snapshots
+        for ts in picks:
+            if _check_interrupt("stage2"):
+                break
+            await _interruptible_sleep(delay_ms / 1000)
+            html = await _fetch_text(
+                session, f"http://web.archive.org/web/{ts}id_/https://t.me/s/{seed}",
+                timeout=40, referer="http://web.archive.org/",
+            )
+            if not html:
+                cfail += 1
+                if cfail >= 4:
+                    _emit_event("stage2", "wayback_content: repeated fetch failures, stopping early",
+                                "warn", key="hl.stage2.wbContentStop")
+                    return found
+                continue
+            cfail = 0
+            try:
+                snap_dt = datetime.strptime(ts[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            except Exception:
+                snap_dt = None
+            # (a) cross-referenced channels
+            for m in _TME_RE.finditer(html):
+                u = _normalize_username(m.group(1))
+                if u and u != seed:
+                    found.add(u)
+            # (b) file-sharing links posted in this channel → attribute to the seed
+            plat_urls: List[Tuple[str, str]] = []
+            for m in _url_re.finditer(html):
+                raw = _trim(m.group(0))
+                low = raw.lower()
+                if not raw or raw in seen_u or "t.me" in low or "web.archive.org" in low:
+                    continue
+                seen_u.add(raw)
+                plat = _detect_plat(raw)
+                if plat and plat != "Magnet":
+                    plat_urls.append((plat, raw))
+            if plat_urls:
+                if cid is None:
+                    cid = await database.upsert_hunter_candidate(seed)
+                    if cid:
+                        await database.add_hunter_source(cid, "wayback:content", f"snapshot={ts}")
+                if cid:
+                    for plat, u in plat_urls[:200]:
+                        mid = -(zlib.crc32(u.encode("utf-8", "ignore")) & 0x7fffffff)
+                        if await database.insert_candidate_file(
+                            cid, mid, f"{plat}: {u[:140]}", "link", 0, "link", snap_dt, is_named=True,
+                        ):
+                            links_found += 1
+    _emit_event("stage2",
+                f"wayback_content: {len(found)} channels, {links_found} archived file link(s)",
+                key="hl.stage2.wbContentDone", params={"n": len(found), "links": links_found})
     return found
 
 
@@ -1743,6 +2014,10 @@ _STAGE2_SOURCES = {
     "searchtg":     (_stage2_searchtg,     "kw"),
     "tdoru":        (_stage2_tdoru,        "plain"),
     "telegaio":     (_stage2_telegaio,     "plain"),
+    "telegramdb":   (_stage2_telegramdb,   "plain"),
+    "lyzem":        (_stage2_lyzem,        "kw"),
+    "telegago":     (_stage2_telegago,     "kw"),   # opt-in (JS CSE, variable yield)
+    "xtea":         (_stage2_xtea,         "kw"),   # xtea.io — JS-rendered Telegram catalogue (headless)
     # General search engines (use the dork-rich query list)
     "google":       (_stage2_google,       "query"),
     "duckduckgo":   (_stage2_duckduckgo,   "query"),
@@ -1760,6 +2035,7 @@ _STAGE2_SOURCES = {
     "pastesites":   (_stage2_pastesites,   "plain"),
     # Web archives
     "wayback":      (_stage2_wayback,      "plain"),
+    "wayback_content": (_stage2_wayback_content, "plain"),
     "urlscan":      (_stage2_urlscan,      "plain"),
     "commoncrawl":  (_stage2_commoncrawl,  "plain"),
     # LLM-assisted semantic discovery (requires anthropic_api_key in settings)
@@ -1778,11 +2054,13 @@ _STAGE2_SOURCES = {
 _DEFAULT_SOURCES = ",".join([
     "internal",
     "duckduckgo", "google", "bing", "brave", "yandex", "startpage", "ecosia", "mojeek",
-    "searchtg",
+    "searchtg", "lyzem",
     "reddit", "hackernews", "github",
-    "pastesites",
-    "wayback", "urlscan", "commoncrawl",
-    # "llm" is NOT in the default list — requires anthropic_api_key to be set
+    "pastesites", "telegramdb",
+    "wayback", "wayback_content", "urlscan", "commoncrawl",
+    "xtea",
+    # "llm" (needs anthropic_api_key) and "telegago" (JS CSE, variable yield)
+    # are registered but NOT default — add them by name in Hunter → Sources.
 ])
 
 
@@ -2398,6 +2676,13 @@ async def _sample_entity_messages(
     # topla. video_42.mp4 / photo_42.jpg gibi sentetik isimler tüm "photo"
     # token'ında 1.0 DF üretip detector'ı false-positive verirdi.
     named_filenames: List[str] = []
+    # sync'in link çıkarıcısı (entity + düz-metin, dedup'lı, platform tespitli).
+    # Dosya eki olmayan ama desteklenen dosya-paylaşım linki içeren mesajları da
+    # "dosya" saymak için kullanılır.
+    try:
+        from sync import _extract_platform_urls as _extract_plat_urls
+    except Exception:
+        _extract_plat_urls = lambda _m: []
     try:
         async for msg in client.iter_messages(entity, limit=sample_limit):
             sampled += 1
@@ -2451,6 +2736,25 @@ async def _sample_entity_messages(
                     )
                 except Exception:
                     pass
+            else:
+                # Dosya eki yok → mesajda DESTEKLENEN dosya-paylaşım linki var mı?
+                # Her link, üzerinden sağlanan bir dosya sayılır: file_count'a (grid
+                # dosya sayısı) ve puana katkı yapar ('link' grubu image/video/audio
+                # dışı = "useful"). Aynı mesajdaki tekrarlar dedup'lanır.
+                for _plat, _u in (_extract_plat_urls(msg) or []):
+                    file_count += 1
+                    breakdown["link"] = breakdown.get("link", 0) + 1
+                    fname_counts[_u[:120]] = fname_counts.get(_u[:120], 0) + 1
+                    _md = msg.date
+                    if _md and _md.tzinfo is None:
+                        _md = _md.replace(tzinfo=timezone.utc)
+                    try:
+                        await database.insert_candidate_file(
+                            candidate_id, msg.id, f"{_plat}: {_u[:140]}",
+                            "link", 0, "link", _md, is_named=True,
+                        )
+                    except Exception:
+                        pass
     except FloodWaitError:
         raise
     except Exception as e:
@@ -2510,12 +2814,42 @@ async def _enrich_one(client, candidate_id: int, username: str, sample_limit: in
     # member count via GetFullChannelRequest
     members = None
     description = None
+    linked_username = None          # P2: attached discussion group's @username
     try:
         full = await client(GetFullChannelRequest(entity))
         members = getattr(full.full_chat, "participants_count", None)
         description = getattr(full.full_chat, "about", None)
+        # P2 — Linked discussion group. A broadcast channel often has an
+        # attached group that is far richer in files/links. The linked entity
+        # is already present in full.chats, so we read its username with NO
+        # extra ResolveUsername round-trip (which has a strict daily cap).
+        _linked_id = getattr(full.full_chat, "linked_chat_id", None)
+        if _linked_id:
+            for _ch in (getattr(full, "chats", None) or []):
+                if getattr(_ch, "id", None) == _linked_id:
+                    linked_username = getattr(_ch, "username", None)
+                    break
     except Exception:
         pass
+
+    # P2 — Queue the linked discussion group as its own candidate so the hunter
+    # expands into it automatically ("gather the channel AND its group" for the
+    # full picture). Best-effort; failure here must not abort enrichment.
+    if linked_username:
+        try:
+            _lu = _normalize_username(linked_username)
+            if _lu and _lu != (username or "").lower() and not await database.is_blacklisted(_lu):
+                _lcid = await database.upsert_hunter_candidate(_lu)
+                if _lcid:
+                    await database.add_hunter_source(_lcid, "linked:discussion", f"parent=@{username}")
+                    _emit_event(
+                        "stage3",
+                        f"@{username}: 💬 bağlantılı tartışma grubu keşfedildi → @{_lu} (kuyruğa eklendi)",
+                        "info", key="hl.stage3.linkedGroup",
+                        params={"parent": username, "linked": _lu},
+                    )
+        except Exception as _lg_e:
+            logger.debug(f"linked group queue failed for @{username}: {_lg_e}")
 
     # Sample recent messages. We deliberately do NOT use server-side
     # InputMessagesFilterDocument because it excludes video/audio documents.
@@ -3497,7 +3831,16 @@ async def blacklist_candidate(candidate_id: int, reason: Optional[str] = None) -
     await database.add_to_blacklist(cand["username"], reason)
     await database.update_hunter_candidate(candidate_id,
         {"status": "blacklisted", "decided_at": datetime.utcnow()})
-    return {"ok": True}
+    # Kara listeye alınan kanalın önizleme (örneklenmiş) dosyalarını ana Files
+    # indeksine köprüle → kullanıcı bu dosyaları Dosyalar sekmesinde arayabilsin.
+    migrated = 0
+    try:
+        migrated = await database.migrate_candidate_files_to_index(candidate_id)
+        if migrated:
+            await database.refresh_files_canonical()
+    except Exception as _mg_e:
+        logger.warning(f"blacklist: migrate files failed for cand {candidate_id}: {_mg_e}")
+    return {"ok": True, "files_indexed": migrated}
 
 
 async def restore_candidate(candidate_id: int) -> dict:
@@ -3510,6 +3853,12 @@ async def restore_candidate(candidate_id: int) -> dict:
         await database._exec(
             "DELETE FROM hunter_blacklist WHERE username = $1", cand["username"]
         )
+        # Blacklist sırasında ana indekse köprülenen önizleme dosyalarını geri al.
+        try:
+            await database.remove_candidate_files_from_index(candidate_id)
+            await database.refresh_files_canonical()
+        except Exception as _rm_e:
+            logger.warning(f"restore: remove indexed files failed for cand {candidate_id}: {_rm_e}")
     await database.update_hunter_candidate(candidate_id,
         {"status": "discovered", "decided_at": None, "error": None})
     return {"ok": True}

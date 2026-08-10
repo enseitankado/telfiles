@@ -1179,7 +1179,12 @@ function renderChannelsTable() {
     const nm  = searchFold(g.display_name || '');
     const nm0 = searchFold(g.name || '');
     const un  = searchFold(g.username || '');
-    const hit = q => nm.includes(q) || nm0.includes(q) || un.includes(q);
+    // Old @usernames are searchable too: a channel that renamed to evade search
+    // is still findable by any handle it ever used (numeric id is the anchor).
+    const uh  = Array.isArray(g.username_history)
+      ? g.username_history.map(h => searchFold(h.username || '')) : [];
+    const hit = q => nm.includes(q) || nm0.includes(q) || un.includes(q)
+                     || uh.some(h => h.includes(q));
     if (qSearch && !hit(qSearch)) return false;
     if (qName   && !hit(qName))   return false;
     if (qUser   && !hit(qUser))   return false;
@@ -1234,6 +1239,13 @@ function renderChannelsTable() {
     const name  = plainName(g.display_name || g.name || ('id ' + g.id));
     const user  = g.username ? '@' + g.username : '';
     const tgHref = tgGroupHref(g);
+    // Rename badge: channel kept the same numeric id but changed @username in
+    // the past. Hovering lists the previous handles + when each was dropped.
+    const uhist = Array.isArray(g.username_history) ? g.username_history : [];
+    const renameBadge = uhist.length
+      ? ` <span class="ch-rename-badge" title="${esc(t('channels.renamedTitle') + ': ' +
+            uhist.map(h => '@' + (h.username||'?') + (h.until ? ' (→ ' + String(h.until).slice(0,10) + ')' : '')).join(', '))}">↻${uhist.length}</span>`
+      : '';
     const state = g.hidden
       ? `<span class="ch-state ch-state-hidden">${esc(t('channels.stHidden'))}</span>`
       : (g.excluded
@@ -1242,7 +1254,7 @@ function renderChannelsTable() {
     return `<tr class="${isSel ? 'row-selected' : ''}${g.hidden ? ' row-hidden' : ''}" data-gid="${g.id}" onclick="channelsRowClick(${g.id},event)" ondblclick="channelsRowDblClick(${g.id},event)" oncontextmenu="event.preventDefault();_ctxMenuShowChannel(event, ${g.id}, ${JSON.stringify(user || '').replace(/"/g, '&quot;')})">
       <td class="chk-cell"><input type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();_chChk(event,${g.id},this.checked)"></td>
       <td class="num-cell">${i + 1}</td>
-      <td class="ch-name-cell" title="${esc(name)}">${esc(name)}</td>
+      <td class="ch-name-cell" title="${esc(name)}">${esc(name)}${renameBadge}</td>
       <td class="ch-col-user">${user ? `<a href="${esc(tgHref)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(user)}</a>` : ''}</td>
       <td class="ch-col-members" title="${g.member_count_updated_at ? esc(t('channels.membersUpdated') + ': ' + new Date(g.member_count_updated_at).toLocaleString()) : ''}">${g.member_count != null ? Number(g.member_count).toLocaleString() : '—'}</td>
       <td class="ch-col-count">${(g.file_count || 0).toLocaleString()}</td>
@@ -2027,7 +2039,10 @@ function renderStatus(d, groups = []) {
     stPgTables(d) +
     `<div class="st-2col">${stSystem(d)}${stSync(d)}</div>` +
     stActivityHeatmap(groups) +
-    stLogs(d);
+    // Loglar artık dedike, gelişmiş bir pencerede (üstteki 📜 butonu). Status
+    // sekmesinde yalnızca ona açılan bir kısayol bırakıyoruz.
+    `<div class="st-section"><h4><span class="live-dot"></span>${esc(t('status.recentLogs'))}</h4>`
+      + `<button class="td-btn" onclick="openLogViewer()" style="font-size:.85rem;padding:8px 16px">📜 ${esc(t('logs.title'))}</button></div>`;
 }
 
 function stActivityHeatmap(groups) {
@@ -2475,6 +2490,25 @@ async function lvFetch(force) {
   lvRender();
 }
 
+// Ham (çoğu İngilizce/kütüphane) log mesajlarını netleştirip yerelleştirir.
+// Bilinen desenler i18n şablonuna çevrilir; tanınmayan mesaj olduğu gibi bırakılır.
+const _LV_PATTERNS = [
+  { re: /^Got difference for channel (\d+) updates$/i,        key: 'log.tg.channelDiff',     p: m => ({ id: m[1] }) },
+  { re: /^Got difference for account updates$/i,              key: 'log.tg.accountDiff',     p: () => ({}) },
+  { re: /^Sleeping (?:early )?for ([\d.]+)s\s*\([\d:]+\)\s*on (\w+)\b.*flood.*wait/i, key: 'log.tg.floodwait', p: m => ({ sec: m[1], req: m[2] }) },
+  { re: /^\[realtime acc (\d+)\]\s*(.+?):\s*(.+)$/,           key: 'log.sync.newFile',       p: m => ({ acc: m[1], channel: m[2], file: m[3] }) },
+  { re: /^\[backfill\]\s*enrichment pass:\s*(\d+)\s*magnet/i, key: 'log.sync.enrichQueued',  p: m => ({ n: m[1] }) },
+  { re: /^hunter\[(\w+)\]:\s*(\d+)\s*candidates?$/i,          key: 'log.hunter.candidates',  p: m => ({ src: m[1], n: m[2] }) },
+  { re: /^Hunter:\s*scheduled run starting$/i,                key: 'log.hunter.scheduledStart', p: () => ({}) },
+];
+function _lvHumanize(name, msg) {
+  for (const pat of _LV_PATTERNS) {
+    const m = msg.match(pat.re);
+    if (m) { const tr = t(pat.key, pat.p(m)); if (tr && tr !== pat.key) return tr; }
+  }
+  return msg;
+}
+
 function lvRender() {
   const body = document.getElementById('lv-body');
   const emptyEl = document.getElementById('lv-empty');
@@ -2499,13 +2533,15 @@ function lvRender() {
     if (_lvLevel !== 'all' && nl !== _lvLevel) continue;
     if (src && l.name !== src) continue;
     let msg = l.msg || '';
-    if (l.name && msg.startsWith(l.name + ': ')) msg = msg.slice(l.name.length + 2);
-    if (q && !(msg + ' ' + (l.name || '')).toLowerCase().includes(q)) continue;
+    while (l.name && msg.startsWith(l.name + ': ')) msg = msg.slice(l.name.length + 2);
+    const disp = _lvHumanize(l.name, msg);
+    // Arama hem yerelleştirilmiş görünüm hem de ham mesaj üzerinde çalışır.
+    if (q && !(disp + ' ' + msg + ' ' + (l.name || '')).toLowerCase().includes(q)) continue;
     const dt = new Date(l.ts * 1000);
-    const badge = nl === 'error' ? '<span class="lv-badge lv-badge-error">ERR</span>'
-                : nl === 'warn'  ? '<span class="lv-badge lv-badge-warn">WARN</span>'
-                :                  '<span class="lv-badge lv-badge-info">INFO</span>';
-    let msgHtml = esc(msg);
+    const badge = nl === 'error' ? `<span class="lv-badge lv-badge-error">${esc(t('logs.badgeError'))}</span>`
+                : nl === 'warn'  ? `<span class="lv-badge lv-badge-warn">${esc(t('logs.badgeWarn'))}</span>`
+                :                  `<span class="lv-badge lv-badge-info">${esc(t('logs.badgeInfo'))}</span>`;
+    let msgHtml = esc(disp);
     if (hlRe) msgHtml = msgHtml.replace(hlRe, '<span class="lv-hl">$1</span>');
     rows.push(`<div class="lv-row lv-${nl}" title="${esc(dt.toLocaleString())}">`
       + `<span class="lv-ts">${esc(dt.toLocaleTimeString())}</span>${badge}`
@@ -2852,6 +2888,12 @@ function _buildFilesParams() {
   }
   if (S.fileIdsFilter && S.fileIdsFilter.size > 0) {
     params.set('file_ids', [...S.fileIdsFilter].join(','));
+    // file_ids are RAW files.id values (from watch notifications). The dedupe
+    // view (files_canonical) keeps only one representative id per name+size
+    // group, so a raw id is usually absent there and the grid comes back empty.
+    // Disable dedupe whenever we filter by explicit file ids so every matched
+    // row is shown. Cleared automatically once the file_ids filter is removed.
+    params.set('dedupe', 'false');
   }
   const colSizeMin = document.getElementById('col-size-min').value.trim();
   const colSizeMax = document.getElementById('col-size-max').value.trim();
@@ -3101,12 +3143,12 @@ function renderFiles(files, gFilter, mode = 'replace') {
     const scTip   = t('table.sharesTipDetail', {n: sc, w: sc7, m: sc30});
     const sharePill = `<span class="${pillCls}" title="${esc(scTip)}"><span class="share-icon">🔁</span><span class="share-num">${sc.toLocaleString()}</span>${isRising ? '<span class="rise-badge" title="' + esc(t('table.rising')) + '">↑</span>' : ''}</span>`;
 
-    rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})" oncontextmenu="event.preventDefault();_ctxMenuShowFile(event, ${f.group_id || 'null'}, ${JSON.stringify(gName).replace(/"/g, '&quot;')})">
+    rows.push(`<tr${selRow} onclick="selectFileRow(event,${f.id})" oncontextmenu="event.preventDefault();_ctxMenuShowFile(event, ${f.id}, ${f.group_id || 'null'}, ${JSON.stringify(gName).replace(/"/g, '&quot;')}, ${JSON.stringify(f.file_name || '').replace(/"/g, '&quot;')})">
       <td class="chk-cell"><input type="checkbox" class="row-chk" data-fid="${f.id}"${checked}></td>
       <td class="num-cell">${rowNum}</td>
       <td>${badge}</td>
       <td title="${esc(fName)}"><div class="fname-cell">${toggleBtn}<span class="fname-trunc">${esc(fName)}</span>${tg}${dupBadge}</div></td>
-      <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''} title="${esc(ctxRaw)}">${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
+      <td class="ctx-cell"${ctxRaw ? ` data-ctx="${esc(ctxRaw)}"` : ''}>${ctxRaw ? esc(ctxRaw.substring(0,50)) : '—'}</td>
       <td>${fmtSize(f.file_size)}</td>
       <td>${gLink}</td>
       <td>${fmtDate(f.date)}</td>
@@ -3237,21 +3279,28 @@ function _buildTorrentPanelHtml(fileId, data, filter) {
   return `<div class="torrent-tree-header">
     <span class="torrent-tree-name" title="${esc(name)}">📦 ${esc(name)}</span>
     <span class="torrent-tree-stats">${count.toLocaleString()} ${esc(t('torrent.files'))} · ${fmtSize(total)}</span>
-    <input class="torrent-tree-filter" type="text"
+    <input class="torrent-tree-filter${filter && filter.trim() ? ' active' : ''}" type="text"
       placeholder="${esc(t('torrent.filterPh'))}"
       value="${esc(filter)}"
       oninput="filterTorrentTree(${fileId},this.value)"
       onclick="event.stopPropagation()">
-  </div>${_buildTorrentListHtml(data.tree || [], filter)}`;
+  </div>${_buildTorrentListHtml(data.tree || [], filter, fileId)}`;
 }
 
 const _TORRENT_DISPLAY_LIMIT = 1000;
 
-function _buildTorrentListHtml(tree, filter) {
+function _buildTorrentListHtml(tree, filter, fileId) {
   const term = (filter || '').toLowerCase().trim();
   const filtered = term ? tree.filter(f => f.path.toLowerCase().includes(term)) : tree;
+  // Filtre aktifken bu durumun NET görünmesi için üstte belirgin bir band —
+  // "sadece 1 dosya var" yanılgısını önler (aslında X/M dosya gösteriliyor).
+  const banner = term
+    ? `<div class="tt-filter-banner">🔍 <b>"${esc(filter.trim())}"</b> ${esc(t('torrent.filteredBy') || 'ile filtrelendi')} · `
+      + `<b>${filtered.length.toLocaleString()}</b> / ${tree.length.toLocaleString()} ${esc(t('torrent.files'))}`
+      + `<button class="tt-filter-clear" onclick="filterTorrentTree(${fileId},'')">✕ ${esc(t('torrent.clearFilter') || 'Filtreyi temizle')}</button></div>`
+    : '';
   if (!filtered.length) {
-    return `<div class="torrent-tree-list"><div class="tt-empty">${esc(t('torrent.noMatch'))}</div></div>`;
+    return `<div class="torrent-tree-list">${banner}<div class="tt-empty">${esc(t('torrent.noMatch'))}</div></div>`;
   }
   const shown = filtered.length > _TORRENT_DISPLAY_LIMIT ? filtered.slice(0, _TORRENT_DISPLAY_LIMIT) : filtered;
   const hiddenCount = filtered.length - shown.length;
@@ -3285,7 +3334,7 @@ function _buildTorrentListHtml(tree, filter) {
   if (hiddenCount > 0) {
     rows.push(`<div class="tt-more-notice">+${hiddenCount.toLocaleString()} ${esc(t('torrent.moreFiles'))}</div>`);
   }
-  return `<div class="torrent-tree-list">${rows.join('')}</div>`;
+  return `<div class="torrent-tree-list">${banner}${rows.join('')}</div>`;
 }
 
 async function toggleTorrentTree(event, fileId) {
@@ -3317,7 +3366,9 @@ async function toggleTorrentTree(event, fileId) {
   if (panel) panel.innerHTML = `<div class="tt-loading"><span class="hm-spinner"></span> ${esc(t('common.loadingData'))}</div>`;
 
   try {
-    const res = await fetch(`/api/files/${fileId}/torrent-tree`);
+    // no-store: tarayıcı HTTP cache'i asla eski torrent ağacını sunmasın
+    // (ör. daha önce yarım parse edilmiş bir yanıt cache'lenmiş olabilir).
+    const res = await fetch(`/api/files/${fileId}/torrent-tree`, { cache: 'no-store' });
     if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
     const data = await res.json();
     _torrentCache[fileId] = { state: 'done', data, open: true, filter: '' };
@@ -3343,8 +3394,13 @@ function filterTorrentTree(fileId, term) {
   c.filter = term;
   const panel = document.getElementById(`torrent-tree-panel-${fileId}`);
   if (!panel) return;
+  const inp = panel.querySelector('.torrent-tree-filter');
+  if (inp) {
+    inp.classList.toggle('active', !!(term && term.trim()));
+    if (!(term && term.trim())) inp.value = '';   // "temizle" butonu kutuyu da boşaltsın
+  }
   const listEl = panel.querySelector('.torrent-tree-list');
-  if (listEl) listEl.outerHTML = _buildTorrentListHtml(c.data?.tree || [], term);
+  if (listEl) listEl.outerHTML = _buildTorrentListHtml(c.data?.tree || [], term, fileId);
 }
 
 // Auto-expand torrent rows in the current page that matched via content search.
@@ -7741,18 +7797,40 @@ function _ctxMenuShowChannel(event, groupId, username) {
   ]);
 }
 
-function _ctxMenuShowFile(event, groupId, groupName) {
-  if (!groupId) return; // file without a known parent channel
-  _ctxMenuShow(event, [
-    {
+function _ctxMenuShowFile(event, fileId, groupId, groupName, fileName) {
+  const items = [];
+  if (fileName) {
+    items.push({
+      label: t('ctx.copyFileName'),
+      action: async () => {
+        try {
+          await navigator.clipboard.writeText(String(fileName));
+          showToast(t('ctx.fileNameCopied', { name: fileName }), 1800);
+        } catch (e) {}
+      },
+    });
+  }
+  items.push({
+    label: t('ctx.copyFileId'),
+    action: async () => {
+      try {
+        await navigator.clipboard.writeText(String(fileId));
+        showToast(t('ctx.fileIdCopied', { id: fileId }) || ('Dosya ID kopyalandı: ' + fileId), 1800);
+      } catch (e) {}
+    },
+  });
+  // Kanalı bilinen dosyalar için ek eylemler.
+  if (groupId) {
+    items.push({
       label: t('ctx.showSimilarFromFileChannel', { name: groupName || ('#' + groupId) }),
       action: () => showSimilarChannels({ group_id: groupId }),
-    },
-    {
+    });
+    items.push({
       label: t('ctx.openChannelInList'),
       action: () => filterByGroup(groupId),
-    },
-  ]);
+    });
+  }
+  _ctxMenuShow(event, items);
 }
 
 function _ctxMenuShowHunter(event, candidateId, username) {

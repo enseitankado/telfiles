@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 - **安全的数据库迁移** — 版本化的 `schema_migrations` 表跟踪每次已应用的变更；破坏性变更（类型变更、重命名、删除）在各自的事务中运行；若某次迁移失败，应用程序拒绝启动，数据绝不会处于部分状态。
 - **PWA** — 通过「添加到主屏幕」安装到移动设备或桌面；支持基本离线界面。
 - **匿名遥测** — 可选；仅包含频道用户名 + 成员数 + 文件数。无消息、IP 或身份信息。一键禁用。
-- **5 种语言** — Türkçe、English、Deutsch、Русский、中文。
+- **5 种语言** — 🇹🇷 Türkçe、🇬🇧 English、🇩🇪 Deutsch、🇷🇺 Русский、🇨🇳 中文。
 - **单次 `up -d`** — Docker Compose。数据存储在主机卷中；删除容器不影响您的数据。
 
 ---
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 **要求：** 基于 Debian 的 Linux + 来自 [my.telegram.org](https://my.telegram.org) 的 `API_ID` 和 `API_HASH`。
 
 ```bash
-# 1) 一行安装
+# 1) 一行安装 — 无需 API_ID/HASH；也可稍后在界面中输入（设置 → 账户）
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 
 # 2) 脚本化（CI / 预配置环境）

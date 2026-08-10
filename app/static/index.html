@@ -118,7 +118,9 @@ a{color:inherit;text-decoration:none}
    Visually the "where am I" anchor — taller, bolder, with a subtle drop
    shadow so it floats above everything below. */
 #top-row{background:var(--bg-2);border-bottom:1px solid var(--border-1);box-shadow:0 2px 6px rgba(0,0,0,.05);display:flex;align-items:stretch;flex-shrink:0;height:60px;z-index:10;margin-bottom:10px}
-#brand{display:flex;align-items:center;gap:7px;font-size:1.13rem;font-weight:700;color:var(--accent);padding:0 22px 0 20px;flex-shrink:0;white-space:nowrap;align-self:stretch;margin-right:6px;border-right:1px solid var(--border-1);letter-spacing:-.005em}
+#brand{display:flex;align-items:center;gap:7px;font-size:1.13rem;font-weight:700;color:var(--accent);padding:0 22px 0 20px;flex-shrink:0;white-space:nowrap;align-self:stretch;margin-right:6px;border-right:1px solid var(--border-1);letter-spacing:-.005em;cursor:pointer;user-select:none;transition:opacity .12s}
+#brand:hover{opacity:.8}
+#brand:active{opacity:.6}
 #brand>span:first-child{font-size:1.25em}
 #tabs{display:flex;align-items:center;flex:1;padding:0 10px;min-width:0;overflow-x:auto;overflow-y:hidden;gap:4px}
 #tabs::-webkit-scrollbar{display:none}
@@ -557,6 +559,8 @@ td{padding:4px 10px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis
 #channels-table .ch-col-user{width:1%;white-space:nowrap}
 #channels-table .ch-col-hscore{width:1%;white-space:nowrap;text-align:right}
 .ch-hscore-badge{display:inline-block;min-width:32px;padding:1px 6px;background:var(--accent);color:#fff;border-radius:10px;font-size:.72rem;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
+/* "Bu kanal geçmişte @username değiştirdi" rozeti — ad hücresinde küçük ↻N. */
+.ch-rename-badge{display:inline-block;margin-left:5px;padding:0 5px;background:var(--bg-3);color:var(--text-3);border:1px solid var(--border-2);border-radius:8px;font-size:.66rem;font-weight:600;cursor:help;vertical-align:middle}
 #channels-table .ch-col-state{width:1%;white-space:nowrap;text-align:center}
 #channels-table .ch-col-act{width:1%;white-space:nowrap;text-align:right}
 /* Kanal Adı: dinamik (geri kalan boşluğu alır) ama uzun adlar ellipsis ile kesilir. */
@@ -1182,6 +1186,13 @@ tr.torrent-tree-row>td{padding:0!important;background:var(--bg-3)!important;bord
 .torrent-tree-name{font-weight:600;color:var(--text-1);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;letter-spacing:.01em}
 .torrent-tree-stats{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:.7rem;flex-shrink:0;background:var(--bg-2);border:1px solid var(--border-2);border-radius:10px;padding:2px 10px;font-variant-numeric:tabular-nums}
 .torrent-tree-filter{flex:1;min-width:160px;max-width:300px;padding:4px 10px;border:1px solid var(--border-2);border-radius:14px;font-size:.74rem;background:var(--bg-2);color:var(--text-1);outline:none;transition:border-color .12s,box-shadow .12s}
+/* Filtre AKTİFKEN belirgin: hem kutu vurgulu hem üstte "filtrelendi" bandı */
+.torrent-tree-filter.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-h);font-weight:600;box-shadow:0 0 0 2px var(--accent-soft)}
+.torrent-tree-filter.active::placeholder{color:var(--accent)}
+.tt-filter-banner{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 12px;background:var(--accent-soft);color:var(--accent-h);border-bottom:1px solid var(--accent);font-size:.78rem;position:sticky;top:0;z-index:3}
+.tt-filter-banner b{font-weight:700}
+.tt-filter-clear{margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:3px 11px;font-size:.73rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.tt-filter-clear:hover{background:var(--accent-h)}
 .torrent-tree-filter:focus{border-color:var(--text-3);box-shadow:0 0 0 2px var(--border-1)}
 .torrent-tree-list{font-size:.73rem;max-height:300px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);box-shadow:inset 0 1px 0 rgba(0,0,0,.02);scrollbar-width:auto;scrollbar-color:var(--text-4) transparent}
 .torrent-tree-list::-webkit-scrollbar{width:16px}
@@ -1605,7 +1616,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 
 <div id="app-shell">
   <div id="top-row">
-    <div id="brand">📡 <span>TelFiles</span></div>
+    <div id="brand" onclick="switchTab('files')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchTab('files')}" title="Ana sayfa" data-i18n-title="brand.home" role="button" tabindex="0">📡 <span>TelFiles</span></div>
     <div id="tabs">
       <button class="tab-btn active" id="tab-files"     onclick="switchTab('files')"><span class="tab-ico">📁</span><span data-i18n="tab.files">Dosyalar</span></button>
       <button class="tab-btn"        id="tab-channels"  onclick="switchTab('channels')"><span class="tab-ico">📋</span><span data-i18n="tab.channels">Kanallar</span></button>
@@ -1665,7 +1676,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
           <span>📝 Açıklama</span>
         </button>
         <button id="sem-toggle" class="type-btn" onclick="toggleSemanticSearch()"
-                data-i18n-title="sem.tip" title="Anlamsal arama: dosya adının anlamına göre eşleşir (örn. 'yarış arabaları' → F1 Documentary). Kapalıyken klasik kelime/substring araması yapılır."
+                data-i18n-title="sem.tip" title="Anlamsal arama: dosya adının harflerine değil ANLAMINA göre eşleşir (örn. 'yarış arabaları' → F1 Documentary). Model aranan kelimeyi kavramsal olarak en yakın dosyalara bağlar; bu yüzden aranan kelime hiçbir dosya adında geçmese bile 'anlamca yakın' bulduğu sonuçları yine de döndürür — alakasız görünen eşleşmeler bundandır. Tam kelime/substring eşleşmesi istiyorsan bu düğmeyi KAPAT (o zaman geçmeyen kelime 0 sonuç verir)."
                 style="display:none">
           <span data-i18n="sem.btn">🧠 Anlam</span>
         </button>
@@ -2763,8 +2774,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   </div>
 </div>
 
-<script src="i18n.js?v=1784183051"></script>
-<script src="app.js?v=1784183051"></script>
+<script src="i18n.js?v=1786303691"></script>
+<script src="app.js?v=1786303691"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })

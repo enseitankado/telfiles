@@ -14,9 +14,26 @@ Workflow:
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# BitTorrent padding files (BEP 47 piece-alignment fillers). They carry no user
+# content — real clients hide them. Two things flag one: (a) the BEP 47 `attr`
+# field contains 'p', or (b) the path uses a padding naming convention:
+#   • BitComet:  "____padding_file_0_if you see this file, please update…"
+#   • .pad dir:  "Name/.____padding_file/0"  or  "Name/.pad/262144"
+_PADDING_RE = re.compile(r"_{2,}padding_file|(^|/)\.pad(/|$)", re.IGNORECASE)
+
+
+def is_padding_entry(path: str, attr=None) -> bool:
+    """True if a torrent file entry is a padding/alignment file, not content."""
+    if attr:
+        a = attr.decode("latin-1", "ignore") if isinstance(attr, (bytes, bytearray)) else str(attr)
+        if "p" in a:
+            return True
+    return bool(_PADDING_RE.search(path or ""))
 
 _TMP_DIR = os.environ.get("TORRENT_TMP_DIR", "/tmp/torrent_parse")
 
@@ -87,6 +104,10 @@ def parse_torrent(data: bytes) -> Dict[str, Any]:
             path_parts = f.get("path.utf-8") or f.get("path") or []
             rel = "/".join(_to_str(p) for p in path_parts)
             full = f"{name}/{rel}" if name else rel
+            # Skip BEP 47 padding files — filler for piece alignment, not content.
+            # Excluding here keeps total_size / file_count accurate for real files.
+            if is_padding_entry(full, f.get("attr")):
+                continue
             files.append({"path": full, "size": int(f.get("length") or 0)})
     else:
         files.append({"path": name, "size": int(info.get("length") or 0)})

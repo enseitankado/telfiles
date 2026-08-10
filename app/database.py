@@ -122,6 +122,11 @@ CREATE TABLE IF NOT EXISTS telemetry_settings (
 
 ALTER TABLE groups ADD COLUMN IF NOT EXISTS member_count BIGINT;
 ALTER TABLE groups ADD COLUMN IF NOT EXISTS member_count_updated_at TIMESTAMPTZ;
+-- Permanent audit trail of prior @usernames. A channel's numeric id is stable,
+-- but admins rename the username to evade search / re-brand. Each rename appends
+-- {"username": <old>, "until": <ISO ts>} so a renamed channel is never "lost"
+-- and old t.me/<name> links can still be traced back to the current channel.
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS username_history JSONB NOT NULL DEFAULT '[]';
 
 CREATE TABLE IF NOT EXISTS hunter_settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
@@ -609,7 +614,22 @@ async def init_db():
         init=_register_vector_on_conn if _VECTOR_AVAILABLE else None,
     )
     async with _pool.acquire() as conn:
-        await conn.execute(_SCHEMA)
+        # Şema DDL'i (CREATE TABLE / ALTER TABLE …) her başlangıçta çalışır ve
+        # ACCESS EXCLUSIVE kilit ister. Uzun süren bir sorgu (ör. yavaş bir
+        # telemetri/rapor taraması) kilidi tutuyorsa, DDL sonsuza dek bekler ve
+        # BEKLEYEN exclusive-lock'uyla o tabloya değen TÜM sorguları kuyruğa
+        # sokar (lock convoy → tüm uygulama hang). lock_timeout ile DDL hızlıca
+        # vazgeçer; şema idempotent (IF NOT EXISTS) olduğundan zarar yok, bir
+        # sonraki başlangıçta uygulanır.
+        try:
+            await conn.execute("SET lock_timeout = '30s';\n" + _SCHEMA + "\nRESET lock_timeout;")
+        except Exception as e:
+            log.warning("schema apply lock/timeout (%s) — tablolar muhtemelen zaten "
+                        "var; devam ediliyor (sonraki başlangıçta yeniden denenir).", e)
+            try:
+                await conn.execute("RESET lock_timeout")
+            except Exception:
+                pass
         await _run_migrations(conn, log)
         # Vector column + HNSW index on raw `files` (skipped if extension missing)
         if _VECTOR_AVAILABLE:
@@ -812,6 +832,22 @@ async def upsert_group(group_id: int, name: str, username: Optional[str], is_cha
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (id) DO UPDATE SET
                name = EXCLUDED.name,
+               -- Record the OLD username whenever it changes to a DIFFERENT value
+               -- (renamed to a new handle, or dropped entirely → NULL). The
+               -- numeric id is the stable key; the username is volatile. Because
+               -- the same statement also sets username = EXCLUDED.username, a
+               -- repeat upsert with the same handle won't append a duplicate.
+               username_history = CASE
+                   WHEN groups.username IS NOT NULL
+                        AND groups.username <> ''
+                        AND groups.username IS DISTINCT FROM EXCLUDED.username
+                   THEN COALESCE(groups.username_history, '[]'::jsonb)
+                        || jsonb_build_object(
+                               'username', groups.username,
+                               'until', to_char(NOW() AT TIME ZONE 'UTC',
+                                                'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+                   ELSE COALESCE(groups.username_history, '[]'::jsonb)
+               END,
                username = EXCLUDED.username,
                is_channel = EXCLUDED.is_channel""",
         group_id, name, username, is_channel,
@@ -922,6 +958,7 @@ async def get_groups() -> List[Dict]:
                   g.last_synced_at,
                   g.member_count,
                   g.member_count_updated_at,
+                  g.username_history,
                   COUNT(f.id)                                     AS file_count,
                   COALESCE(SUM(f.file_size), 0)                   AS total_size,
                   MAX(f.date)                                     AS last_message_at,
@@ -949,6 +986,16 @@ async def get_groups() -> List[Dict]:
     result = []
     for r in rows:
         d = dict(r)
+        # JSONB comes back as a raw string (no global codec) — hand the UI a
+        # real list. Malformed / NULL → empty history.
+        uh = d.get("username_history")
+        if isinstance(uh, str):
+            try:
+                d["username_history"] = _json.loads(uh) or []
+            except Exception:
+                d["username_history"] = []
+        elif uh is None:
+            d["username_history"] = []
         if d["hunter_score"] is None:
             # No hunter_candidates row — compute score from actual file data
             useful = (
@@ -1263,12 +1310,25 @@ async def _search_files_hybrid(
           ORDER BY fl2.name_embedding <=> $2::vector
           LIMIT 300
         ),
+        inner_hits AS (
+          -- Torrent iç dosya adı eşleşmesi: içindeki bir dosya sorguya uyuyorsa
+          -- ANA .torrent dosyasını da sonuca getir (trigram-indeksli torrent_files.path).
+          SELECT fc.id,
+                 ROW_NUMBER() OVER (ORDER BY fc.date DESC) AS r
+          FROM files_canonical fc
+          WHERE fc.id IN (
+            SELECT DISTINCT tf.torrent_id FROM torrent_files tf WHERE tf.path ILIKE $1
+          ) {extra_where}
+          LIMIT 300
+        ),
         fused AS (
           SELECT id, SUM(1.0 / (60.0 + r))::float AS s
           FROM (
             SELECT id, r FROM exact_hits
             UNION ALL
             SELECT id, r FROM sem_hits
+            UNION ALL
+            SELECT id, r FROM inner_hits
           ) u
           GROUP BY id
         )
@@ -1298,6 +1358,9 @@ async def _search_files_hybrid(
           SELECT id FROM (
             SELECT fc.id FROM files_canonical fc
             WHERE fc.file_name ILIKE $1 {extra_where}
+            UNION
+            SELECT fc.id FROM files_canonical fc
+            WHERE fc.id IN (SELECT DISTINCT tf.torrent_id FROM torrent_files tf WHERE tf.path ILIKE $1) {extra_where}
             UNION
             SELECT fc.id FROM files_canonical fc
             JOIN files fl2 ON fl2.id = fc.id AND fl2.name_embedding IS NOT NULL
@@ -3135,6 +3198,91 @@ async def candidate_file_summary(candidate_id: int) -> Dict:
     return summary
 
 
+# ── Blacklisted-candidate preview files → main Files index ───────────────────
+# A blacklisted hunter candidate's sampled/preview files (hunter_candidate_files)
+# get copied into the main `files` table so they're searchable in the Files grid.
+# They live under a POSITIVE synthetic group id: get_groups() only returns
+# groups with id < 0 OR a real account membership, so these NEVER clutter the
+# Channels tab — while search_files() (which does not filter by membership)
+# still finds them. Real Telegram group ids are always negative, so the positive
+# namespace can't collide with an actual channel.
+_BL_GROUP_BASE = 800_000_000_000
+
+
+def _bl_group_id(candidate_id: int) -> int:
+    return _BL_GROUP_BASE + int(candidate_id)
+
+
+async def migrate_candidate_files_to_index(candidate_id: int) -> int:
+    """Copy a candidate's NAMED preview files into `files` so the Files grid can
+    search them. Idempotent (ON CONFLICT DO NOTHING). Returns rows inserted.
+    Only files with a real file_name are copied — nameless/ephemeral samples
+    (video_42.mp4 placeholders) are search-useless and would just be noise."""
+    cand = await get_hunter_candidate(candidate_id)
+    if not cand:
+        return 0
+    gid = _bl_group_id(candidate_id)
+    uname = cand.get("username")
+    title = (cand.get("title") or (("@" + uname) if uname else f"candidate {candidate_id}"))[:200]
+    await _exec(
+        """INSERT INTO groups (id, name, username, is_channel, display_name, hidden, excluded)
+           VALUES ($1, $2, $3, $4, $2, TRUE, TRUE)
+           ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name,
+               username = COALESCE(EXCLUDED.username, groups.username),
+               display_name = EXCLUDED.display_name""",
+        gid, title, uname, bool(cand.get("is_channel", True)),
+    )
+    row = await _qrow(
+        """WITH ins AS (
+             INSERT INTO files (group_id, message_id, file_name, file_ext,
+                                file_size, date, synced_at, local_path)
+             SELECT $1, hcf.message_id, hcf.file_name, hcf.file_ext,
+                    COALESCE(hcf.file_size, 0), COALESCE(hcf.date, NOW()), NOW(),
+                    hcf.local_path
+             FROM hunter_candidate_files hcf
+             WHERE hcf.candidate_id = $2
+               AND hcf.is_named IS TRUE
+               AND hcf.file_name IS NOT NULL AND hcf.file_name <> ''
+             ON CONFLICT (group_id, message_id) DO NOTHING
+             RETURNING 1
+           )
+           SELECT COUNT(*) AS n FROM ins""",
+        gid, candidate_id,
+    )
+    return int(row["n"]) if row else 0
+
+
+async def remove_candidate_files_from_index(candidate_id: int) -> None:
+    """Undo migrate_candidate_files_to_index — used when a candidate is restored
+    from the blacklist. Deletes the synthetic group; its files cascade. Safe:
+    the positive synthetic id is never a real (negative) joined channel."""
+    await _exec("DELETE FROM groups WHERE id = $1", _bl_group_id(candidate_id))
+
+
+async def backfill_blacklisted_candidate_files() -> Dict:
+    """One-shot: migrate preview files for every currently-blacklisted candidate
+    that still has sampled files. (Auto-blacklisted candidates that were also
+    deleted have no files left to recover — nothing to do there.)
+    Returns {"candidates": N, "files": M}."""
+    rows = await _q(
+        """SELECT DISTINCT c.id
+           FROM hunter_candidates c
+           JOIN hunter_candidate_files hcf ON hcf.candidate_id = c.id
+           WHERE c.status = 'blacklisted'"""
+    )
+    n_cand = 0
+    n_files = 0
+    for r in rows:
+        inserted = await migrate_candidate_files_to_index(int(r["id"]))
+        if inserted:
+            n_cand += 1
+            n_files += inserted
+    if n_files:
+        await refresh_files_canonical(force=True)
+    return {"candidates": n_cand, "files": n_files}
+
+
 async def delete_hunter_candidate(candidate_id: int):
     await _exec("DELETE FROM hunter_candidates WHERE id = $1", candidate_id)
 
@@ -3298,7 +3446,7 @@ async def get_files_for_telemetry() -> tuple[list[dict], bool]:
                   f.file_size, g.username
            FROM files f
            JOIN groups g ON g.id = f.group_id
-           WHERE f.id NOT IN (SELECT file_id FROM telemetry_sent_files)
+           WHERE NOT EXISTS (SELECT 1 FROM telemetry_sent_files ts WHERE ts.file_id = f.id)
              AND f.file_name IS NOT NULL AND f.file_name <> ''
            ORDER BY f.id
            LIMIT $1""",
@@ -3514,6 +3662,16 @@ async def get_torrent_tree(file_id: int) -> Optional[Dict]:
     d = dict(row)
     if isinstance(d.get("tree"), str):
         d["tree"] = _json.loads(d["tree"])
+    # Filter BEP 47 padding files from trees stored before parser-side filtering
+    # existed, and recompute file_count / total_size so header and rows agree.
+    tree = d.get("tree")
+    if isinstance(tree, list) and tree:
+        from torrent_parse import is_padding_entry
+        real = [e for e in tree if not is_padding_entry((e or {}).get("path", ""))]
+        if len(real) != len(tree):
+            d["tree"] = real
+            d["file_count"] = len(real)
+            d["total_size"] = sum(int((e or {}).get("size") or 0) for e in real)
     return d
 
 

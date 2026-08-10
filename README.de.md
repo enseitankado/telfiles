@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 - **Sichere Schema-Migrationen** — eine versionierte `schema_migrations`-Tabelle verfolgt jede angewendete Änderung; breaking changes (Typänderungen, Umbenennungen, Löschungen) laufen in eigenen Transaktionen; bei einem Fehler verweigert die App den Start, sodass Daten nie in einem unvollständigen Zustand verbleiben.
 - **PWA** — über „Zum Startbildschirm hinzufügen" auf Mobilgeräten oder dem Desktop installierbar; unterstützt grundlegende Offline-UI.
 - **Anonyme Telemetrie** — optional; nur Kanal-Username + Mitgliederzahl + Dateianzahl. Keine Nachrichten, IPs oder Identitäten. Mit einem Klick deaktivierbar.
-- **5 Sprachen** — Türkçe, English, Deutsch, Русский, 中文.
+- **5 Sprachen** — 🇹🇷 Türkçe, 🇬🇧 English, 🇩🇪 Deutsch, 🇷🇺 Русский, 🇨🇳 中文.
 - **Einmaliges `up -d`** — Docker Compose. Daten liegen in Host-Volumes; das Löschen des Containers lässt Ihre Daten unberührt.
 
 ---
@@ -72,7 +72,8 @@ curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.
 **Voraussetzungen:** Debian-basiertes Linux + `API_ID` & `API_HASH` von [my.telegram.org](https://my.telegram.org).
 
 ```bash
-# 1) Einzeiler-Installation
+# 1) Einzeiler-Installation — kein API_ID/HASH nötig; sie können auch
+#    später über die Oberfläche eingegeben werden (Einstellungen → Konto)
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 
 # 2) Skriptgesteuert (CI / vorkonfigurierte Umgebung)
