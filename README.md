@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/banner.png" alt="TelFiles — Telegram dosya ve link indeksleyici" width="100%">
+  <img src="docs/banner.png" alt="TelFiles — Telegram file and link indexer" width="100%">
 </p>
 
 <p align="center">
-  <a href="README.md">🇹🇷 Türkçe</a> &nbsp;|&nbsp;
-  <a href="README.en.md">🇬🇧 English</a> &nbsp;|&nbsp;
+  <a href="README.md">🇬🇧 English</a> &nbsp;|&nbsp;
+  <a href="README.tr.md">🇹🇷 Türkçe</a> &nbsp;|&nbsp;
   <a href="README.de.md">🇩🇪 Deutsch</a> &nbsp;|&nbsp;
   <a href="README.ru.md">🇷🇺 Русский</a> &nbsp;|&nbsp;
   <a href="README.zh.md">🇨🇳 中文</a>
@@ -12,101 +12,101 @@
 
 # TelFiles
 
-**Kendi Telegram hesabınızla** üye olduğunuz grup ve kanalları arka planda gezer; karşılaştığı her dosyayı ve her bağlantıyı yerel bir PostgreSQL veritabanında indeksler. Tarayıcıdan açtığınız tek bir arayüzden arar, sıralar, filtreler ve istediğinizi tek tıkla bilgisayarınıza indirirsiniz.
+Uses **your own Telegram account** to crawl groups and channels you have joined in the background; indexes every file and every link it encounters into a local PostgreSQL database. Search, sort, filter, and download anything with a single click from one browser interface.
 
-Bonus: **Kanal Avcısı** — dosya bakımından zengin yeni kanalları arar, puanlar ve önünüze getirir.
+Bonus: **Channel Hunter** — discovers new file-rich channels, scores them, and surfaces the best ones.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 ```
 
-> Debian / Ubuntu / Kali / Pardus / Mint. Tek satır; Docker yoksa kurar, container'ları ayağa kaldırır, erişim URL'sini yazdırır.
+> Debian / Ubuntu / Kali / Pardus / Mint. One line; installs Docker if missing, brings up the containers, and prints the access URL.
 
 ---
 
-## ✨ Öne çıkan özellikler
+## ✨ Highlights
 
-- **Çok hesap** — birden fazla Telegram hesabını tek görünümde birleştirir.
-- **Tam arşiv erişimi** — geçmiş mesajları sayfa sayfa tarar, yeni gelenleri realtime yakalar.
-- **Dosyalar & Linkler & Kanallar için ayrı grid'ler** — kolon başına sıralama + filtre, kanal/tip/boyut/tarih bazlı daraltma; Kanallar sekmesinde üye sayısı, dosya sayısı, toplu işlemler ve checkbox'larda shift+click aralık seçimi.
-- **Torrent içerik indeksi** — `.torrent` dosyaları otomatik parse edilir; içindeki dosya yolları veritabanına eklenir ve dosyalar sekmesinden tam metin aramasına dahil olur. Büyük arşivler 1.000 dosyada kesilir, kaç tane kaldığı gösterilir.
-- **Semantik arama** — opsiyonel pgvector entegrasyonu; dosya adları yerel bir modelle gömülür, anahtar kelime eşleşmesinin ötesinde anlam bazlı sıralama sağlar.
-- **İndirmeler & Transfer** — indirilen dosyalar geçmiş sekmesinde listelenir; yerel yol üzerine gelindiğinde tooltip gösterilir; tek tıkla tüm yerel dosyaları silebilirsiniz. Yerelde depolanan dosyalar FTP, SFTP veya yerel dizine (NAS / harici disk) otomatik kopyalanır ya da taşınır. **Bant genişliği zamanlama** ile büyük dosyalar yalnızca belirlediğiniz saatlerde indirilir. İndirme hedefi tercihleri oturumlar arasında hatırlanır.
-- **Kanal Avcısı** — 3 aşamalı keşif: (1) iç linklerden mining, (2) 22+ web kaynağı (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + arama motorları + Reddit / HN / GitHub + web arşivleri), (3) Telegram'dan örnek mesaj sample'ıyla zenginleştirme & skorlama. Sütun başına sunucu taraflı sıralama; geçici üyelik ile kısıtlı kanalları tarama; 1 yıldan eski kanalları otomatik atlama.
-- **Önce dene, sonra karar ver** — aday kanalın belirli bir dosyasını **üye olmadan** önizleyip indirir; sadece gerekirse onay vererek "temp-join → indir → ayrıl" yapar.
-- **Magnet bağlantıları** — `magnet:` URI'ları parse edilir, meta veri (başlık, boyut, tracker listesi) çekilir; backfill ile mevcut bağlantılar toplu güncellenir.
-- **İzleme kelimeleri** — `fatura 2025` gibi terim setleri tanımlarsınız; eşleşen dosya geldiğinde bildirim oluşur (AND mantığı, dosya-adı bazlı).
-- **Uygulama içi güncelleme bildirimi** — her açılışta GitHub'daki son commit kontrol edilir; yeni sürüm varsa güncelleme komutunu tek tıkla kopyalayabileceğiniz bir banner gösterilir.
-- **Güvenli şema migrasyonları** — versiyonlu `schema_migrations` tablosu uygulanan her değişikliği takip eder; kırıcı değişiklikler (tip değişikliği, rename, silme) kendi transaction'larında çalışır; biri başarısız olursa uygulama başlamayı reddeder ve veri hiçbir zaman yarım bırakılmaz.
-- **PWA** — tarayıcıdan "Uygulamayı yükle" ile mobil veya masaüstüne kurulabilir; çevrimdışı temel UI destekli.
-- **Anonim telemetri** — opsiyonel, sadece kanal username + üye sayısı + dosya sayısı; mesaj/IP/kimlik yok. Tek tık kapatılır.
-- **5 dil** — 🇹🇷 Türkçe, 🇬🇧 English, 🇩🇪 Deutsch, 🇷🇺 Русский, 🇨🇳 中文.
-- **Tek `up -d`** — Docker Compose. Veriler host volume'unda; container'ı silseniz veriniz kalır.
+- **Multi-account** — combines multiple Telegram accounts into a single view.
+- **Full archive access** — paginates through history and captures new messages in real time.
+- **Separate grids for Files, Links & Channels** — per-column sorting + filters, narrow by channel / type / size / date; the Channels tab shows member counts, file counts, supports bulk operations, and shift-click range selection on checkboxes.
+- **Torrent content index** — `.torrent` files are parsed automatically; their internal file paths are added to the database and included in the full-text search on the Files tab. Large archives are capped at 1,000 displayed entries with a remaining-count notice.
+- **Semantic search** — optional pgvector integration; file names are embedded with a local model so results can be ranked by meaning, not just keyword match.
+- **Downloads & Transfer** — downloaded files are tracked in a history tab with local-path hover tooltips and a one-click "delete all" to reclaim disk space. Stored files can be automatically copied or moved to FTP, SFTP, or a local directory (NAS / external drive). **Bandwidth scheduling** lets large files download only during hours you specify. Destination preferences are remembered across sessions.
+- **Channel Hunter** — 3-stage discovery: (1) mining from internal links, (2) 22+ web sources (TGStat, Telemetr.io, Combot, t-do.ru, telega.io + search engines + Reddit / HN / GitHub + web archives), (3) enrichment & scoring with sample messages from Telegram. Server-side per-column sorting; temporary membership to scan restricted channels; automatic skipping of channels whose newest file is over a year old.
+- **Try before you commit** — preview and download a specific file from a candidate channel **without joining**; only performs "temp-join → download → leave" when you explicitly approve.
+- **Magnet links** — `magnet:` URIs are parsed, metadata (title, size, tracker list) is fetched; bulk backfill updates existing links.
+- **Watch keywords** — define term sets like `invoice 2025`; a notification is created when a matching file arrives (AND logic, filename-based).
+- **In-app update notifications** — on every startup the app checks the latest commit on GitHub and shows a banner with a one-click copy of the update command when a new version is available.
+- **Safe schema migrations** — a versioned `schema_migrations` table tracks every applied change; breaking alterations (type changes, renames, drops) run in their own transaction and the app refuses to start if one fails, so data is never left in a partial state.
+- **PWA** — installable on mobile or desktop via "Add to Home Screen"; supports basic offline UI.
+- **Anonymous telemetry** — optional; only channel username + member count + file count. No messages, IPs, or identities. One click to disable.
+- **5 languages** — 🇹🇷 Türkçe, 🇬🇧 English, 🇩🇪 Deutsch, 🇷🇺 Русский, 🇨🇳 中文.
+- **Single `up -d`** — Docker Compose. Data lives in host volumes; deleting the container leaves your data intact.
 
 ---
 
-## 📸 Ekran görüntüleri
+## 📸 Screenshots
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/tr/02-files.png"><img src="docs/screenshots/tr/02-files.png" alt="Dosyalar"></a><br><b>📁 Dosyalar</b> — tüm hesaplardan birleştirilmiş arama, tip kategorileri, kanal filtresi, boyut slider'ı; torrent içerik genişletme.</td>
-<td width="50%"><a href="docs/screenshots/tr/01-channels.png"><img src="docs/screenshots/tr/01-channels.png" alt="Kanallar"></a><br><b>📋 Kanallar</b> — takip edilen kanallar; dosya sayısı, üye sayısı, sütun bazlı sıralama, toplu işlemler ve shift-click seçimi.</td>
+<td width="50%"><a href="docs/screenshots/en/02-files.png"><img src="docs/screenshots/en/02-files.png" alt="Files"></a><br><b>📁 Files</b> — unified search across all accounts, type categories, channel filter, size slider; torrent content expansion.</td>
+<td width="50%"><a href="docs/screenshots/en/01-channels.png"><img src="docs/screenshots/en/01-channels.png" alt="Channels"></a><br><b>📋 Channels</b> — followed channels with file counts, member counts, per-column sorting, bulk actions, and shift-click range selection.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/tr/04-links.png"><img src="docs/screenshots/tr/04-links.png" alt="Linkler"></a><br><b>🔗 Linkler</b> — Google Drive / Mega / MediaFire vb. URL'ler, magnet meta verisi, torrent arşiv inspector, erişilebilirlik kontrolü.</td>
-<td><a href="docs/screenshots/tr/05-downloads.png"><img src="docs/screenshots/tr/05-downloads.png" alt="İndirmeler"></a><br><b>⬇ İndirmeler</b> — indirme geçmişi, ilerleme takibi, yerel yol tooltip'i; FTP / SFTP / yerel dizine otomatik transfer.</td>
+<td><a href="docs/screenshots/en/04-links.png"><img src="docs/screenshots/en/04-links.png" alt="Links"></a><br><b>🔗 Links</b> — URLs parsed from Google Drive / Mega / MediaFire etc., magnet metadata, torrent archive inspector, accessibility checks.</td>
+<td><a href="docs/screenshots/en/05-downloads.png"><img src="docs/screenshots/en/05-downloads.png" alt="Downloads"></a><br><b>⬇ Downloads</b> — tracked download history with progress, local-path tooltips, one-click delete; transfer to FTP / SFTP / local dir.</td>
 </tr>
 <tr>
-<td><a href="docs/screenshots/tr/03-hunter.png"><img src="docs/screenshots/tr/03-hunter.png" alt="Kanal Avcısı"></a><br><b>📡 Kanal Avcısı</b> — 3 aşamalı keşif pipeline'ı, sunucu taraflı sıralama, detay lightbox'ında dosya önizleme ve geçici üyelikle indirme.</td>
-<td><a href="docs/screenshots/tr/06-status.png"><img src="docs/screenshots/tr/06-status.png" alt="Durum"></a><br><b>📊 Durum</b> — sync metrikleri, dosya türü dağılımı, platform-bazlı link istatistikleri, PostgreSQL tablo boyutları, aktivite ısı haritası.</td>
+<td><a href="docs/screenshots/en/03-hunter.png"><img src="docs/screenshots/en/03-hunter.png" alt="Channel Hunter"></a><br><b>📡 Channel Hunter</b> — 3-stage discovery pipeline, server-side per-column sorting, file preview and temp-join download in the detail lightbox.</td>
+<td><a href="docs/screenshots/en/06-status.png"><img src="docs/screenshots/en/06-status.png" alt="Status"></a><br><b>📊 Status</b> — sync metrics, file type distribution, platform-based link stats, PostgreSQL table sizes, activity heatmap.</td>
 </tr>
 <tr>
-<td colspan="2" align="center"><a href="docs/screenshots/tr/07-settings.png"><img src="docs/screenshots/tr/07-settings.png" alt="Ayarlar" width="72%"></a><br><b>⚙️ Ayarlar</b> — Telegram hesapları, tarama aralığı, tema, dil, transfer hedefleri, bant genişliği zamanlama, izleme kelimeleri, parola.</td>
+<td colspan="2" align="center"><a href="docs/screenshots/en/07-settings.png"><img src="docs/screenshots/en/07-settings.png" alt="Settings" width="72%"></a><br><b>⚙️ Settings</b> — Telegram accounts, scan interval, theme, language, transfer destinations, bandwidth scheduling, watch keywords, password.</td>
 </tr>
 </table>
 
 ---
 
-## 🚀 Hızlı başlangıç
+## 🚀 Quick start
 
-**Gereken:** Debian tabanlı Linux + [my.telegram.org](https://my.telegram.org) üzerinden alınmış `API_ID` & `API_HASH`.
+**Requirements:** Debian-based Linux + `API_ID` & `API_HASH` from [my.telegram.org](https://my.telegram.org).
 
 ```bash
-# 1) Tek satırlık kurulum — API_ID/HASH gerekmez; kurulumdan sonra
-#    arabirimden (Ayarlar → Hesap) da girilebilir
+# 1) One-liner install — no API_ID/HASH needed; you can also enter them
+#    later from the interface (Settings → Account)
 curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh | bash
 
-# 2) Scripted (CI / hazır env)
+# 2) Scripted (CI / pre-configured env)
 TELEGRAM_API_ID=12345 TELEGRAM_API_HASH=abcdef… NONINTERACTIVE=1 \
   bash -c "$(curl -fsSL https://raw.githubusercontent.com/enseitankado/telfiles/main/install.sh)"
 
-# 3) Manuel
+# 3) Manual
 git clone https://github.com/enseitankado/telfiles.git && cd telfiles
 cp .env.example .env && $EDITOR .env       # API_ID + API_HASH
 docker compose up -d --build
 ```
 
-Açılış adresi terminale basılır (varsayılan: `http://<host>:8765`). Port doluysa installer otomatik olarak boş bir sonrakine geçer.
+The access URL is printed to the terminal (default: `http://<host>:8765`). If the port is taken the installer automatically picks the next available one.
 
-### İlk giriş — iki aşamalı
+### First login — two steps
 
-1. **Arabirim parolası** — `admin` ile gir, **Ayarlar → Hesap → Arabirim Parolası**'ndan değiştir.
-2. **Telegram hesabı** — Ayarlar → Hesap → ➕ Hesap Ekle → telefon → Telegram'a düşen kod → (varsa) 2FA. Bağlantı kurulunca tarama otomatik başlar.
+1. **Interface password** — log in with `admin`, then change it under **Settings → Account → Interface Password**.
+2. **Telegram account** — Settings → Account → ➕ Add Account → phone → code sent to Telegram → (if enabled) 2FA. Scanning starts automatically once connected.
 
-> `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` boşsa "Kod gönder" çalışmaz. `.env` dosyasını doldurup `docker compose restart telfiles-app` yeter.
+> If `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` are empty, "Send code" will not work. Fill in `.env` and run `docker compose restart telfiles-app`.
 
-### Güncelleme
+### Updating
 
-Aynı kurulum komutunu tekrar çalıştırın. Installer kendi kendini günceller, kodu çeker, container'ı yeniden inşa eder; **`data/` ve `pgdata/` korunur**.
+Run the same install command again. The installer updates itself, pulls the latest code, rebuilds the container; **`data/` and `pgdata/` are preserved**.
 
-Program açılışta GitHub'daki HEAD'i kontrol eder, yeni sürüm varsa UI'da bildirir.
+On startup the app checks the HEAD on GitHub and notifies you in the UI if a new version is available.
 
-**Veritabanı şema migrasyonları** her başlangıçta otomatik uygulanır. `schema_migrations` tablosu hangi versiyonların çalıştırıldığını takip eder. Eklemeli değişiklikler (yeni tablo, yeni kolon) idempotent ve her zaman güvenlidir. Kırıcı değişiklikler (kolon tipi değişikliği, yeniden adlandırma, silme) versiyonlu migrasyonlardır; her biri kendi transaction'ında çalışır — biri başarısız olursa uygulama başlamayı reddeder ve veriye dokunulmadan önce harekete geçebilmeniz için hatayı log'a yazar.
+**Database schema migrations** are applied automatically on every startup. A `schema_migrations` table tracks which versions have already run. Additive changes (new tables, new columns) are idempotent and always safe. Destructive changes (column type changes, renames, drops) are versioned migrations that each run in their own transaction — if one fails, the app refuses to start and logs the exact error so you can act before any data is touched.
 
-Migrasyonlar hem yeni kurulumda (`_SCHEMA` zaten nihai durumu oluşturmuştur) hem de mevcut kurulumda (şema hâlâ eski haldedir) güvenli çalışacak şekilde yazılmalıdır. Değişikliğin hâlâ gerekip gerekmediğini kontrol eden `DO $$ BEGIN … END $$;` koruması kullanın:
+Migrations must be written defensively so they are safe on both fresh installs (where `_SCHEMA` already created the final state) and existing installs (where the schema is still in the old state). Use a `DO $$ BEGIN … END $$;` guard that checks whether the change is still needed before applying it:
 
 ```sql
--- Güvenli kolon rename (hem eski hem yeni kurulumda idempotent)
+-- Safe column rename (idempotent on both old and new installs)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -116,7 +116,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- Güvenli kolon tipi değişikliği
+-- Safe column type change
 DO $$ BEGIN
   IF (SELECT data_type FROM information_schema.columns
       WHERE table_name = 'files' AND column_name = 'file_size') = 'bigint' THEN
@@ -127,116 +127,116 @@ END $$;
 
 ---
 
-## ⚙️ Yapılandırma
+## ⚙️ Configuration
 
-| Konum | İçerik | Sıfırlama |
+| Location | Contents | Reset |
 |---|---|---|
-| `data/ui_auth.json` | UI parola hash'i + oturum token'ları | sil → `admin` döner |
-| `data/credentials.json` | Telegram API kimlikleri (env'den önce gelir) | sil → `.env`'e düşer |
-| `data/settings.json` | `sync_interval_seconds` (clamp `[900, 86400]`) | sil → 7200s |
-| `data/accounts/{id}/telfiles.session` | Telethon hesap oturumu | sil → o hesap için yeniden giriş |
-| `data/hunter_events.jsonl` | Avcı detay log'u (restart'a dayanıklı) | sil → log temizlenir |
-| `downloads/` | İndirilen dosyalar (`<grup>/...` ve `_hunter/<kanal>/...`) | her dosya bağımsız silinebilir |
-| `pgdata/` | PostgreSQL ana veritabanı | silmeyin |
+| `data/ui_auth.json` | UI password hash + session tokens | delete → reverts to `admin` |
+| `data/credentials.json` | Telegram API credentials (takes precedence over env) | delete → falls back to `.env` |
+| `data/settings.json` | `sync_interval_seconds` (clamped to `[900, 86400]`) | delete → 7200s |
+| `data/accounts/{id}/telfiles.session` | Telethon account session | delete → re-login required for that account |
+| `data/hunter_events.jsonl` | Hunter detail log (restart-safe) | delete → log cleared |
+| `downloads/` | Downloaded files (`<group>/...` and `_hunter/<channel>/...`) | each file can be deleted independently |
+| `pgdata/` | PostgreSQL main database | do not delete |
 
-### Ortam değişkenleri (`.env`)
+### Environment variables (`.env`)
 
-| Değişken | Zorunlu | Not |
+| Variable | Required | Note |
 |---|---|---|
 | `TELEGRAM_API_ID` | ✅ | my.telegram.org → API Development Tools |
-| `TELEGRAM_API_HASH` | ✅ | aynı yer |
-| `TELEMETRY_SECRET` | ❌ | Sadece kendi telemetri sunucunuzu kuruyorsanız |
+| `TELEGRAM_API_HASH` | ✅ | same page |
+| `TELEMETRY_SECRET` | ❌ | Only if you run your own telemetry server |
 
 ---
 
-## 🧱 Yığın
+## 🧱 Stack
 
-| Katman | Teknoloji |
+| Layer | Technology |
 |---|---|
 | Backend | Python 3.12 · FastAPI · Uvicorn · asyncio |
 | Telegram | [Telethon](https://github.com/LonamiWebs/Telethon) (MTProto) |
-| Veri | PostgreSQL 16 · asyncpg · pgvector |
-| Web scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (stealth Chromium, Stage 2 için) |
-| Frontend | Vanilla JS · CSS · HTML (build adımı yok) |
-| Dağıtım | Docker Compose |
+| Data | PostgreSQL 16 · asyncpg · pgvector |
+| Web scraping | aiohttp + [CloakBrowser](https://github.com/cloakbrowser) (stealth Chromium, Stage 2) |
+| Frontend | Vanilla JS · CSS · HTML (no build step) |
+| Deployment | Docker Compose |
 
-Konteyner imajı **~302 MB**. Tüm runtime state host volume'larında.
+Container image **~302 MB**. All runtime state is in host volumes.
 
 ---
 
-## 🗂️ Proje yapısı
+## 🗂️ Project structure
 
 ```
 app/
-├── main.py              # FastAPI + endpoint'ler + arka plan döngüleri
-├── database.py          # asyncpg veri katmanı + şema migrasyonları
-├── telegram_client.py   # Çok-hesap Telethon yönetimi
-├── sync.py              # Geçmiş + realtime mesaj tarayıcısı
-├── hunter.py            # Kanal Avcısı pipeline + per-dosya indirme
-├── link_prober.py       # Bağlantı erişilebilirlik kontrolcüsü
-├── transfer.py          # FTP / SFTP / yerel dizin transfer motoru
-├── embed.py             # pgvector semantik gömme API'si
-├── embed_worker.py      # Arka plan embedding işçisi
-├── magnet_metadata.py   # Magnet URI meta veri çekici
-├── torrent_parse.py     # .torrent dosya ayrıştırıcı
-├── telemetry.py         # Anonim istatistik gönderici
-├── ui_auth.py           # Web parolası + oturum
+├── main.py              # FastAPI + endpoints + background loops
+├── database.py          # asyncpg data layer + schema migrations
+├── telegram_client.py   # Multi-account Telethon management
+├── sync.py              # History + realtime message scanner
+├── hunter.py            # Channel Hunter pipeline + per-file download
+├── link_prober.py       # Link accessibility checker
+├── transfer.py          # FTP / SFTP / local directory transfer engine
+├── embed.py             # pgvector semantic embedding API
+├── embed_worker.py      # Background embedding worker
+├── magnet_metadata.py   # Magnet URI metadata fetcher
+├── torrent_parse.py     # .torrent file parser
+├── telemetry.py         # Anonymous stats sender
+├── ui_auth.py           # Web password + session
 └── static/              # index.html, app.js, i18n.js — single-page UI
 
 docs/
-├── banner.png           # README başlığı
-├── screenshots/         # UI ekran görüntüleri (dil klasörleri: tr/en/de/ru/zh)
-└── OPERATOR.md          # DB sorguları, sorun giderme, hunter kaynakları
+├── banner.png           # README header
+├── screenshots/         # UI screenshots (language folders: tr/en/de/ru/zh)
+└── OPERATOR.md          # DB queries, troubleshooting, hunter sources
 ```
 
 ---
 
-## 🛠️ Geliştirme
+## 🛠️ Development
 
 ```bash
-# Backend (Python) değişikliği → rebuild gerekir
+# Backend (Python) change → rebuild required
 docker compose up -d --build telfiles-app
 
-# Frontend (HTML/JS/CSS) → bind-mount; sadece tarayıcıyı yenile
-# app/static/* host'tan canlı serve edilir
+# Frontend (HTML/JS/CSS) → bind-mount; just refresh the browser
+# app/static/* is served live from the host
 
-# Loglar / DB
+# Logs / DB
 docker logs -f telfiles-app
 docker exec -it telfiles-postgres psql -U telfiles -d telfiles
 ```
 
-Daha fazlası: [docs/OPERATOR.md](docs/OPERATOR.md) — DB sorguları, kanal avcısı kaynak listesi, yaygın sorun → çözüm tablosu.
+More: [docs/OPERATOR.md](docs/OPERATOR.md) — DB queries, hunter source list, common issue → fix table.
 
 ---
 
-## 🔒 Mahremiyet & Telemetri
+## 🔒 Privacy & Telemetry
 
-Etkinleştirildiğinde **24 saatte bir**, sadece şu üç alan gönderilir:
+When enabled, **once every 24 hours**, only these three fields are sent:
 
-- Üye olduğunuz kanalların **username**'i (zaten herkese açık Telegram bilgisi)
-- Her kanalın **üye sayısı** (yine herkese açık)
-- O kanaldan indekslediğiniz **dosya sayısı**
+- The **username** of channels you have joined (already public Telegram info)
+- Each channel's **member count** (also public)
+- The **number of files** you have indexed from that channel
 
-**Gönderilmez:** mesajlar, dosya adları, dosya içerikleri, telefon numarası, hesap bilgisi, IP.
+**Never sent:** messages, filenames, file contents, phone number, account details, IP.
 
-Tanımlayıcı: kurulumda yerel üretilen rastgele bir UUID. Kapatmak: Ayarlar → Hesap → "Kullanıcı istatistiklerini gönder" checkbox'ı.
+Identifier: a random UUID generated locally at install time. To disable: Settings → Account → uncheck "Send usage statistics".
 
-Kendi alıcı endpoint'inizi kullanmak için `app/telemetry.py` içindeki `ENDPOINT_URL`'i değiştirin.
-
----
-
-## 🤝 Sorun bildirimi & katkı
-
-[GitHub Issues](https://github.com/enseitankado/telfiles/issues) üzerinden.
+To use your own receiver endpoint, change `ENDPOINT_URL` in `app/telemetry.py`.
 
 ---
 
-## ⚖️ Lisans
+## 🤝 Issues & contributions
 
-Bu proje açık kaynaktır; lisans dosyası ekleninceye kadar tüm hakları yazara aittir. Fork / değişiklik / yeniden dağıtım için lütfen iletişime geçin.
+Via [GitHub Issues](https://github.com/enseitankado/telfiles/issues).
 
 ---
 
-## ⚠️ Sorumluluk reddi
+## ⚖️ License
 
-TelFiles yalnızca **sizin Telegram hesabınızla zaten erişebildiğiniz** içeriği yerel olarak indeksler. Telegram [Hizmet Şartları](https://telegram.org/tos)'na uygun kullanım kullanıcının sorumluluğundadır. Yazar(lar), aracın kötüye kullanımından doğacak sonuçlardan sorumlu değildir.
+This project is open source; all rights reserved by the author until a license file is added. Please get in touch for fork / modification / redistribution.
+
+---
+
+## ⚠️ Disclaimer
+
+TelFiles only indexes content you **already have access to via your own Telegram account**. Complying with Telegram's [Terms of Service](https://telegram.org/tos) is the user's responsibility. The author(s) are not liable for any consequences arising from misuse of this tool.

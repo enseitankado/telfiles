@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="README.md">🇹🇷 Türkçe</a> &nbsp;|&nbsp;
-  <a href="README.en.md">🇬🇧 English</a> &nbsp;|&nbsp;
+  <a href="README.md">🇬🇧 English</a> &nbsp;|&nbsp;
+  <a href="README.tr.md">🇹🇷 Türkçe</a> &nbsp;|&nbsp;
   <a href="README.de.md">🇩🇪 Deutsch</a> &nbsp;|&nbsp;
   <a href="README.ru.md">🇷🇺 Русский</a> &nbsp;|&nbsp;
   <a href="README.zh.md">🇨🇳 中文</a>
