@@ -1205,7 +1205,7 @@ async def record_probe_result(
     )
 
 
-_SORT_COLS = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "group": "g.name", "shares": "share_count"}
+_SORT_COLS = {"date": "f.date", "name": "f.file_name", "size": "f.file_size", "group": "g.name", "shares": "share_count", "ext": "f.file_ext", "context": "f.context"}
 
 
 def _hybrid_order(sort_by: str, sort_dir: str) -> str:
@@ -1217,11 +1217,13 @@ def _hybrid_order(sort_by: str, sort_dir: str) -> str:
     behaviour of silently keeping RRF order."""
     d = "DESC" if (sort_dir or "desc").lower() != "asc" else "ASC"
     cols = {
-        "size":   f"fc.file_size {d} NULLS LAST",
-        "name":   f"fc.file_name {d} NULLS LAST",
-        "group":  f"g.name {d} NULLS LAST",
-        "date":   f"fc.date {d}",
-        "shares": f"fc.share_count {d}",
+        "size":    f"fc.file_size {d} NULLS LAST",
+        "name":    f"fc.file_name {d} NULLS LAST",
+        "group":   f"g.name {d} NULLS LAST",
+        "date":    f"fc.date {d}",
+        "shares":  f"fc.share_count {d}",
+        "ext":     f"fc.file_ext {d} NULLS LAST",
+        "context": f"fc.context {d} NULLS LAST",
     }
     primary = cols.get(sort_by)
     if primary:
@@ -1528,6 +1530,10 @@ async def search_files(
     # each row wide and the default sort has no filter to reduce cardinality.
     col_inner = col_fc                            # fc.date / fc.file_size …
     col_outer = col_fc.replace("fc.", "fc2.")     # fc2.date / fc2.file_size …
+    # Sorting by group name (g.name) needs the groups table in the INNER
+    # subquery too — the paginating ORDER BY + LIMIT runs there. Without the
+    # join the inner ORDER BY references an absent `g` and the query errors.
+    inner_group_join = "JOIN groups g ON g.id = fc.group_id" if "g.name" in col_inner else ""
     sql = f"""SELECT fc2.id, fc2.group_id, fc2.message_id, fc2.file_name, fc2.file_ext,
                      fc2.mime_type, fc2.file_size, fc2.date,
                      fl.local_path, fl.downloading, fl.download_progress,
@@ -1540,6 +1546,7 @@ async def search_files(
                          fc.mime_type, fc.file_size, fc.date, fc.context, fc.appearances,
                          fc.share_count, fc.share_count_7d, fc.share_count_30d
                   FROM files_canonical fc
+                  {inner_group_join}
                   {where_fc}
                   ORDER BY {col_inner} {direction}
                   LIMIT ${idx} OFFSET ${idx+1}

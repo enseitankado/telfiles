@@ -1616,7 +1616,7 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
 
 <div id="app-shell">
   <div id="top-row">
-    <div id="brand" onclick="switchTab('files')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();switchTab('files')}" title="Ana sayfa" data-i18n-title="brand.home" role="button" tabindex="0">📡 <span>TelFiles</span></div>
+    <div id="brand" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome()}" title="Ana sayfa" data-i18n-title="brand.home" role="button" tabindex="0">📡 <span>TelFiles</span></div>
     <div id="tabs">
       <button class="tab-btn active" id="tab-files"     onclick="switchTab('files')"><span class="tab-ico">📁</span><span data-i18n="tab.files">Dosyalar</span></button>
       <button class="tab-btn"        id="tab-channels"  onclick="switchTab('channels')"><span class="tab-ico">📋</span><span data-i18n="tab.channels">Kanallar</span></button>
@@ -2462,9 +2462,9 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
             <tr>
               <th class="chk-cell"><input type="checkbox" id="select-all" onchange="toggleAllFiles(this.checked)" data-i18n-title="filter.selectAll" title="Tümünü seç"></th>
               <th class="num-cell" style="font-size:.72rem">#</th>
-              <th class="col-ext" data-i18n="table.ext">Uzantı</th>
+              <th class="sortable col-ext" onclick="sortBy('ext')"><span data-i18n="table.ext">Uzantı</span> <span class="sort-arrow" id="arr-ext"></span></th>
               <th class="sortable" onclick="sortBy('name')"><span data-i18n="table.fileName">Dosya Adı</span> <span class="sort-arrow" id="arr-name"></span></th>
-              <th class="col-ctx" data-i18n="table.context">İçerik</th>
+              <th class="sortable col-ctx" onclick="sortBy('context')"><span data-i18n="table.context">İçerik</span> <span class="sort-arrow" id="arr-context"></span></th>
               <th class="sortable col-size" onclick="sortBy('size')"><span data-i18n="table.size">Boyut</span> <span class="sort-arrow" id="arr-size"></span></th>
               <th class="sortable col-group" onclick="sortBy('group')"><span data-i18n="table.group">Grup</span> <span class="sort-arrow" id="arr-group"></span></th>
               <th class="sortable col-date" onclick="sortBy('date')"><span data-i18n="table.date">Tarih</span> <span class="sort-arrow" id="arr-date"></span></th>
@@ -2774,8 +2774,8 @@ tr.magnet-tree-row>td{padding:0!important;background:var(--bg-1)!important;borde
   </div>
 </div>
 
-<script src="i18n.js?v=1786303691"></script>
-<script src="app.js?v=1786303691"></script>
+<script src="i18n.js?v=1787025301"></script>
+<script src="app.js?v=1787025301"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })

@@ -2,7 +2,7 @@
 
 // Build stamp — lets anyone verify in the console which UI build the browser
 // is actually executing (stale service-worker / HTTP-cache debugging).
-window.TF_BUILD = '1784110630';
+window.TF_BUILD = '1787025301';
 console.info('TelFiles UI build', window.TF_BUILD);
 
 let _stats = null;
@@ -4278,7 +4278,11 @@ function clearDownloadSelection() {
 function bulkDownloadDownloaded() {
   const { done } = _selectedDownloadIdsByStatus();
   if (!done.length) return;
-  done.forEach((id, i) => setTimeout(() => downloadBlob(id), i * 200));
+  // Space the downloads out a bit more so the browser reliably starts each one
+  // (each downloadBlob uses <a download>, which Firefox honours for many files
+  // from a single click). 350ms is a good balance between reliability and the
+  // total time for large selections.
+  done.forEach((id, i) => setTimeout(() => downloadBlob(id), i * 350));
   showToast(t('dl.downloading', { n: done.length }), 2500);
 }
 
@@ -4351,9 +4355,17 @@ async function bulkCancelDownloads() {
 }
 
 function downloadBlob(fileId) {
-  // Trigger browser download by navigating to the streaming endpoint
+  // Trigger a browser download of the streaming endpoint. The `download`
+  // attribute is essential: without it the browser NAVIGATES to the blob and
+  // renders inline types (pdf/mp4/images) in a tab instead of saving them, and
+  // same-origin `<a download>` is also what lets Firefox save many files from a
+  // single click without silently blocking them. Fall back to an empty string
+  // (still forces "save") when we don't have the record's name handy.
+  const rec = (_dlHistory || []).find(d => d.id === fileId)
+           || (_serverDownloads || []).find(d => d.id === fileId);
   const a = document.createElement('a');
   a.href = `/api/files/${fileId}/blob`;
+  a.download = (rec && rec.name) ? rec.name : '';
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -5089,8 +5101,53 @@ function sortBy(col) {
   S.sortBy=col; S.offset=0;
   updateSortArrows(); loadFiles();
 }
+
+// Clear every Files-grid filter: type buttons (image/video/…), column filters
+// (name/ext/size/date), group filter, size slider and any active notification
+// file-id filter. Leaves sort untouched — callers decide that.
+function _resetFilesFilters() {
+  S.typeGroup = '';
+  S.extChip = '';
+  S.activeGroupId = null;
+  if (S.colGroupIds && S.colGroupIds.clear) S.colGroupIds.clear();
+  S.sizeMinMB = null;
+  S.sizeMaxMB = null;
+  S.fileIdsFilter = null;
+  S.fileIdsFilterLabel = null;
+  S.fileIdsFilterNotifId = null;
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  setVal('col-name', '');
+  setVal('ext-input', '');
+  setVal('col-ext', '');
+  setVal('col-size-min', '');
+  setVal('col-size-max', '');
+  setVal('date-from', '');
+  setVal('date-to', '');
+  const sMin = document.getElementById('sl-min'); if (sMin) sMin.value = 0;
+  const sMax = document.getElementById('sl-max'); if (sMax) sMax.value = 1000;
+  if (typeof updateSliderFill === 'function') updateSliderFill();
+  // "Tümü" tip butonunu aktif yap, diğer TİP butonlarını pasif. Yalnızca
+  // data-group taşıyan gerçek tip butonlarını hedefle — trend/caption/semantic
+  // gibi data-group'suz .type-btn'lere dokunma (onlar tip filtresi değil).
+  document.querySelectorAll('.type-btn[data-group]').forEach(b =>
+    b.classList.toggle('active', b.dataset.group === ''));
+  if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
+}
+
+// Brand/logo click → Files tab: clear ALL filters and reset to the default
+// date-descending order. switchTab('files') triggers loadFiles; the cleared
+// params + sort change force a fresh, unfiltered, date-sorted query.
+function goHome() {
+  _resetFilesFilters();
+  S.sortBy = 'date';
+  S.sortDir = 'desc';
+  S.offset = 0;
+  updateSortArrows();
+  if (typeof renderChips === 'function') renderChips();
+  switchTab('files');
+}
 function updateSortArrows() {
-  ['name','group','size','date','shares'].forEach(c => {
+  ['name','group','size','date','shares','ext','context'].forEach(c => {
     const el=document.getElementById('arr-'+c);
     if (!el) return;
     el.textContent = S.sortBy===c?(S.sortDir==='asc'?'▲':'▼'):'▲▼';
@@ -5643,33 +5700,10 @@ function _findNotif(id) { return _activeNotifications.find(n => n.id === id) || 
 function showNotifMatches(notifId) {
   const n = _findNotif(notifId);
   if (!n) return;
-  // Filter the files grid to ONLY the file_ids that triggered this notification.
-  // ÖNCE her potansiyel olarak çelişen filtreyi temizle — yoksa kullanıcının
-  // önceki seçtiği ext/group/size/date filtresi file_ids ile AND'lenip 0
-  // sonuç döndürebiliyor ve grid boş geliyor.
-  S.typeGroup = '';
-  S.extChip = '';
-  S.activeGroupId = null;
-  S.colGroupIds.clear();
-  S.sizeMinMB = null;
-  S.sizeMaxMB = null;
-  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  setVal('col-name', '');
-  setVal('ext-input', '');
-  setVal('col-ext', '');
-  setVal('col-size-min', '');
-  setVal('col-size-max', '');
-  setVal('date-from', '');
-  setVal('date-to', '');
-  // Size slider'ı sıfırla
-  const sMin = document.getElementById('sl-min'); if (sMin) sMin.value = 0;
-  const sMax = document.getElementById('sl-max'); if (sMax) sMax.value = 1000;
-  if (typeof updateSliderFill === 'function') updateSliderFill();
-  // "Tüm Tipler" butonunu aktif yap, diğerlerini pasif
-  document.querySelectorAll('.type-btn').forEach(b =>
-    b.classList.toggle('active', (b.dataset.group || '') === ''));
-  if (typeof cgfUpdateLabel === 'function') cgfUpdateLabel();
-  // Sonra notification filtresini uygula
+  // Clear every potentially-conflicting filter first — otherwise a previously
+  // chosen ext/group/size/date filter gets AND'ed with the file_ids and the
+  // grid comes back empty. Then apply ONLY this notification's file_ids.
+  _resetFilesFilters();
   S.fileIdsFilter = new Set((n.file_ids || []).map(x => parseInt(x, 10)));
   S.fileIdsFilterLabel = n.keywords;
   S.fileIdsFilterNotifId = notifId;
